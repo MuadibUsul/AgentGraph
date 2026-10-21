@@ -1,0 +1,299 @@
+"""AgentGraph FastAPI gateway: REST, admin API, MCP mount, health."""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+import logging
+from contextlib import asynccontextmanager, suppress
+from pathlib import Path
+from typing import Any
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from app.api.admin_routes import router as admin_router
+from app.api.auth_routes import router as auth_router
+from app.api.human_routes import router as human_router
+from app.api.stream_routes import admin_router as admin_stream_router
+from app.api.stream_routes import router as stream_router
+from app.api.v1_routes import router as v1_router
+from app.config import get_settings
+from app.database import apply_schema, check_database, engine
+from app.engine.embeddings import close_embedding_provider, configured_embedding_model
+from app.errors import ApiError
+from app.events import event_bus
+from app.mcp_server.server import create_http_app, mcp
+from app.middleware import RequestContextMiddleware
+from app.services.external_actions import external_action_loop
+from app.services.reaper import lease_reaper_loop
+from app.services.webhooks import webhook_delivery_loop
+
+settings = get_settings()
+
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("agentgraph")
+
+mcp_http_app = create_http_app() if settings.mcp_enabled else None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.auto_init_db:
+        await apply_schema()
+    await event_bus.start()
+    reaper_task = asyncio.create_task(
+        lease_reaper_loop(), name="agentgraph-lease-reaper"
+    )
+    webhook_task = asyncio.create_task(
+        webhook_delivery_loop(), name="agentgraph-webhook-dispatcher"
+    )
+    action_task = asyncio.create_task(
+        external_action_loop(), name="agentgraph-external-action-dispatcher"
+    )
+    try:
+        if settings.mcp_enabled:
+            async with mcp.session_manager.run():
+                logger.info(
+                    "AgentGraph %s ready (embedding=%s, mcp=/mcp)",
+                    settings.app_version,
+                    settings.embedding_provider,
+                )
+                yield
+        else:
+            yield
+    finally:
+        for task in (reaper_task, webhook_task, action_task):
+            task.cancel()
+        for task in (reaper_task, webhook_task, action_task):
+            with suppress(asyncio.CancelledError):
+                await task
+        await event_bus.stop()
+        await close_embedding_provider()
+        await engine.dispose()
+
+
+app = FastAPI(
+    title="AgentGraph — Human-in-the-Loop Shared Blackboard",
+    version=settings.app_version,
+    description=(
+        "A multi-agent shared workspace with TTL task leases, progressive "
+        "L0/L1/L2 handoffs, human sovereignty locks, session-batch undo, and "
+        "PostgreSQL LISTEN/NOTIFY realtime updates. REST and MCP share one "
+        "capability-scoped service layer."
+    ),
+    lifespan=lifespan,
+    docs_url=(
+        "/docs"
+        if settings.docs_enabled and not settings.docs_require_auth
+        else None
+    ),
+    redoc_url=(
+        "/redoc"
+        if settings.docs_enabled and not settings.docs_require_auth
+        else None
+    ),
+    openapi_url=(
+        "/openapi.json"
+        if settings.docs_enabled and not settings.docs_require_auth
+        else None
+    ),
+)
+
+app.add_middleware(RequestContextMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
+)
+
+app.include_router(v1_router)
+app.include_router(auth_router)
+app.include_router(human_router)
+app.include_router(stream_router)
+app.include_router(admin_router)
+app.include_router(admin_stream_router)
+if mcp_http_app is not None:
+    # Trailing slash is the canonical endpoint: /mcp/
+    app.mount("/mcp", mcp_http_app, name="mcp")
+
+dashboard_dir = Path(__file__).resolve().parent.parent / "dashboard" / "out"
+if dashboard_dir.is_dir():
+    app.mount(
+        "/dashboard",
+        StaticFiles(directory=str(dashboard_dir), html=True),
+        name="dashboard",
+    )
+
+
+@app.exception_handler(ApiError)
+async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.body(),
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    details = [
+        {
+            "loc": list(error.get("loc", ())),
+            "msg": error.get("msg", "invalid value"),
+            "type": error.get("type", "value_error"),
+        }
+        for error in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "validation_error",
+                "message": "request validation failed",
+                "details": details,
+            }
+        },
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
+    message = str(exc.detail) if exc.detail else "HTTP error"
+    code = "not_found" if exc.status_code == 404 else "http_error"
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": code, "message": message}},
+        headers=getattr(exc, "headers", None) or {},
+    )
+
+
+@app.exception_handler(SQLAlchemyError)
+async def database_error_handler(
+    request: Request, exc: SQLAlchemyError
+) -> JSONResponse:
+    logger.exception("database error")
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": {
+                "code": "database_unavailable",
+                "message": "database operation failed",
+            }
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("unhandled error")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {"code": "internal_error", "message": "internal server error"}
+        },
+    )
+
+
+_docs_security = HTTPBasic(auto_error=False)
+
+
+def _require_docs_auth(
+    credentials: HTTPBasicCredentials | None = Depends(_docs_security),
+) -> None:
+    if not settings.docs_require_auth:
+        return
+    admin = settings.admin_token
+    if (
+        not admin
+        or credentials is None
+        or not hmac.compare_digest(credentials.password, admin)
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="API docs require the admin token (HTTP Basic password)",
+            headers={"WWW-Authenticate": 'Basic realm="AgentGraph docs"'},
+        )
+
+
+if settings.docs_enabled and settings.docs_require_auth:
+
+    @app.get("/openapi.json", include_in_schema=False)
+    async def protected_openapi(
+        _: None = Depends(_require_docs_auth),
+    ) -> JSONResponse:
+        return JSONResponse(app.openapi())
+
+    @app.get("/docs", include_in_schema=False)
+    async def protected_docs(
+        _: None = Depends(_require_docs_auth),
+    ) -> HTMLResponse:
+        return get_swagger_ui_html(
+            openapi_url="/openapi.json",
+            title=f"{settings.app_name} API docs",
+        )
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> dict[str, Any]:
+    return {
+        "name": settings.app_name,
+        "version": settings.app_version,
+        "docs": "/docs" if settings.docs_enabled else None,
+        "health": "/healthz",
+        "rest": "/v1",
+        "mcp": "/mcp/" if settings.mcp_enabled else None,
+        "dashboard": "/dashboard/" if dashboard_dir.is_dir() else None,
+        "primitives": [
+            "workspace_sync",
+            "agent_claim_and_read",
+            "agent_patch_shared_state",
+            "agent_handoff_task",
+            "agent_escalate_to_human",
+            "upsert_shared_doc",
+            "patch_doc_section",
+            "query_workspace",
+            "dereference",
+            "propose_document_change",
+            "vote_on_proposal",
+            "list_document_proposals",
+            "draft_external_action",
+        ],
+    }
+
+
+@app.get("/healthz", tags=["Health"], summary="Liveness probe")
+async def healthz() -> dict[str, str]:
+    return {"status": "ok", "version": settings.app_version}
+
+
+@app.get("/readyz", tags=["Health"], summary="Readiness probe")
+async def readyz() -> JSONResponse:
+    database_ok = await check_database()
+    payload = {
+        "status": "ok" if database_ok else "degraded",
+        "database": "ok" if database_ok else "unavailable",
+        "embedding_provider": settings.embedding_provider,
+        "embedding_model": configured_embedding_model(),
+        "embedding_dimensions": settings.embedding_dimensions,
+        "mcp": "enabled" if settings.mcp_enabled else "disabled",
+        "version": settings.app_version,
+    }
+    return JSONResponse(status_code=200 if database_ok else 503, content=payload)

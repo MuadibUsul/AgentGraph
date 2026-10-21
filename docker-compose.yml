@@ -1,0 +1,56 @@
+name: agentgraph
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentgraph}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentgraph}
+      POSTGRES_DB: ${POSTGRES_DB:-agentgraph}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentgraph} -d ${POSTGRES_DB:-agentgraph}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    # Uncomment to inspect the database from the host:
+    # ports:
+    #   - "5432:5432"
+
+  api:
+    build: .
+    # Forward every setting in .env to the container; explicit environment
+    # values below still take precedence for the wiring-critical ones.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agentgraph}:${POSTGRES_PASSWORD:-agentgraph}@db:5432/${POSTGRES_DB:-agentgraph}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-token-change-me}
+      AUTO_INIT_DB: "true"
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hash}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["*"]}
+      MCP_ENABLED: ${MCP_ENABLED:-true}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-[]}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-[]}
+      MCP_DNS_REBINDING_PROTECTION: ${MCP_DNS_REBINDING_PROTECTION:-true}
+      AUTO_TIMELINE_EVENTS: ${AUTO_TIMELINE_EVENTS:-true}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

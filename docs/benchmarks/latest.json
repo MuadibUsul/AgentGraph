@@ -1,0 +1,39 @@
+{
+  "generated_at": "2026-10-19T18:10:58Z",
+  "base_url": "http://127.0.0.1:8010",
+  "corpus_documents": 18,
+  "results": {
+    "semantic": {
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "latency_ms_mean": 165.99,
+      "latency_ms_p95": 192.83,
+      "queries": 18,
+      "top_k": 5
+    },
+    "keyword": {
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "latency_ms_mean": 155.6,
+      "latency_ms_p95": 176.71,
+      "queries": 18,
+      "top_k": 5
+    },
+    "hybrid": {
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "latency_ms_mean": 161.11,
+      "latency_ms_p95": 209.49,
+      "queries": 18,
+      "top_k": 5
+    },
+    "auto": {
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "latency_ms_mean": 171.73,
+      "latency_ms_p95": 213.5,
+      "queries": 18,
+      "top_k": 5
+    }
+  }
+}

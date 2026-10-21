@@ -1,0 +1,15 @@
+fastapi==0.148.0
+uvicorn[standard]==0.54.0
+SQLAlchemy[asyncio]==2.0.55
+asyncpg==0.30.0
+pgvector==0.4.2
+pydantic==2.14.1
+pydantic-settings==2.15.0
+mcp==1.30.0
+openai==2.54.0
+httpx==0.28.1
+jsonpatch==1.33
+
+jsonschema==4.26.0
+numpy>=2,<2.4
+beautifulsoup4==4.15.0

@@ -1,0 +1,156 @@
+/*
+ * AgentGraph design tokens — v3.3 console refresh.
+ *
+ * Visual proposition: a quiet operations console for long human-in-the-loop
+ * sessions. Flat graphite surfaces, one teal action color, precise 13–14px
+ * data type, compact density, and one clear hierarchy: workspace → work → detail.
+ *
+ * Token architecture:
+ *   primitive → semantic → component aliases (legacy --bg/--surface map below).
+ * The product identity remains dark; light mode is intentionally not shipped.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---------------------------------------------------------- primitives */
+  /* Cool graphite ramp; steps follow Radix's 1–12 role convention. */
+  --ds-primitive-slate-1: #080a0e;
+  --ds-primitive-slate-2: #0d1016;
+  --ds-primitive-slate-3: #12161e;
+  --ds-primitive-slate-4: #171d27;
+  --ds-primitive-slate-5: #1c2430;
+  --ds-primitive-slate-6: #232d3b;
+  --ds-primitive-slate-7: #2c3848;
+  --ds-primitive-slate-8: #3a495d;
+  --ds-primitive-slate-11: #a7b3c5;
+  --ds-primitive-slate-12: #eef2f8;
+
+  --ds-primitive-teal-9: #2dd4bf;
+  --ds-primitive-teal-10: #5eead4;
+  --ds-primitive-teal-11: #7ce8d8;
+  --ds-primitive-teal-12: #b8fff3;
+  --ds-primitive-violet-9: #a78bfa;
+  --ds-primitive-violet-11: #c4b5fd;
+  --ds-primitive-blue-9: #60a5fa;
+  --ds-primitive-blue-11: #93c5fd;
+  --ds-primitive-amber-9: #fbbf24;
+  --ds-primitive-amber-11: #fcd34d;
+  --ds-primitive-ruby-9: #fb7185;
+  --ds-primitive-ruby-11: #fda4af;
+  --ds-primitive-jade-9: #34d399;
+  --ds-primitive-jade-11: #6ee7b7;
+
+  /* ------------------------------------------------------------ semantic */
+  /* Surfaces: page < subtle < panel < raised < overlay */
+  --ds-surface-page: var(--ds-primitive-slate-1);
+  --ds-surface-page-deep: #06080b;
+  --ds-surface-subtle: var(--ds-primitive-slate-2);
+  --ds-surface-panel: var(--ds-primitive-slate-3);
+  --ds-surface-raised: var(--ds-primitive-slate-4);
+  --ds-surface-inset: #0a0d12;
+  --ds-surface-overlay: rgba(4, 6, 9, 0.78);
+
+  /* Borders: subtle dividers, control borders, emphasis/focus candidates. */
+  --ds-border-subtle: var(--ds-primitive-slate-6);
+  --ds-border-default: var(--ds-primitive-slate-7);
+  --ds-border-control: #52657d; /* 3.03:1 against panel */
+  --ds-border-strong: var(--ds-primitive-slate-8);
+  --ds-focus-ring: var(--ds-primitive-teal-10);
+
+  /* Text: verified against page and panel backgrounds in check_contrast.py. */
+  --ds-text-primary: var(--ds-primitive-slate-12);
+  --ds-text-secondary: var(--ds-primitive-slate-11);
+  --ds-text-muted: #8a97a9;
+  --ds-text-inverse: #041512;
+
+  /* Action: one primary accent; status colors are independent semantics. */
+  --ds-action-primary: var(--ds-primitive-teal-9);
+  --ds-action-primary-hover: var(--ds-primitive-teal-10);
+  --ds-action-primary-active: #14b8a6;
+  --ds-action-primary-fg: var(--ds-text-inverse);
+  --ds-accent: var(--ds-primitive-teal-9);
+  --ds-accent-strong: var(--ds-primitive-teal-11);
+  --ds-accent-soft: rgba(45, 212, 191, 0.1);
+  --ds-accent-border: rgba(45, 212, 191, 0.32);
+
+  --ds-status-success: var(--ds-primitive-jade-11);
+  --ds-status-success-soft: rgba(52, 211, 153, 0.1);
+  --ds-status-warning: var(--ds-primitive-amber-11);
+  --ds-status-warning-soft: rgba(251, 191, 36, 0.1);
+  --ds-status-danger: var(--ds-primitive-ruby-11);
+  --ds-status-danger-soft: rgba(251, 113, 133, 0.1);
+  --ds-status-info: var(--ds-primitive-blue-11);
+  --ds-status-info-soft: rgba(96, 165, 250, 0.1);
+  --ds-status-proposal: var(--ds-primitive-violet-11);
+  --ds-status-proposal-soft: rgba(167, 139, 250, 0.1);
+
+  --ds-selection: rgba(45, 212, 191, 0.26);
+  --ds-shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.025);
+  --ds-shadow-float: 0 18px 48px rgba(0, 0, 0, 0.38);
+
+  /* ---------------------------------------------------------- typography */
+  --ds-font-body: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --ds-font-mono: "SFMono-Regular", ui-monospace, "Cascadia Code",
+    "Roboto Mono", Menlo, Consolas, monospace;
+  --ds-text-caption: 11px;
+  --ds-text-sm: 12px;
+  --ds-text-body: 14px;
+  --ds-text-md: 15px;
+  --ds-text-title: 18px;
+  --ds-text-h1: 32px;
+  --ds-text-display: clamp(34px, 4.4vw, 52px);
+  --ds-leading-tight: 1.25;
+  --ds-leading-body: 1.55;
+
+  /* ------------------------------------------------- space and geometry */
+  --ds-space-1: 4px;
+  --ds-space-2: 8px;
+  --ds-space-3: 12px;
+  --ds-space-4: 16px;
+  --ds-space-5: 20px;
+  --ds-space-6: 24px;
+  --ds-space-8: 32px;
+  --ds-space-10: 40px;
+  --ds-space-12: 48px;
+  --ds-space-16: 64px;
+
+  --ds-radius-xs: 4px;
+  --ds-radius-sm: 6px;
+  --ds-radius-md: 10px;
+  --ds-radius-lg: 14px;
+  --ds-radius-pill: 999px;
+
+  --ds-motion-fast: 120ms;
+  --ds-motion-normal: 180ms;
+  --ds-motion-slow: 240ms;
+
+  /* ------------------------------------------- legacy component aliases */
+  /* Existing components consume these names; map them to the new semantics. */
+  --bg: var(--ds-surface-page);
+  --bg-deep: var(--ds-surface-page-deep);
+  --surface: var(--ds-surface-panel);
+  --surface-2: var(--ds-surface-raised);
+  --panel: var(--ds-surface-panel);
+  --line: var(--ds-border-subtle);
+  --line-strong: var(--ds-border-control);
+  --text: var(--ds-text-primary);
+  --muted: var(--ds-text-secondary);
+  --muted-2: var(--ds-text-muted);
+  --accent: var(--ds-accent);
+  --accent-soft: var(--ds-accent-soft);
+  --violet: var(--ds-status-proposal);
+  --violet-soft: var(--ds-status-proposal-soft);
+  --sky: var(--ds-status-info);
+  --sky-soft: var(--ds-status-info-soft);
+  --amber: var(--ds-status-warning);
+  --amber-soft: var(--ds-status-warning-soft);
+  --danger: var(--ds-status-danger);
+  --danger-soft: var(--ds-status-danger-soft);
+  --radius: var(--ds-radius-lg);
+  --radius-sm: var(--ds-radius-md);
+  --shadow: var(--ds-shadow-float);
+  --font: var(--ds-font-body);
+  --mono: var(--ds-font-mono);
+}

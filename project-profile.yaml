@@ -1,0 +1,77 @@
+version: '1.0'
+project:
+  name: 'AgentGraph'
+  repo_path: '.'
+  product_type: 'Multi-agent shared blackboard / human-in-the-loop control room'
+  primary_users: 'Operators supervising long-running agent teams; agents using MCP/REST'
+  primary_tasks:
+    - 'Approve or reject escalated agent work'
+    - 'Review proposals and tainted documents'
+    - 'Freeze state, inspect audit history, and undo a session batch'
+    - 'Monitor webhooks, external actions, budgets and human accounts'
+  critical_flows:
+    - 'Existing task state machine and lease semantics'
+    - 'Human sovereignty locks and approval gates'
+    - 'Document versioning, verification and undo semantics'
+    - 'Workspace/agent/human authorization boundaries'
+  language: 'en'
+  platforms: ['web']
+execution:
+  mode: AUTO
+  output: code-and-spec
+  scope: []
+  change_strategy: incremental
+  require_approval_for:
+    - destructive_changes
+    - dependency_replacement
+    - business_logic_changes
+    - production_deployment
+brand:
+  character: 'Calm, precise, high-density control room; teal is the single action accent'
+  references: []
+  logo_path: ''
+  preserve_existing_brand: true
+  core_colors:
+    primary: '#5eead4'
+    secondary: '#a78bfa'
+    tertiary: '#7dd3fc'
+  neutral_family: 'slate'
+  allow_custom_palette: true
+design:
+  themes: follow-existing
+  density: compact
+  radius_character: 'restrained, 8–16px'
+  motion_character: restrained
+  typography_family: 'system UI + CJK fallback; monospace for identifiers'
+  accessibility_target: WCAG_2_2_AA
+  minimum_viewports: [320, 390, 768, 1280, 1440]
+  states:
+    - default
+    - hover
+    - pressed
+    - selected
+    - focus-visible
+    - disabled
+    - loading
+    - success
+    - error
+    - empty
+quality:
+  enforce_semantic_tokens: true
+  flag_raw_color_values: true
+  flag_random_spacing: true
+  require_visual_regression: true
+  require_real_contrast_measurement: true
+  require_manual_keyboard_review: true
+  do_not_fabricate_product_data: true
+notes:
+  confirmed_decisions:
+    - 'Dark control-room identity is intentional and preserved.'
+    - 'Existing task/document/lease semantics are not changed for visual reasons.'
+    - 'The console remains an operator surface; it is not a marketing page.'
+  unknowns:
+    - 'Automated axe/Playwright visual regression is not configured in this repository.'
+    - 'Light theme is not part of the existing product surface.'
+  do_not_change:
+    - 'Tenant/agent/human authorization boundaries.'
+    - 'Proposal apply, taint, lease and undo semantics.'
