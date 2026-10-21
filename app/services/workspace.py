@@ -343,7 +343,8 @@ async def workspace_stats(
                 """
 SELECT
     (SELECT count(*) FROM shared_documents
-        WHERE workspace_id = CAST(:workspace_id AS uuid)) AS documents,
+        WHERE workspace_id = CAST(:workspace_id AS uuid)
+          AND archived_at IS NULL) AS documents,
     (SELECT count(*) FROM context_slots
         WHERE workspace_id = CAST(:workspace_id AS uuid)) AS slots,
     (SELECT count(*) FROM collab_tasks
@@ -497,7 +498,8 @@ async def list_workspaces(session: AsyncSession) -> list[AdminWorkspaceOut]:
 SELECT
     w.id, w.name, w.tier, w.created_at,
     (SELECT count(*) FROM shared_documents d
-        WHERE d.workspace_id = w.id) AS documents,
+        WHERE d.workspace_id = w.id
+          AND d.archived_at IS NULL) AS documents,
     (SELECT count(*) FROM context_slots s
         WHERE s.workspace_id = w.id) AS slots,
     (SELECT count(*) FROM collab_tasks t
