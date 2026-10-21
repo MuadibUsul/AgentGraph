@@ -196,3 +196,4 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 | `not_registered` | The collaborator directory is not live; identity is inferred. |
 | `constitution_draft` | The constitution is still the generated template. |
 | `token_expiring` | The calling token expires within a day. |
+| `quota_80_percent` | The daily embedding quota is at least 80% used. |

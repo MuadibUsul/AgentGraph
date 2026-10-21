@@ -457,9 +457,9 @@ async def create_workspace(
     )
     session.add(workspace)
     await session.flush()
-    from app.services.onboarding import ensure_constitution
+    from app.services.onboarding import scaffold_new_workspace
 
-    await ensure_constitution(session, workspace.id)
+    await scaffold_new_workspace(session, workspace.id)
     await session.commit()
     return WorkspaceCreatedResponse(
         workspace=workspace_info(workspace), api_key=raw_key

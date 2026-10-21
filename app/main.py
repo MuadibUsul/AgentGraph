@@ -328,6 +328,7 @@ async def root(request: Request) -> Any:
         "primitives": [
             "get_orientation",
             "ack_constitution",
+            "get_usage",
             "workspace_sync",
             "create_task",
             "review_task",

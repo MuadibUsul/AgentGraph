@@ -55,6 +55,7 @@ from app.schemas import (
     TaskReviewRequest,
 )
 from app.services import addresses as address_service
+from app.services import budget as budget_service
 from app.services import idempotency
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
@@ -1293,6 +1294,22 @@ async def register_parts(
             )
         except ValidationError as exc:
             raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_usage")
+async def get_usage(window: Literal["day", "week", "month"] = "day") -> dict[str, Any]:
+    """Embedding tokens used vs quota, writes, would-be limits and open circuits.
+
+    Agents see workspace totals and their own row; humans see every agent.
+    mode="shadow" means limits are recorded (would_*) but not yet enforced.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await budget_service.get_usage(session, principal, window)
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)

@@ -81,7 +81,7 @@ from app.schemas import (
     TombstoneOut,
 )
 from app.services import addresses as address_service
-from app.services import onboarding
+from app.services import budget, onboarding
 from app.services.common import (
     append_event,
     document_out,
@@ -232,6 +232,7 @@ async def _mutation_response(
         session_batch_id=batch,
         content_bytes=len(document.content.encode("utf-8")),
         chunk_count=chunks,
+        usage=budget.request_usage(),
     )
 
 
@@ -707,6 +708,9 @@ async def upsert_document(
         existing = None
     if existing is not None:
         doc_key = existing.doc_key
+    await budget.check_write(
+        principal, document_id=existing.id if existing else None, doc_key=doc_key
+    )
     frontmatter_in = request.frontmatter
     ref_edges: list[tuple[str, str, str | None]] = []
     if address_service.has_refs(frontmatter_in):
@@ -1015,6 +1019,7 @@ async def patch_document_section(
     )
     ensure_namespace(principal, document.namespace, write=True)
     onboarding.ensure_system_writable(principal, document.namespace, document.doc_key)
+    await budget.check_write(principal, document_id=document.id, doc_key=document.doc_key)
     ensure_not_human_locked(
         principal, "shared_document", document.locked_by_human, document.human_note
     )
@@ -1142,6 +1147,7 @@ async def query_documents(
 ) -> DocumentQueryResponse:
     """Semantic/structured discovery. Not exhaustive: use list_documents to enumerate."""
     require_permission(principal, "query")
+    await budget.check_query(principal)
     base = [SharedDocument.workspace_id == principal.workspace.id]
     if request.namespace:
         ensure_namespace(principal, request.namespace)
@@ -1220,7 +1226,7 @@ async def _rank(
         return ranked
     # Legacy databases or documents written before chunking existed still
     # have a whole-document embedding; use it as a best-effort fallback.
-    vector = await _embed(request.query or "")
+    vector = await query_vector(request.query or "", principal.workspace.id)
     distance = SharedDocument.embedding.cosine_distance(vector)
     legacy = select(SharedDocument.id).where(*conditions, SharedDocument.embedding.is_not(None))
     if settings.semantic_threshold > 0:
@@ -1308,7 +1314,7 @@ async def _matched_chunks(
     """Up to three chunks per hit: literal matches first, then by similarity."""
     if not document_ids:
         return {}
-    vector = await query_vector(query)
+    vector = await query_vector(query)  # cached by the ranking step
     rows = (
         await session.execute(
             select(DocumentChunk)

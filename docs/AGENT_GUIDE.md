@@ -42,6 +42,7 @@ Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.
 - `list_token_tree`: Descendant tokens of your own subtree.
 - `explain_write`: Who wrote a version and with what grant.
 - `ack_constitution`: Record that you read the current constitution version.
+- `get_usage`: Embedding tokens, writes, would-be limits and circuits.
 - `get_api_docs`: This guide by section.
 
 ## Which read to use

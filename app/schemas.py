@@ -913,6 +913,9 @@ class DocumentMutationResponse(BaseModel):
     session_batch_id: uuid.UUID
     content_bytes: int | None = None
     chunk_count: int | None = None
+    usage: dict[str, Any] | None = Field(
+        default=None, description="embedding_tokens spent by this request, quota_remaining"
+    )
 
 
 class DocumentBatchUpsertResult(BaseModel):

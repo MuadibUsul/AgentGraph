@@ -79,6 +79,7 @@ from app.schemas import (
     WorkspaceStatsResponse,
 )
 from app.services import addresses as address_service
+from app.services import budget as budget_service
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
 
@@ -773,6 +774,18 @@ async def workspace_usage(
     return UsageOut(
         **await services.month_usage(session, principal.workspace.id)
     )
+
+
+@router.get(
+    "/usage/embedding",
+    summary="Embedding tokens, writes, would-be limits and open circuits (AG-ST-15)",
+)
+async def embedding_usage(
+    window: str = Query(default="day", pattern="^(day|week|month)$"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await budget_service.get_usage(session, principal, window)
 
 
 # ----------------------------------------------------- external actions

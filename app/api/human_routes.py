@@ -61,6 +61,7 @@ from app.schemas import (
     WebhookRuleUpdateRequest,
     WorkspaceStatsResponse,
 )
+from app.services import budget as budget_service
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
 from app.services.retrieval import backfill_workspace_chunks
@@ -773,4 +774,16 @@ async def purge_document(
     session: AsyncSession = Depends(get_db),
 ) -> TombstoneOut:
     return await services.purge_document(session, principal, doc_key, body)
+
+
+@router.post(
+    "/budget/circuits/{principal_key}/clear",
+    summary="Clear a runaway-loop circuit breaker for one token (owner)",
+)
+async def clear_circuit(
+    principal_key: str,
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await budget_service.clear_circuit(session, principal, principal_key)
 

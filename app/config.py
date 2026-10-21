@@ -150,6 +150,17 @@ class Settings(BaseSettings):
     max_brief_bytes: int = 32_768
     max_artifact_chars: int = 4_194_304
 
+    # ------------------------------------------------ cost control (AG-ST-15)
+    # "shadow" records would-be limits without blocking (run ~14 days to
+    # calibrate); "enforce" returns 429 rate_limited / circuit_open.
+    budget_mode: str = Field(default="shadow", pattern="^(shadow|enforce)$")
+    write_rate_per_minute: int = Field(default=60, ge=1, le=100_000)
+    write_burst: int = Field(default=20, ge=1, le=100_000)
+    query_rate_per_minute: int = Field(default=120, ge=1, le=100_000)
+    hot_key_writes_per_minute: int = Field(default=20, ge=2, le=10_000)
+    circuit_open_minutes: int = Field(default=10, ge=1, le=1_440)
+    embedding_tokens_per_day: int = Field(default=2_000_000, ge=1)
+
     # ------------------------------------------- failure-semantics protocol
     # PRD AG-ST-18: 24 h idempotency window; an in-progress record older than
     # the stale limit is treated as abandoned (crashed worker) and reclaimed.

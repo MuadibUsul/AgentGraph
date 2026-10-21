@@ -163,6 +163,9 @@ RETURNING count
                 "limit_bytes": settings.embedding_bytes_per_minute,
             },
         )
+    from app.services.budget import meter_embedding
+
+    await meter_embedding(workspace_id, chars, kind="document")
 
 
 async def record_usage(
