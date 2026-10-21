@@ -2,7 +2,7 @@
  * AgentGraph design tokens — v3.3 console refresh.
  *
  * Visual proposition: a quiet operations console for long human-in-the-loop
- * sessions. Flat graphite surfaces, one teal action color, precise 13–14px
+ * sessions. Flat graphite surfaces, one indigo action color, precise 13–14px
  * data type, compact density, and one clear hierarchy: workspace → work → detail.
  *
  * Token architecture:
@@ -26,10 +26,10 @@
   --ds-primitive-slate-11: #a7b3c5;
   --ds-primitive-slate-12: #eef2f8;
 
-  --ds-primitive-teal-9: #2dd4bf;
-  --ds-primitive-teal-10: #5eead4;
-  --ds-primitive-teal-11: #7ce8d8;
-  --ds-primitive-teal-12: #b8fff3;
+  --ds-primitive-indigo-9: #4f46e5;
+  --ds-primitive-indigo-10: #5b5bf0;
+  --ds-primitive-indigo-11: #a5b4fc;
+  --ds-primitive-indigo-12: #e0e7ff;
   --ds-primitive-violet-9: #a78bfa;
   --ds-primitive-violet-11: #c4b5fd;
   --ds-primitive-blue-9: #60a5fa;
@@ -56,25 +56,25 @@
   --ds-border-default: var(--ds-primitive-slate-7);
   --ds-border-control: #52657d; /* 3.03:1 against panel */
   --ds-border-strong: var(--ds-primitive-slate-8);
-  --ds-focus-ring: var(--ds-primitive-teal-10);
+  --ds-focus-ring: var(--ds-primitive-indigo-11);
 
   /* Text: verified against page and panel backgrounds in check_contrast.py. */
   --ds-text-primary: var(--ds-primitive-slate-12);
   --ds-text-secondary: var(--ds-primitive-slate-11);
   --ds-text-muted: #8a97a9;
-  --ds-text-inverse: #041512;
+  --ds-text-inverse: #ffffff;
 
   /* Action: one primary accent; status colors are independent semantics. */
-  --ds-action-primary: var(--ds-primitive-teal-9);
-  --ds-action-primary-hover: var(--ds-primitive-teal-10);
-  --ds-action-primary-active: #14b8a6;
+  --ds-action-primary: var(--ds-primitive-indigo-9);
+  --ds-action-primary-hover: var(--ds-primitive-indigo-10);
+  --ds-action-primary-active: #4338ca;
   --ds-action-primary-fg: var(--ds-text-inverse);
-  --ds-accent: var(--ds-primitive-teal-9);
-  --ds-accent-strong: var(--ds-primitive-teal-11);
-  --ds-accent-soft: rgba(45, 212, 191, 0.1);
-  --ds-accent-border: rgba(45, 212, 191, 0.32);
+  --ds-accent: var(--ds-primitive-indigo-11);
+  --ds-accent-strong: #c7d2fe;
+  --ds-accent-soft: rgba(129, 140, 248, 0.12);
+  --ds-accent-border: rgba(129, 140, 248, 0.35);
 
-  --ds-status-success: var(--ds-primitive-jade-11);
+  --ds-status-success: var(--ds-primitive-jade-9);
   --ds-status-success-soft: rgba(52, 211, 153, 0.1);
   --ds-status-warning: var(--ds-primitive-amber-11);
   --ds-status-warning-soft: rgba(251, 191, 36, 0.1);
@@ -85,7 +85,7 @@
   --ds-status-proposal: var(--ds-primitive-violet-11);
   --ds-status-proposal-soft: rgba(167, 139, 250, 0.1);
 
-  --ds-selection: rgba(45, 212, 191, 0.26);
+  --ds-selection: rgba(99, 102, 241, 0.3);
   --ds-shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.025);
   --ds-shadow-float: 0 18px 48px rgba(0, 0, 0, 0.38);
 

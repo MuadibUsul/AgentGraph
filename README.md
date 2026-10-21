@@ -158,8 +158,11 @@ endpoints, and the console uses it directly (no admin token needed).
 
 Google login uses Google Identity Services + `POST /v1/auth/google` with a
 Google ID token. Set `GOOGLE_CLIENT_ID` to a Web OAuth client ID and add
-`https://<your-console-host>` to its authorized JavaScript origins. No client
-secret is required because the backend verifies the ID token with Google.
+`https://agentgraph.fusionpropulsion.space` (plus `http://localhost:3000` for
+development) to its authorized JavaScript origins. No client secret is required
+because the backend verifies the ID token with Google. Until the client ID is
+set, the login page hides the Google button and `/v1/auth/config` reports
+`google_enabled: false`.
 `GET /v1/auth/config` tells the console whether signup and Google are enabled.
 Email verification (delivery of a confirmation link) is not implemented yet.
 
@@ -682,7 +685,7 @@ Implemented in v3.2:
 - **Bilingual console** — a persistent EN/中文 toggle (`agentgraph.lang`),
   translated navigation, cards, tables, modals, empty/error copy, status/role
   labels and localized numbers/dates; technical identifiers stay monospace.
-- **v3.3 console refresh** — flat graphite surfaces, one solid teal action
+- **v3.3 console refresh** — flat graphite surfaces, one solid indigo action
   color, 14px body/12px metadata, 264px sidebar, compact statistics, underline
   tabs with a single alert badge, a mobile connection dialog, and fixed-layout
   state tables that keep long JSON inside its column. Design evidence lives in

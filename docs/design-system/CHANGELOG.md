@@ -4,7 +4,7 @@
 
 ### Inherited
 
-- Dark control-room identity, teal action accent, compact information density,
+- Dark control-room identity, indigo action accent, compact information density,
   monospace identifiers, and all existing navigation, task, document, agent,
   governance and audit information architecture.
 - All product copy, task/document/lease/proposal semantics and backend APIs.
@@ -15,7 +15,7 @@
 - Removed the page-wide grid/gradient background, card gradients, glow shadows,
   hover lifts and the pulsing live dot.
 - `--ds-*` tokens rebuilt around a 1–12 graphite ramp with explicit page,
-  panel, raised and inset surfaces; teal action is now `#2dd4bf`.
+  panel, raised and inset surfaces; indigo action is now `#4f46e5`.
 - Added `--ds-border-control` (`#52657d`, 3.03:1) for interactive control
   boundaries; dividers remain quieter.
 - Typography raised: 14px body, 12px metadata, 11px minimum chips/captions.
@@ -36,11 +36,37 @@
 - Priority `0` renders as **Normal**; audit count uses singular/plural copy.
 - Banner close buttons and workspace buttons expose accessible names/state.
 
+### 2026-10-21 — Indigo / Iris palette
+
+- Replaced the teal brand/action accent with indigo `#4f46e5` (hover
+  `#5b5bf0`, foreground white) and periwinkle accent text `#a5b4fc` /
+  `#c7d2fe`.
+- Green is now reserved for success/DONE semantics (`#34d399`); action,
+  selection and focus no longer share the success hue.
+- Updated auth aurora/gradient/CTA, console active states, focus rings,
+  favicon and all remaining hardcoded teal values.
+- Contrast gate: 15/15 pairs pass (primary button 6.29:1, accent 9.94:1,
+  focus ring 9.09:1).
+
+## 2026-10-21 — self-service auth experience
+
+- Split authentication out of the console: `/dashboard/login/` is a dedicated
+  full-screen sign-in/signup surface with a Cult-UI-inspired aurora/grid
+  backdrop, value proposition, proof points and one auth card.
+- Moved admin token entry to a separate `/dashboard/connect/` operator page.
+  The console no longer renders a second login form or an admin connection form
+  in the sidebar; unauthenticated visits redirect to `/dashboard/login/`.
+- The signed-in console uses a human session and maps tenant-admin paths to
+  `/v1/human` and tenant `/v1` endpoints; the sidebar shows an account card
+  instead of a token form.
+- Email registration creates a free workspace + OWNER; Google ID-token login is
+  implemented and appears automatically when `GOOGLE_CLIENT_ID` is configured.
+
 ### 2026-10-20 — browser tab identity
 
 - Added `dashboard/app/icon.svg`, `icon.png`, `favicon.ico` (16/32/48) and
   `apple-icon.png` (180×180): graphite rounded tile with the three-node
-  AgentGraph graph in teal.
+  AgentGraph graph in indigo.
 - Next.js static export emits favicon, 512px PNG and Apple touch icon links;
   verified all three return 200 in production.
 
@@ -82,7 +108,7 @@
 
 ### Inherited
 
-- Dark control-room identity, teal action accent, compact information density,
+- Dark control-room identity, indigo action accent, compact information density,
   monospace identifiers, existing sidebar/topbar/task/document/audit layouts.
 - Product copy and all task/document/lease/proposal semantics.
 

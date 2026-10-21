@@ -36,7 +36,6 @@ import type {
   AgentToken,
   ApiRequest,
   AuditPayload,
-  AuthConfig,
   AuthSession,
   Budget,
   DocumentDetail,
@@ -126,15 +125,6 @@ export default function ConsolePage() {
   const [sessionMode, setSessionMode] = useState(false);
   const [sessionToken, setSessionToken] = useState("");
   const [sessionUser, setSessionUser] = useState<HumanUser | null>(null);
-  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
-  const [authName, setAuthName] = useState("");
-  const [authWorkspace, setAuthWorkspace] = useState("");
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const googleRef = useRef<HTMLDivElement>(null);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
@@ -164,7 +154,6 @@ export default function ConsolePage() {
   const [live, setLive] = useState(false);
   const [lastEvent, setLastEvent] = useState<StreamEvent | null>(null);
 
-  const [showConnection, setShowConnection] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [newWorkspaceTier, setNewWorkspaceTier] = useState("developer_5usd");
@@ -207,11 +196,12 @@ export default function ConsolePage() {
     setSessionToken(session);
     setMounted(true);
     void probe(base);
-    void loadAuthConfig(base);
     if (session) {
       void connectWithSession(base, session, { silent: true });
     } else if (token) {
       void connectWith(base, token, { silent: true });
+    } else {
+      window.location.replace("/dashboard/login/");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -230,7 +220,6 @@ export default function ConsolePage() {
         setTaskDetail(null);
         setSlotEditor(null);
         setKeyReveal(null);
-        setShowConnection(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -473,17 +462,6 @@ export default function ConsolePage() {
     }
   }
 
-  async function loadAuthConfig(base: string) {
-    try {
-      const response = await fetch(`${normalizeBase(base)}/v1/auth/config`, {
-        signal: AbortSignal.timeout(10000),
-      });
-      if (response.ok) setAuthConfig((await response.json()) as AuthConfig);
-    } catch {
-      setAuthConfig(null);
-    }
-  }
-
   function applyWorkspaceSession(
     base: string,
     token: string,
@@ -506,7 +484,7 @@ export default function ConsolePage() {
     setSessionUser(session.user);
     setSessionMode(true);
     setConnected(true);
-    setAuthError(null);
+    setError(null);
     localStorage.setItem(BASE_KEY, normalizeBase(base));
     localStorage.setItem(SESSION_KEY, token);
     localStorage.removeItem(TOKEN_KEY);
@@ -544,143 +522,13 @@ export default function ConsolePage() {
       setConnected(false);
       setSessionMode(false);
       localStorage.removeItem(SESSION_KEY);
-      setAuthError(
+      setError(
         caught instanceof Error ? caught.message : t("Unable to sign in."),
       );
     } finally {
       setConnecting(false);
     }
   }
-
-  async function submitAuth(event: React.FormEvent) {
-    event.preventDefault();
-    setAuthBusy(true);
-    setAuthError(null);
-    try {
-      const registering = authMode === "register";
-      const response = await fetch(
-        `${normalizeBase(apiBase)}/v1/auth/${registering ? "register" : "login"}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
-            registering
-              ? {
-                  email: authEmail,
-                  password: authPassword,
-                  display_name: authName,
-                  workspace_name: authWorkspace || undefined,
-                }
-              : { email: authEmail, password: authPassword },
-          ),
-          signal: AbortSignal.timeout(30000),
-        },
-      );
-      if (!response.ok) {
-        let message = t("Unable to sign in.");
-        try {
-          const body = await response.json();
-          message = body?.error?.message ?? message;
-        } catch {
-          // Keep the generic message.
-        }
-        throw new Error(message);
-      }
-      const session = (await response.json()) as AuthSession;
-      applyWorkspaceSession(apiBase, session.token, session);
-      setAuthPassword("");
-      setNotice(
-        registering
-          ? t("Workspace created. Welcome to AgentGraph.")
-          : t("Signed in as {email}.", { email: session.user.email }),
-      );
-    } catch (caught) {
-      setAuthError(
-        caught instanceof Error ? caught.message : t("Unable to sign in."),
-      );
-    } finally {
-      setAuthBusy(false);
-    }
-  }
-
-  async function googleSignIn(credential: string) {
-    setAuthBusy(true);
-    setAuthError(null);
-    try {
-      const response = await fetch(`${normalizeBase(apiBase)}/v1/auth/google`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credential }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (!response.ok) {
-        let message = t("Google sign-in failed.");
-        try {
-          const body = await response.json();
-          message = body?.error?.message ?? message;
-        } catch {
-          // Keep the generic message.
-        }
-        throw new Error(message);
-      }
-      const session = (await response.json()) as AuthSession;
-      applyWorkspaceSession(apiBase, session.token, session);
-      setNotice(t("Signed in as {email}.", { email: session.user.email }));
-    } catch (caught) {
-      setAuthError(
-        caught instanceof Error ? caught.message : t("Google sign-in failed."),
-      );
-    } finally {
-      setAuthBusy(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!authConfig?.google_client_id || connected) return;
-    let cancelled = false;
-    const initialize = () => {
-      if (cancelled) return;
-      const google = (window as unknown as {
-        google?: {
-          accounts?: {
-            id?: {
-              initialize: (options: Record<string, unknown>) => void;
-              renderButton: (element: HTMLElement, options: Record<string, unknown>) => void;
-            };
-          };
-        };
-      }).google;
-      const id = google?.accounts?.id;
-      if (!id || !googleRef.current) return;
-      id.initialize({
-        client_id: authConfig.google_client_id,
-        callback: (response: { credential?: string }) => {
-          if (response.credential) void googleSignIn(response.credential);
-        },
-      });
-      id.renderButton(googleRef.current, {
-        theme: "outline",
-        size: "large",
-        width: 320,
-        text: "continue_with",
-      });
-    };
-    const existing = document.getElementById("google-identity-script");
-    if (existing) {
-      initialize();
-    } else {
-      const script = document.createElement("script");
-      script.id = "google-identity-script";
-      script.src = "https://accounts.google.com/gsi/client";
-      script.async = true;
-      script.onload = initialize;
-      document.head.appendChild(script);
-    }
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authConfig, connected, apiBase]);
 
   async function refreshWorkspaces() {
     if (sessionMode) {
@@ -803,20 +651,8 @@ export default function ConsolePage() {
     }
   }
 
-  async function handleConnect(event: React.FormEvent) {
-    event.preventDefault();
-    if (!apiBase.trim()) {
-      setError(t("API endpoint is required."));
-      return;
-    }
-    if (!adminToken.trim()) {
-      setError(t("Admin token is required. Paste the ADMIN_TOKEN from the server."));
-      return;
-    }
-    await connectWith(apiBase, adminToken);
-  }
-
   async function disconnect() {
+    const wasSession = sessionMode;
     if (sessionMode && sessionToken) {
       try {
         await fetch(`${normalizeBase(apiBase)}/v1/auth/logout`, {
@@ -854,6 +690,7 @@ export default function ConsolePage() {
     setKeyReveal(null);
     setTaskDetail(null);
     setLive(false);
+    window.location.assign(wasSession ? "/dashboard/login/" : "/dashboard/connect/");
   }
 
   async function createWorkspace(event: React.FormEvent) {
@@ -1164,44 +1001,26 @@ export default function ConsolePage() {
                 <small>{selectedWorkspace?.name}</small>
               </span>
             </div>
-            <button type="button" className="button subtle full" onClick={disconnect}>
+            <button type="button" className="button subtle full" onClick={() => void disconnect()}>
               {t("Sign out")}
             </button>
           </div>
         ) : (
-        <form className="connection" onSubmit={handleConnect}>
-          <div className="connection-title">{t("Control plane")}</div>
-          <label htmlFor="api-base">{t("API endpoint")}</label>
-          <input
-            id="api-base"
-            value={apiBase}
-            onChange={(event) => setApiBase(event.target.value)}
-            placeholder="http://localhost:8000"
-            autoComplete="url"
-            spellCheck={false}
-          />
-          <label htmlFor="admin-token">{t("Admin token")}</label>
-          <input
-            id="admin-token"
-            type="password"
-            value={adminToken}
-            onChange={(event) => setAdminToken(event.target.value)}
-            placeholder="ADMIN_TOKEN"
-            autoComplete="current-password"
-          />
-          {connected ? (
-            <button type="button" className="button subtle full" onClick={disconnect}>
-              {t("Disconnect")}
+          <div className="session-card">
+            <div className="session-card-head">
+              <span className="session-avatar"><IconKey size={14} /></span>
+              <span>
+                <strong>{t("Operator session")}</strong>
+                <small>{t("Admin token")}</small>
+              </span>
+            </div>
+            <a className="button subtle full" href="/dashboard/connect/">
+              {t("Connection settings")}
+            </a>
+            <button type="button" className="button subtle full" onClick={() => void disconnect()}>
+              {t("Sign out")}
             </button>
-          ) : (
-            <button type="submit" className="button primary full" disabled={connecting}>
-              {connecting ? <><Spinner /> {t("Connecting…")}</> : t("Connect to gateway")}
-            </button>
-          )}
-          <p className="connection-note">
-            {t("The token stays in this browser. Only use the console on a trusted machine.")}
-          </p>
-        </form>
+          </div>
         )}
       </aside>
 
@@ -1219,15 +1038,6 @@ export default function ConsolePage() {
             )}
           </div>
           <div className="topbar-actions">
-            {!sessionMode && (
-              <button
-                type="button"
-                className="button ghost mobile-only"
-                onClick={() => setShowConnection(true)}
-              >
-                <IconKey /> {t("Connection")}
-              </button>
-            )}
             <LanguageToggle />
             <a className="button ghost" href={`${normalizeBase(apiBase)}/docs`} target="_blank" rel="noreferrer">
               {t("API docs")}
@@ -1293,95 +1103,6 @@ export default function ConsolePage() {
               <p className="lede">
                 {t("Shared documents, a live state grid, TTL task leases, progressive L1→L2 handoffs, a ping-pong circuit breaker, and session-batch undo — all in one PostgreSQL core with MCP-native access.")}
               </p>
-              <div className="auth-panel">
-                <div className="auth-tabs" role="tablist" aria-label={t("Account access")}>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={authMode === "login"}
-                    className={`auth-tab ${authMode === "login" ? "active" : ""}`}
-                    onClick={() => setAuthMode("login")}
-                  >
-                    {t("Sign in")}
-                  </button>
-                  {authConfig?.signup_enabled !== false && (
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={authMode === "register"}
-                      className={`auth-tab ${authMode === "register" ? "active" : ""}`}
-                      onClick={() => setAuthMode("register")}
-                    >
-                      {t("Create account")}
-                    </button>
-                  )}
-                </div>
-                <form className="auth-form" onSubmit={submitAuth}>
-                  {authMode === "register" && (
-                    <>
-                      <label className="field">
-                        <span>{t("Your name")}</span>
-                        <input
-                          value={authName}
-                          onChange={(event) => setAuthName(event.target.value)}
-                          placeholder={t("Ada Lovelace")}
-                          autoComplete="name"
-                          required
-                        />
-                      </label>
-                      <label className="field">
-                        <span>{t("Workspace name")}</span>
-                        <input
-                          value={authWorkspace}
-                          onChange={(event) => setAuthWorkspace(event.target.value)}
-                          placeholder={t("My Agent Workspace")}
-                          maxLength={128}
-                        />
-                      </label>
-                    </>
-                  )}
-                  <label className="field">
-                    <span>{t("Email")}</span>
-                    <input
-                      type="email"
-                      value={authEmail}
-                      onChange={(event) => setAuthEmail(event.target.value)}
-                      placeholder="you@example.com"
-                      autoComplete="email"
-                      required
-                    />
-                  </label>
-                  <label className="field">
-                    <span>{t("Password")}</span>
-                    <input
-                      type="password"
-                      value={authPassword}
-                      onChange={(event) => setAuthPassword(event.target.value)}
-                      placeholder={t("At least 8 characters")}
-                      autoComplete={authMode === "register" ? "new-password" : "current-password"}
-                      minLength={8}
-                      required
-                    />
-                  </label>
-                  {authError && <div className="inline-error" role="alert">{authError}</div>}
-                  <button type="submit" className="button primary full" disabled={authBusy}>
-                    {authBusy
-                      ? <><Spinner /> {t("Please wait…")}</>
-                      : authMode === "register"
-                        ? t("Create account")
-                        : t("Sign in")}
-                  </button>
-                </form>
-                {authConfig?.google_enabled && (
-                  <>
-                    <div className="auth-divider"><span>{t("or")}</span></div>
-                    <div ref={googleRef} className="google-button" />
-                  </>
-                )}
-                <p className="auth-note">
-                  {t("Operators can connect with the admin token in the sidebar.")}
-                </p>
-              </div>
               <div className="welcome-grid">
                 <div className="welcome-card">
                   <span className="step">01</span>
@@ -1585,67 +1306,6 @@ export default function ConsolePage() {
           )}
         </div>
       </main>
-
-      {showConnection && (
-        <Modal
-          title={t("Control plane")}
-          subtitle={t("Connect to the AgentGraph API with the endpoint and admin token from your deployment.")}
-          onClose={() => setShowConnection(false)}
-        >
-          <form
-            onSubmit={(event) => {
-              void handleConnect(event);
-              setShowConnection(false);
-            }}
-          >
-            <label className="field">
-              <span>{t("API endpoint")}</span>
-              <input
-                id="api-base-mobile"
-                value={apiBase}
-                onChange={(event) => setApiBase(event.target.value)}
-                placeholder="http://localhost:8000"
-                autoComplete="url"
-                spellCheck={false}
-              />
-            </label>
-            <label className="field">
-              <span>{t("Admin token")}</span>
-              <input
-                id="admin-token-mobile"
-                type="password"
-                value={adminToken}
-                onChange={(event) => setAdminToken(event.target.value)}
-                placeholder="ADMIN_TOKEN"
-                autoComplete="current-password"
-              />
-            </label>
-            <p className="connection-note">
-              {t("The token stays in this browser. Only use the console on a trusted machine.")}
-            </p>
-            <div className="modal-actions">
-              <button type="button" className="button ghost" onClick={() => setShowConnection(false)}>
-                {t("Cancel")}
-              </button>
-              {connected ? (
-                <button
-                  type="button"
-                  className="button ghost"
-                  onClick={() => {
-                    void disconnect();
-                    setShowConnection(false);
-                  }}
-                >
-                  {t("Disconnect")}
-                </button>
-              ) : null}
-              <button type="submit" className="button primary" disabled={connecting}>
-                {connecting ? <><Spinner /> {t("Connecting…")}</> : t("Connect to gateway")}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
 
       {showCreateWorkspace && (
         <Modal

@@ -7,7 +7,7 @@ v3.2 declarations. Existing component CSS keeps its short aliases (`--bg`,
 
 ## Architecture
 
-1. **Primitive** — real graphite/slate ramp plus teal, violet, blue, amber,
+1. **Primitive** — real graphite/slate ramp plus indigo, violet, blue, amber,
    ruby and jade status colors.
 2. **Semantic** — surface, text, border, action, focus and status roles.
 3. **Component** — component CSS uses the aliases and semantic `--ds-*` tokens.
@@ -26,12 +26,12 @@ v3.2 declarations. Existing component CSS keeps its short aliases (`--bg`,
 | `--ds-text-primary` | `#eef2f8` (17.63:1 on page) | `--text` |
 | `--ds-text-secondary` | `#a7b3c5` (9.34:1 on page) | `--muted` |
 | `--ds-text-muted` | `#8a97a9` (6.68:1 page / 6.11:1 panel) | `--muted-2` |
-| `--ds-action-primary` | `#2dd4bf`; fg `#041512` (10.06:1) | `--accent` |
+| `--ds-action-primary` | `#4f46e5`; fg `#ffffff` (6.29:1) | `--accent` |
 | `--ds-status-warning` | `#fcd34d` | `--amber` |
 | `--ds-status-danger` | `#fda4af` | `--danger` |
 | `--ds-status-info` | `#93c5fd` | `--sky` |
 | `--ds-status-proposal` | `#c4b5fd` | `--violet` |
-| `--ds-focus-ring` | `#5eead4` (12.25:1) | `:focus-visible` |
+| `--ds-focus-ring` | `#a5b4fc` (9.09:1) | `:focus-visible` |
 | `--ds-radius-sm/md/lg` | 6 / 10 / 14px | `--radius-sm`, `--radius` |
 | `--ds-motion-fast/normal` | 120 / 180ms | transitions |
 

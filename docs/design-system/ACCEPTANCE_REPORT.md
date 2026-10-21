@@ -2,7 +2,7 @@
 
 **Project:** AgentGraph
 **Version:** 3.2.1 (v3.3 console refresh, build marker `3.2.1-ui.2`)
-**Style:** quiet high-density dark operations console; flat graphite surfaces, one teal action accent
+**Style:** quiet high-density dark operations console; flat graphite surfaces, one indigo action accent
 **Surface:** `https://agentgraph.fusionpropulsion.space/dashboard/` (fallback: `https://agentgraph.104-207-82-85.nip.io/dashboard/`)
 
 ## Automated evidence
@@ -13,7 +13,7 @@
 | Backend tests | `TEST_DATABASE_URL=… pytest -q` | PASS — 87 passed |
 | Dashboard typecheck | `cd dashboard && npx tsc --noEmit` | PASS |
 | Dashboard build | `cd dashboard && npm run build` | PASS — static export, build marker `3.2.1-ui.2` in chunk |
-| Core contrast | `python scripts/check_contrast.py` | PASS — 13/13 pairs (11 text ≥4.5:1, 2 UI ≥3:1) |
+| Core contrast | `python scripts/check_contrast.py` | PASS — 15/15 pairs (13 text ≥4.5:1, 2 UI ≥3:1) |
 | Production readiness | `GET /readyz` | PASS — `3.2.1`, DB ok, MCP enabled |
 | Production dashboard | `GET /dashboard/` | PASS — 200; served chunk `page-ae720507e3a62b6b.js`, CSS `05383bea3506189e.css` |
 | Docs auth | `GET /docs` | PASS — 401 unauthenticated, 200 with admin Basic auth |

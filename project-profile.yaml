@@ -27,12 +27,12 @@ execution:
     - business_logic_changes
     - production_deployment
 brand:
-  character: 'Calm, precise, high-density control room; teal is the single action accent'
+  character: 'Calm, precise, high-density control room; indigo is the single action accent'
   references: []
   logo_path: ''
   preserve_existing_brand: true
   core_colors:
-    primary: '#5eead4'
+    primary: '#4f46e5'
     secondary: '#a78bfa'
     tertiary: '#7dd3fc'
   neutral_family: 'slate'

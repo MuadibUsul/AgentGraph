@@ -1,5 +1,17 @@
 # AgentGraph Component Contract
 
+## Authentication pages
+
+- `/dashboard/login/` is the only customer sign-in surface; it uses a two-column
+  value-proposition/auth-card layout on desktop and a compact stacked layout on
+  mobile (proof grid hidden to keep the form above the fold).
+- `/dashboard/connect/` is the operator-only admin-token page; customer login
+  never shows an admin token field.
+- The console redirects unauthenticated visitors to `/login/` and renders an
+  account card, not a second login form, once signed in.
+- Google Identity Services renders only when `/v1/auth/config` returns a client
+  ID; otherwise the email/password flow remains the only visible option.
+
 ## Language toggle
 
 - A two-button segmented control (`EN` / `中文`) sits in the top bar.
@@ -10,7 +22,7 @@
 
 ## Navigation and layout
 
-- Sidebar workspaces are native buttons; active state uses surface + a 2px teal
+- Sidebar workspaces are native buttons; active state uses surface + a 2px indigo
   inset edge + `aria-current`, not color alone.
 - Tabs are native buttons inside a `role="tablist"`; each tab has `aria-selected`
   and `aria-controls`, and the content is a `<div role="tabpanel">` linked by
@@ -32,8 +44,8 @@
 Variants: primary, ghost, subtle, danger, small, icon. Minimum interactive size
 is 36px for standard buttons, 32px for icon buttons, 40px for tabs and 44px for
 document rows; WCAG 2.2 target-size minimum is 24px. Primary buttons are solid
-teal with no gradient or glow. Loading buttons disable repeated submission and
-show a spinner. Focus-visible uses the global teal outline.
+indigo with no gradient or glow. Loading buttons disable repeated submission and
+show a spinner. Focus-visible uses the global indigo outline.
 
 ## Inputs and forms
 

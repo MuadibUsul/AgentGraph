@@ -8,7 +8,7 @@ but 320px/390px widths are part of the verification set.
 ## Implemented in this pass
 
 - Skip link to `#main-content`, localized in both copy sets.
-- Global `:focus-visible` outline uses the teal focus ring; interactive control
+- Global `:focus-visible` outline uses the indigo focus ring; interactive control
   borders measure 3.03:1 against panels.
 - Dialog semantics (`role="dialog"`, `aria-modal`, `aria-labelledby`), focus
   entry, Tab trap, Escape close, focus restoration and scroll lock in `Modal`.
@@ -46,14 +46,16 @@ PASS text-secondary/page       9.34:1 (min 4.5:1)
 PASS text-muted/page           6.68:1 (min 4.5:1)
 PASS text-muted/panel          6.11:1 (min 4.5:1)
 PASS text-secondary/panel      8.54:1 (min 4.5:1)
-PASS primary-button           10.06:1 (min 4.5:1)
-PASS accent/page              10.64:1 (min 4.5:1)
+PASS primary-button            6.29:1 (min 4.5:1)
+PASS accent/page               9.94:1 (min 4.5:1)
+PASS accent-strong/page       13.28:1 (min 4.5:1)
+PASS success/page             10.30:1 (min 4.5:1)
 PASS danger/page              10.48:1 (min 4.5:1)
 PASS warning/page             13.74:1 (min 4.5:1)
 PASS info/page                10.99:1 (min 4.5:1)
 PASS proposal/page            10.73:1 (min 4.5:1)
 PASS control-border/panel      3.03:1 (min 3.0:1)
-PASS focus-ring/panel         12.25:1 (min 3.0:1)
+PASS focus-ring/panel          9.09:1 (min 3.0:1)
 ```
 
 ## Manual checks still required

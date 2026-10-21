@@ -3,7 +3,7 @@
 ## Visual claim
 
 **A quiet operations console for long human-in-the-loop sessions:** flat
-graphite surfaces, one teal action color, precise 13–14px data type, compact
+graphite surfaces, one indigo action color, precise 13–14px data type, compact
 density, and one hierarchy: workspace → work → detail. This is an operations
 surface, not a marketing page.
 
@@ -23,7 +23,7 @@ without changing components.
 
 - Neutral family: cool graphite/slate, with distinct page, panel and raised
   surfaces instead of transparency layers.
-- Brand/action: teal (`#2dd4bf`); hover `#5eead4`; foreground `#041512`.
+- Brand/action: indigo (`#4f46e5`); hover `#a5b4fc`; foreground `#ffffff`.
 - Secondary semantic accents: violet for proposals/review, blue for live state,
   amber for human gates, ruby for danger/failure, jade for success.
 - Interactive control borders use `#52657d` (3.03:1 against panels); dividers
