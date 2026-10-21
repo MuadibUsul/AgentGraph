@@ -76,6 +76,7 @@ from app.schemas import (
     WorkspaceStatsResponse,
 )
 from app.services import addresses as address_service
+from app.services import lineage as lineage_service
 
 router = APIRouter(prefix="/v1", tags=["AgentGraph v3"])
 
@@ -379,6 +380,9 @@ async def list_documents(
     updated_after: datetime | None = Query(default=None),
     updated_before: datetime | None = Query(default=None),
     sort: str = Query(default="updated_desc"),
+    written_by_subtree: str | None = Query(
+        default=None, description="tok_… id: documents written by this token or its subtree"
+    ),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentListResponse:
@@ -402,6 +406,7 @@ async def list_documents(
         updated_after=updated_after,
         updated_before=updated_before,
         sort=sort,
+        written_by_subtree=written_by_subtree,
     )
 
 
@@ -448,6 +453,57 @@ async def deprecate_document(
 ) -> DocumentMutationResponse:
     return await services.set_document_status(
         session, principal, doc_key, body, action="deprecate"
+    )
+
+
+@router.get(
+    "/documents/{doc_key:path}/explain",
+    summary="Who wrote a version, who issued their token and what it could do then",
+)
+async def explain_write(
+    doc_key: str,
+    version: int | None = Query(default=None, ge=1),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "doc:read")
+    return await lineage_service.explain_write(session, principal, doc_key, version)
+
+
+@router.get("/tokens/{ref}", summary="Inspect a token (self, an ancestor or a descendant)")
+async def get_token(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await lineage_service.get_token(session, principal, ref)
+
+
+@router.get("/tokens/{ref}/lineage", summary="Token chain from the root token")
+async def get_lineage(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await lineage_service.get_lineage(session, principal, ref)
+
+
+@router.get("/tokens/{ref}/tree", summary="Descendant tokens (own subtree only)")
+async def list_token_tree(
+    ref: str,
+    include_inactive: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=500),
+    cursor: str | None = Query(default=None),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await lineage_service.list_token_tree(
+        session,
+        principal,
+        ref,
+        include_inactive=include_inactive,
+        limit=limit,
+        cursor=cursor,
     )
 
 

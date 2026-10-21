@@ -90,6 +90,10 @@ class Workspace(Base):
         String(32), nullable=False, default="developer_5usd",
         server_default=text("'developer_5usd'"),
     )
+    # The workspace key is this workspace's root token (PRD AG-ID-03).
+    root_token_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
     # Server-derived: a trigger creates a root tenant when none is supplied.
     tenant_id: Mapped[str] = mapped_column(
         String(40), ForeignKey("tenants.id"), nullable=False,
@@ -201,6 +205,13 @@ class AgentToken(Base):
     canonical_id: Mapped[str] = mapped_column(
         String(40), unique=True, nullable=False, server_default=FetchedValue()
     )
+    parent_token_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    root_token_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
+    issued_by_agent_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
     __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -262,6 +273,13 @@ class SharedDocument(Base):
     )
     alias_legacy: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    # Lineage stamps are set by database triggers from app.lineage_stamp.
+    created_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
+    updated_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
     )
     __mapper_args__ = {"eager_defaults": True}
 
@@ -365,6 +383,13 @@ class ContextSlot(Base):
     canonical_id: Mapped[str] = mapped_column(
         String(40), unique=True, nullable=False, server_default=FetchedValue()
     )
+    # Lineage stamps are set by database triggers from app.lineage_stamp.
+    created_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
+    updated_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
     __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -430,6 +455,13 @@ class CollabTask(Base):
     # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
     canonical_id: Mapped[str] = mapped_column(
         String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    # Lineage stamps are set by database triggers from app.lineage_stamp.
+    created_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
+    updated_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
     )
     __mapper_args__ = {"eager_defaults": True}
 
@@ -685,6 +717,11 @@ class StateAuditDiff(Base):
 
 class DocumentVersion(Base):
     __tablename__ = "document_versions"
+
+    stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue()
+    )
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
@@ -1509,4 +1546,39 @@ class DocumentRef(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
     )
+
+
+class GrantSnapshot(Base):
+    """Immutable record of what a token was granted when issued (PRD AG-ID-03)."""
+
+    __tablename__ = "grant_snapshots"
+
+    id: Mapped[str] = mapped_column(
+        String(40), primary_key=True, server_default=FetchedValue()
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    token_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    token_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    parent_token_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    principal_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    role_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    scopes: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    namespaces: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    can_issue: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    max_descendants: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    budget_limits: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ttl_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+    issuer_stamp: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    parent_effective_grant_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    grant_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    backfilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    __mapper_args__ = {"eager_defaults": True}
 

@@ -53,7 +53,10 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import idempotency
+from app.services import lineage as lineage_service
 from app.services.common import set_event_platform
+from app.services.lineage import stamp_for
+from app.stamp_context import set_current_stamp
 from app.tenant import activate_tenant
 from app.versioning import current_version
 
@@ -430,6 +433,7 @@ async def _principal_for_call(session: AsyncSession) -> Principal:
         )
     except ApiError as exc:
         raise _api_error(exc) from exc
+    set_current_stamp(await stamp_for(principal))
     await activate_tenant(session, principal.workspace.id, principal.tenant_scope)
     from app.services.common import set_audit_actor
     from app.services.usage import enforce_rate_limit
@@ -1202,6 +1206,71 @@ async def rename_document(
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="get_token")
+async def get_token(token_id: str = "self") -> dict[str, Any]:
+    """Inspect a token without its secret: kind, depth, scopes, namespaces, expiry.
+
+    token_id="self" (default) is the calling token. A token may inspect itself,
+    its ancestors and its own subtree; humans and the workspace key see all.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lineage_service.get_token(session, principal, token_id)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_lineage")
+async def get_lineage(token_id: str = "self") -> dict[str, Any]:
+    """Return the chain of tokens from the workspace root token down to token_id."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lineage_service.get_lineage(session, principal, token_id)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_token_tree")
+async def list_token_tree(
+    token_id: str = "self",
+    include_inactive: bool = False,
+    cursor: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=500)] = 100,
+) -> dict[str, Any]:
+    """List descendant tokens of token_id (no secrets). Only your own subtree."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lineage_service.list_token_tree(
+                session,
+                principal,
+                token_id,
+                include_inactive=include_inactive,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="explain_write")
+async def explain_write(ref: str, version: int | None = None) -> dict[str, Any]:
+    """Answer who wrote a document version, who issued their token, and what
+    the token was allowed to do at write time (the grant snapshot)."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lineage_service.explain_write(session, principal, ref, version)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
 
 
 @mcp.tool(name="propose_document_change")

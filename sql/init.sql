@@ -325,6 +325,10 @@ BEGIN
             row_data->>'agent_signature',
             'system'
         ),
+        'actor_stamp', COALESCE(
+            NULLIF(current_setting('app.lineage_stamp', true), '')::jsonb,
+            '{"kind": "system", "principal_id": "system", "token_id": null, "chain": ["system"]}'::jsonb
+        ),
         'version', NULLIF(row_data->>'version', '')::int,
         'status', COALESCE(
             row_data->>'status',

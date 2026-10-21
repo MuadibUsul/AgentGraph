@@ -56,6 +56,8 @@ from app.services.common import (
     utcnow,
     workspace_info,
 )
+from app.services.lineage import snapshot_token
+from app.stamp_context import current_stamp
 
 settings = get_settings()
 
@@ -571,6 +573,12 @@ async def create_agent_token(
         ),
         per_minute_limit=request.per_minute_limit,
         monthly_token_budget=request.monthly_token_budget,
+        # Branch tokens hang off the workspace root token (PRD AG-ID-03).
+        parent_token_id=workspace.root_token_id,
+        root_token_id=workspace.root_token_id,
+        depth=1,
+        issued_by_agent_id=(current_stamp() or {}).get("principal_id") or "admin",
+        purpose=request.purpose,
     )
     session.add(token)
     try:
@@ -578,6 +586,7 @@ async def create_agent_token(
     except IntegrityError:
         await session.rollback()
         raise ApiError(409, "agent_token_exists", "agent token already exists") from None
+    await snapshot_token(session, workspace, token)
     await session.commit()
     return AgentTokenCreatedResponse(token=agent_token_out(token), api_key=raw_key)
 
@@ -637,6 +646,20 @@ async def update_agent_token(
         token.per_minute_limit = request.per_minute_limit
     if request.monthly_token_budget is not None:
         token.monthly_token_budget = request.monthly_token_budget
+    grant_changed = any(
+        value is not None
+        for value in (
+            request.role_scope,
+            request.allowed_namespaces,
+            request.expires_in_days,
+            request.per_minute_limit,
+            request.monthly_token_budget,
+        )
+    )
+    if grant_changed:
+        # A changed grant is a new, immutable snapshot; old stamps keep theirs.
+        await session.flush()
+        await snapshot_token(session, workspace, token)
     await session.commit()
     return token
 

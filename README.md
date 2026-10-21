@@ -164,6 +164,14 @@ joins `frontmatter.parts`. Under API version `2026-11` the address grammar and
 register-before-use are enforced; the baseline accepts legacy keys with
 `legacy_alias` / `namespace_auto_registered` warnings.
 
+Every write carries an immutable **lineage stamp** (`created_stamp`,
+`updated_stamp`, version `stamp`, event `actor_stamp`): the token, principal,
+chain from the workspace root token (`tok_…`) and the grant snapshot it held.
+`GET /v1/documents/{ref}/explain` answers who wrote a version, who issued
+their token and what it could do; `GET /v1/tokens/self[/lineage|/tree]`
+inspect tokens; `list_documents(written_by_subtree=tok_…)` shows a subtree's
+blast radius.
+
 All errors carry `class` / `action` / `retryable` / `retry_after_ms`
 (registry: [docs/ERROR_CODES.md](docs/ERROR_CODES.md)). Writes accept an
 `Idempotency-Key` header (REST) or `idempotency_key` argument (MCP) with a 24 h

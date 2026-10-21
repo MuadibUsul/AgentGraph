@@ -138,6 +138,7 @@ def task_summary(task: CollabTask) -> TaskSummary:
         tainted=task.tainted,
         taint_sources=task.taint_sources or [],
         updated_at=task.updated_at,
+        updated_stamp=task.updated_stamp,
     )
 
 
@@ -195,6 +196,7 @@ def document_summary(
         archive_reason=document.archive_reason,
         updated_by=document.updated_by,
         updated_at=document.updated_at,
+        updated_stamp=document.updated_stamp,
     )
 
 
@@ -210,6 +212,7 @@ def document_out(
         content=document.content,
         created_by=document.created_by,
         created_at=document.created_at,
+        created_stamp=document.created_stamp,
         agent_view=render_document(
             document,
             include_content=include_content,

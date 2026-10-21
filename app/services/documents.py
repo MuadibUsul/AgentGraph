@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Numeric, case, func, select, tuple_, update
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,6 +118,7 @@ def _version_summary(version: DocumentVersion) -> DocumentVersionSummary:
         tainted=version.tainted,
         taint_sources=version.taint_sources or [],
         created_at=version.created_at,
+        stamp=version.stamp,
     )
 
 
@@ -364,6 +366,7 @@ async def list_documents(
     updated_after: datetime | None = None,
     updated_before: datetime | None = None,
     sort: str = "updated_desc",
+    written_by_subtree: str | None = None,
 ) -> DocumentListResponse:
     require_permission(principal, "doc:read")
     if limit > settings.max_page_size:
@@ -415,6 +418,20 @@ async def list_documents(
         conditions.append(SharedDocument.updated_at >= updated_after)
     if updated_before is not None:
         conditions.append(SharedDocument.updated_at <= updated_before)
+    if written_by_subtree:
+        # Documents with any version stamped by this token or its descendants
+        # (PRD AG-ID-03 point 5): the blast radius of a token subtree.
+        from app.services.lineage import subtree_token_ids
+
+        token_ids = await subtree_token_ids(session, principal, written_by_subtree)
+        conditions.append(
+            select(DocumentVersion.id)
+            .where(
+                DocumentVersion.document_id == SharedDocument.id,
+                DocumentVersion.stamp["chain"].has_any(postgresql.array(token_ids)),
+            )
+            .exists()
+        )
     total = int(
         await session.scalar(
             select(func.count(SharedDocument.id)).where(*conditions)

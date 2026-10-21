@@ -223,6 +223,7 @@ def _event_dict(row: WorkspaceEvent) -> dict[str, Any]:
         "namespace": row.namespace,
         "assigned_role": row.assigned_role,
         "locked_by_human": row.locked_by_human,
+        "actor_stamp": (row.payload or {}).get("actor_stamp"),
         "event_type": domain_event_type(
             row.source_table, row.action, row.payload
         ),

@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.errors import ApiError
+from app.stamp_context import stamp_json
 
 logger = logging.getLogger("agentgraph.tenant")
 settings = get_settings()
@@ -36,8 +37,10 @@ def _role_identifier() -> str:
 _SCOPE_SQL = text("SELECT tenant_id FROM workspaces WHERE id = CAST(:workspace_id AS uuid)")
 _SET_CONTEXT_SQL = text(
     "SELECT set_config('app.workspace_id', :workspace_id, true), "
-    "set_config('app.tenant_scope', :tenant_scope, true)"
+    "set_config('app.tenant_scope', :tenant_scope, true), "
+    "set_config('app.lineage_stamp', :stamp, true)"
 )
+_SET_STAMP_SQL = text("SELECT set_config('app.lineage_stamp', :stamp, true)")
 
 
 def set_session_tenant(
@@ -79,6 +82,7 @@ async def activate_tenant(
             {
                 "workspace_id": str(workspace_id),
                 "tenant_scope": session.info["tenant_scope"],
+                "stamp": stamp_json(),
             },
         )
     except Exception as exc:  # noqa: BLE001 - fail closed on tenant isolation
@@ -94,12 +98,21 @@ async def activate_tenant(
         ) from exc
 
 
+async def apply_stamp(session: Session) -> None:
+    """Publish the current lineage stamp to the session's open transaction."""
+    await session.execute(_SET_STAMP_SQL, {"stamp": stamp_json()})
+
+
 @event.listens_for(Session, "after_begin")
 def _apply_tenant_context(
     session: Session, transaction: object, connection: object
 ) -> None:
     workspace_id = session.info.get("workspace_id")
+    stamp = stamp_json()
     if not workspace_id or not settings.rls_enabled:
+        if stamp:
+            # Admin and other unscoped sessions still stamp their writes.
+            connection.execute(_SET_STAMP_SQL, {"stamp": stamp})
         return
     role = _role_identifier()
     try:
@@ -114,6 +127,7 @@ def _apply_tenant_context(
             {
                 "workspace_id": str(workspace_id),
                 "tenant_scope": session.info["tenant_scope"],
+                "stamp": stamp_json(),
             },
         )
     except Exception as exc:  # noqa: BLE001 - fail closed on tenant isolation

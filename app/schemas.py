@@ -510,6 +510,7 @@ class TimelineEventRequest(StrictModel):
 class AgentTokenCreateRequest(StrictModel):
     agent_signature: str = Field(min_length=1, max_length=128)
     role_scope: RoleName
+    purpose: str | None = Field(default=None, max_length=1_000)
     allowed_namespaces: list[str] = Field(default_factory=lambda: ["*"])
     is_active: bool = True
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)
@@ -666,6 +667,7 @@ class TaskSummary(BaseModel):
     tainted: bool = False
     taint_sources: list[Any] = Field(default_factory=list)
     updated_at: datetime
+    updated_stamp: dict[str, Any] | None = None
 
 
 class TaskOut(TaskSummary):
@@ -833,12 +835,14 @@ class DocumentSummary(BaseModel):
     archive_reason: str | None = None
     updated_by: str
     updated_at: datetime
+    updated_stamp: dict[str, Any] | None = None
 
 
 class DocumentOut(DocumentSummary):
     content: str
     created_by: str
     created_at: datetime
+    created_stamp: dict[str, Any] | None = None
     agent_view: str
 
 
@@ -1099,6 +1103,9 @@ class DocumentVersionSummary(BaseModel):
     tainted: bool = False
     taint_sources: list[Any] = Field(default_factory=list)
     created_at: datetime
+    stamp: dict[str, Any] | None = Field(
+        default=None, description="Lineage stamp fixed when this version was written"
+    )
 
 
 class DocumentVersionOut(DocumentVersionSummary):

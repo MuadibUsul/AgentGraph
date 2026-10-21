@@ -292,6 +292,10 @@ async def get_principal(
         write=is_write_request(request.method, request.url.path),
         path=request.url.path,
     )
+    from app.services.lineage import stamp_for
+    from app.stamp_context import set_current_stamp
+
+    set_current_stamp(await stamp_for(principal))
     await activate_tenant(session, principal.workspace.id, principal.tenant_scope)
     from app.services.common import set_audit_actor
     from app.services.usage import enforce_rate_limit
@@ -365,6 +369,10 @@ async def require_admin(request: Request) -> None:
     from app.services.common import set_audit_actor_values
 
     set_audit_actor_values("human_admin", None, None)
+    from app.services.lineage import ADMIN_STAMP
+    from app.stamp_context import set_current_stamp
+
+    set_current_stamp(dict(ADMIN_STAMP))
     if not settings.admin_token:
         raise ApiError(
             503,
