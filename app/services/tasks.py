@@ -98,7 +98,9 @@ async def _record_task_failure(
     """
     try:
         async with async_session_factory() as log_session:
-            await activate_tenant(log_session, principal.workspace.id)
+            await activate_tenant(
+                log_session, principal.workspace.id, principal.tenant_scope
+            )
             task = await log_session.scalar(
                 select(CollabTask).where(
                     CollabTask.workspace_id == principal.workspace.id,

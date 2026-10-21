@@ -577,8 +577,49 @@ class WorkspaceInfo(BaseModel):
     created_at: datetime
 
 
+class TenantInfo(BaseModel):
+    id: str
+    alias: str
+    display_name: str
+    tenant_type: str
+    parent_tenant_id: str | None = None
+    root_tenant_id: str
+    path: list[str]
+    depth: int
+    status: str
+
+
+class TenantOut(TenantInfo):
+    billing_owner_tenant_id: str
+    status_reason: str | None = None
+    status_changed_at: datetime | None = None
+    deletion_admin_confirmed_at: datetime | None = None
+    deletion_owner_confirmed_at: datetime | None = None
+    purge_after: datetime | None = None
+    deleted_at: datetime | None = None
+    final_export_id: str | None = None
+    pending_confirmations: list[str] = Field(default_factory=list)
+    workspaces: int = 0
+    created_at: datetime
+
+
+class TenantListResponse(BaseModel):
+    items: list[TenantOut]
+
+
+class TenantSuspendRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class TenantDeleteRequest(StrictModel):
+    confirm: str = Field(
+        min_length=1, max_length=64, description="The tenant alias, exactly"
+    )
+
+
 class WhoAmIResponse(BaseModel):
     workspace: WorkspaceInfo
+    tenant: TenantInfo | None = None
     role: str
     agent_signature: str
     auth_kind: str

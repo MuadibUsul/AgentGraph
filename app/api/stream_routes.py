@@ -17,6 +17,7 @@ from sqlalchemy import select
 from app.auth import (
     Principal,
     can,
+    ensure_tenant_usable,
     extract_bearer_token,
     principal_for_admin,
     require_admin,
@@ -93,6 +94,7 @@ async def get_stream_principal(request: Request) -> Principal:
         )
         if principal is None:
             raise ApiError(401, "unauthorized", "invalid or inactive API key")
+        ensure_tenant_usable(principal, write=False, path=request.url.path)
         from app.services.common import set_audit_actor
 
         set_audit_actor(principal)
@@ -182,7 +184,7 @@ async def _replay(
     last_event_id: int,
 ) -> list[dict[str, Any]]:
     async with async_session_factory() as session:
-        set_session_tenant(session, principal.workspace.id)
+        set_session_tenant(session, principal.workspace.id, principal.tenant_scope)
         rows = (
             await session.execute(
                 select(WorkspaceEvent)
@@ -256,6 +258,8 @@ def _key_revalidator(raw_key: str, original: Principal) -> Revalidator:
                 session, raw_key, agent_hint=original.agent_signature
             )
         if principal is None or principal.workspace.id != original.workspace.id:
+            return None
+        if principal.tenant is not None and principal.tenant.status == "deleting":
             return None
         return principal
 

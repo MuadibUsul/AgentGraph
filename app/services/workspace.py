@@ -61,8 +61,11 @@ settings = get_settings()
 
 
 async def whoami(principal: Principal) -> WhoAmIResponse:
+    from app.services.tenants import tenant_info
+
     return WhoAmIResponse(
         workspace=workspace_info(principal.workspace),
+        tenant=tenant_info(principal.tenant) if principal.tenant else None,
         role=principal.role.value,
         agent_signature=principal.agent_signature,
         auth_kind=principal.auth_kind.value,

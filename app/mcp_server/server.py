@@ -20,11 +20,18 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import services
-from app.auth import PERMISSIONS, AuthKind, Principal, resolve_principal
+from app.auth import (
+    PERMISSIONS,
+    AuthKind,
+    Principal,
+    ensure_tenant_usable,
+    resolve_principal,
+)
 from app.config import get_settings
 from app.database import async_session_factory
 from app.error_registry import classify, protocol_docs, retry_after_ms
 from app.errors import ApiError
+from app.models import Tenant
 from app.schemas import (
     DocumentArchiveRequest,
     DocumentBatchUpsertItem,
@@ -58,6 +65,7 @@ _request_credential: ContextVar[str | None] = ContextVar(
     "agentgraph_mcp_credential", default=None
 )
 _stdio_principal: Principal | None = None
+_current_tool: ContextVar[str | None] = ContextVar("agentgraph_mcp_tool", default=None)
 
 # Write tools that take a generic ``idempotency_key`` (PRD AG-ST-18 point 1).
 # draft_external_action keeps its own action-level idempotency_key.
@@ -183,6 +191,7 @@ class AgentGraphFastMCP(FastMCP):
     async def call_tool(
         self, name: str, arguments: dict[str, Any]
     ) -> types.CallToolResult | Any:
+        _current_tool.set(name)
         try:
             key = None
             if name in IDEMPOTENT_TOOLS and isinstance(arguments, dict):
@@ -231,6 +240,8 @@ class AgentGraphFastMCP(FastMCP):
             tool = f"mcp:{name}"
             body_hash = idempotency.request_hash(tool, current_version(), arguments)
             replay = await idempotency.begin(principal, tool, key, body_hash)
+        except idempotency.UnknownCredential:
+            return await super().call_tool(name, arguments)
         except ApiError as exc:
             raise ToolError(str(_api_error(exc))) from exc
         if replay is not None:
@@ -364,7 +375,21 @@ async def _principal_for_call(session: AsyncSession) -> Principal:
                     "invalid_api_key", "MCP_API_KEY is invalid or inactive", 401
                 )
             _stdio_principal = principal
-    await activate_tenant(session, principal.workspace.id)
+    # Re-read the tenant on every call so suspension/deletion apply at once,
+    # including to the long-lived stdio principal.
+    principal.tenant = await session.get(Tenant, principal.workspace.tenant_id)
+    if principal.tenant is None or principal.tenant.status == "deleted":
+        raise _tool_error("unauthorized", "invalid or inactive API key", 401)
+    tool_name = _current_tool.get()
+    try:
+        ensure_tenant_usable(
+            principal,
+            write=tool_name in IDEMPOTENT_TOOLS or tool_name == "draft_external_action",
+            path=f"mcp:{tool_name}",
+        )
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+    await activate_tenant(session, principal.workspace.id, principal.tenant_scope)
     from app.services.common import set_audit_actor
     from app.services.usage import enforce_rate_limit
 

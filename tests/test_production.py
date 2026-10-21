@@ -606,11 +606,24 @@ async def test_database_rls_isolates_workspaces(client, admin_headers):
     left, right = workspaces
     conn = await asyncpg.connect(db_dsn())
     try:
+        left_tenant = await conn.fetchval(
+            "SELECT tenant_id FROM workspaces WHERE id = $1::uuid", left["workspace"]["id"]
+        )
         async with conn.transaction():
+            # Without a tenant scope the policies expose nothing (AG-ID-07 #3).
             await conn.execute("SET LOCAL ROLE agentgraph_app")
             await conn.execute(
                 "SELECT set_config('app.workspace_id', $1, true)",
                 left["workspace"]["id"],
+            )
+            unscoped = await conn.fetchval("SELECT count(*) FROM shared_documents")
+        async with conn.transaction():
+            await conn.execute("SET LOCAL ROLE agentgraph_app")
+            await conn.execute(
+                "SELECT set_config('app.workspace_id', $1, true), "
+                "set_config('app.tenant_scope', $2, true)",
+                left["workspace"]["id"],
+                left_tenant,
             )
             own = await conn.fetchval(
                 "SELECT count(*) FROM shared_documents WHERE workspace_id = $1::uuid",
@@ -622,6 +635,7 @@ async def test_database_rls_isolates_workspaces(client, admin_headers):
             )
     finally:
         await conn.close()
+    assert unscoped == 0
     assert own >= 1
     assert other == 0
 

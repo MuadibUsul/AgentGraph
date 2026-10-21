@@ -15,6 +15,7 @@ from app.services.common import db_now
 from app.services.idempotency import purge_expired as purge_expired_idempotency
 from app.services.slots import reap_expired_slot_leases
 from app.services.tasks import reap_expired_task_leases
+from app.services.tenants import purge_due_tenants
 
 logger = logging.getLogger("agentgraph.reaper")
 settings = get_settings()
@@ -36,6 +37,9 @@ async def lease_reaper_loop() -> None:
                 )
                 await session.commit()
                 await purge_expired_idempotency()
+                purged = await purge_due_tenants(session)
+                if purged:
+                    logger.info("purged %s tenant(s) after the deletion grace period", purged)
                 if tasks or slots:
                     logger.info(
                         "lease reaper reclaimed %s task(s) and %s slot(s)",

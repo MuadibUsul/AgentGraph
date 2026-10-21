@@ -98,6 +98,8 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------- human auth
     human_session_hours: int = Field(default=12, ge=1, le=720)
+    # PRD AG-ID-07 point 8 / D21: deletion grace period before physical purge.
+    tenant_deletion_grace_days: int = Field(default=30, ge=1, le=365)
     password_hash_n: int = Field(default=2**14, ge=2**12, le=2**18)
     password_hash_r: int = 8
     password_hash_p: int = 1

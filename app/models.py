@@ -14,6 +14,7 @@ from sqlalchemy import (
     Computed,
     DateTime,
     Enum,
+    FetchedValue,
     Float,
     ForeignKey,
     Index,
@@ -84,7 +85,105 @@ class Workspace(Base):
         String(32), nullable=False, default="developer_5usd",
         server_default=text("'developer_5usd'"),
     )
+    # Server-derived: a trigger creates a root tenant when none is supplied.
+    tenant_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("tenants.id"), nullable=False,
+        server_default=FetchedValue(),
+    )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow,
+        server_default=func.now(),
+    )
+
+    __mapper_args__ = {"eager_defaults": True}
+
+
+class Tenant(Base):
+    """A node of the tenant tree (PRD AG-ID-07); path/root/depth are trigger-maintained."""
+
+    __tablename__ = "tenants"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    alias: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    tenant_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    parent_tenant_id: Mapped[str | None] = mapped_column(
+        String(40), ForeignKey("tenants.id"), nullable=True
+    )
+    root_tenant_id: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=FetchedValue()
+    )
+    path: Mapped[list[str]] = mapped_column(
+        ARRAY(String(40)), nullable=False, server_default=FetchedValue()
+    )
+    depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=FetchedValue()
+    )
+    billing_owner_tenant_id: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=FetchedValue()
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default=text("'active'")
+    )
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deletion_admin_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deletion_owner_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deletion_owner_confirmed_by: Mapped[str | None] = mapped_column(
+        String(256), nullable=True
+    )
+    purge_after: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    final_export_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    signing_key_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default=FetchedValue()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow,
+        server_default=func.now(),
+    )
+
+    __mapper_args__ = {"eager_defaults": True}
+
+
+class Membership(Base):
+    """A human's role on a tenant node (PRD AG-ID-10)."""
+
+    __tablename__ = "memberships"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    principal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("human_users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow,
         server_default=func.now(),
     )

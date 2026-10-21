@@ -64,6 +64,24 @@ def should_store(status_code: int) -> bool:
     return status_code < 500 and status_code != 429
 
 
+class UnknownCredential(Exception):
+    """The credential maps to no tenant; the route will reject the request."""
+
+
+_TENANT_FOR_CREDENTIAL = text(
+    """
+SELECT tenant_id FROM workspaces WHERE api_key_hash = :hash
+UNION ALL
+SELECT w.tenant_id FROM agent_tokens t JOIN workspaces w ON w.id = t.workspace_id
+WHERE t.api_key_hash = :hash
+UNION ALL
+SELECT w.tenant_id FROM human_sessions s JOIN workspaces w ON w.id = s.workspace_id
+WHERE s.token_hash = :hash
+LIMIT 1
+"""
+)
+
+
 @dataclass
 class Replay:
     http_status: int
@@ -71,21 +89,30 @@ class Replay:
 
 
 async def begin(principal: str, tool: str, key: str, body_hash: str) -> Replay | None:
-    """Claim the key. Returns a stored response to replay, or None to proceed."""
+    """Claim the key. Returns a stored response to replay, or None to proceed.
+
+    Records belong to the tenant of the presenting credential (PRD AG-ID-07:
+    every persisted object carries a server-derived tenant_id).
+    """
     async with async_session_factory() as session:
+        tenant_id = await session.scalar(_TENANT_FOR_CREDENTIAL, {"hash": principal})
+        if tenant_id is None:
+            raise UnknownCredential()
         # Expired records (outside the window) and abandoned in-progress
         # claims no longer bind the key.
         await session.execute(
             text(
                 """
 DELETE FROM idempotency_records
-WHERE principal_hash = :principal AND tool = :tool AND idempotency_key = :key
+WHERE tenant_id = :tenant AND principal_hash = :principal AND tool = :tool
+  AND idempotency_key = :key
   AND (created_at < NOW() - make_interval(hours => :window)
        OR (status = 'in_progress'
            AND created_at < NOW() - make_interval(secs => :stale)))
 """
             ),
             {
+                "tenant": tenant_id,
                 "principal": principal,
                 "tool": tool,
                 "key": key,
@@ -97,13 +124,19 @@ WHERE principal_hash = :principal AND tool = :tool AND idempotency_key = :key
             text(
                 """
 INSERT INTO idempotency_records
-    (principal_hash, tool, idempotency_key, request_hash, status)
-VALUES (:principal, :tool, :key, :hash, 'in_progress')
-ON CONFLICT (principal_hash, tool, idempotency_key) DO NOTHING
+    (tenant_id, principal_hash, tool, idempotency_key, request_hash, status)
+VALUES (:tenant, :principal, :tool, :key, :hash, 'in_progress')
+ON CONFLICT (tenant_id, principal_hash, tool, idempotency_key) DO NOTHING
 RETURNING id
 """
             ),
-            {"principal": principal, "tool": tool, "key": key, "hash": body_hash},
+            {
+                "tenant": tenant_id,
+                "principal": principal,
+                "tool": tool,
+                "key": key,
+                "hash": body_hash,
+            },
         )
         if inserted is not None:
             await session.commit()
@@ -114,10 +147,11 @@ RETURNING id
                     """
 SELECT request_hash, status, http_status, response, created_at
 FROM idempotency_records
-WHERE principal_hash = :principal AND tool = :tool AND idempotency_key = :key
+WHERE tenant_id = :tenant AND principal_hash = :principal AND tool = :tool
+  AND idempotency_key = :key
 """
                 ),
-                {"principal": principal, "tool": tool, "key": key},
+                {"tenant": tenant_id, "principal": principal, "tool": tool, "key": key},
             )
         ).mappings().one_or_none()
         await session.commit()

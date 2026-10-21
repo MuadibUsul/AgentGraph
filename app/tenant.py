@@ -2,8 +2,10 @@
 
 Authentication queries run as the connection role before a workspace is known.
 Once the principal is resolved, the request session is switched (with SET LOCAL
-ROLE) to a non-superuser application role and given ``app.workspace_id``. A new
-transaction on the same SQLAlchemy session re-applies the context automatically.
+ROLE) to a non-superuser application role and given ``app.workspace_id`` and
+``app.tenant_scope`` (the tenant ids this request may touch; PRD AG-ID-07).
+Policies require both, so a connection without tenant context reads nothing.
+A new transaction on the same SQLAlchemy session re-applies the context.
 """
 
 from __future__ import annotations
@@ -31,28 +33,60 @@ def _role_identifier() -> str:
     return role
 
 
-def set_session_tenant(session: Session, workspace_id: uuid.UUID | str) -> None:
-    """Attach tenant context to a session before its first query."""
+_SCOPE_SQL = text("SELECT tenant_id FROM workspaces WHERE id = CAST(:workspace_id AS uuid)")
+_SET_CONTEXT_SQL = text(
+    "SELECT set_config('app.workspace_id', :workspace_id, true), "
+    "set_config('app.tenant_scope', :tenant_scope, true)"
+)
+
+
+def set_session_tenant(
+    session: Session,
+    workspace_id: uuid.UUID | str,
+    tenant_scope: list[str] | None = None,
+) -> None:
+    """Attach tenant context to a session before its first query.
+
+    Without ``tenant_scope`` the scope is derived from the workspace when the
+    next transaction begins (before the role switch).
+    """
     session.info["workspace_id"] = str(workspace_id)
+    if tenant_scope:
+        session.info["tenant_scope"] = ",".join(tenant_scope)
+    else:
+        session.info.pop("tenant_scope", None)
 
 
-async def activate_tenant(session: Session, workspace_id: uuid.UUID | str) -> None:
+async def activate_tenant(
+    session: Session,
+    workspace_id: uuid.UUID | str,
+    tenant_scope: list[str] | None = None,
+) -> None:
     """Apply tenant context to the current transaction and future ones."""
-    set_session_tenant(session, workspace_id)
+    set_session_tenant(session, workspace_id, tenant_scope)
     if not settings.rls_enabled:
         return
     role = _role_identifier()
     try:
+        if "tenant_scope" not in session.info:
+            tenant_id = (
+                await session.execute(_SCOPE_SQL, {"workspace_id": str(workspace_id)})
+            ).scalar_one_or_none()
+            session.info["tenant_scope"] = tenant_id or ""
         await session.execute(text(f'SET LOCAL ROLE "{role}"'))
         await session.execute(
-            text("SELECT set_config('app.workspace_id', :workspace_id, true)"),
-            {"workspace_id": str(workspace_id)},
+            _SET_CONTEXT_SQL,
+            {
+                "workspace_id": str(workspace_id),
+                "tenant_scope": session.info["tenant_scope"],
+            },
         )
     except Exception as exc:  # noqa: BLE001 - fail closed on tenant isolation
         logger.error(
             "tenant RLS activation failed (role=%s): %s", role, exc
         )
         session.info.pop("workspace_id", None)
+        session.info.pop("tenant_scope", None)
         raise ApiError(
             503,
             "tenant_context_unavailable",
@@ -69,10 +103,18 @@ def _apply_tenant_context(
         return
     role = _role_identifier()
     try:
+        if "tenant_scope" not in session.info:
+            tenant_id = connection.execute(
+                _SCOPE_SQL, {"workspace_id": str(workspace_id)}
+            ).scalar_one_or_none()
+            session.info["tenant_scope"] = tenant_id or ""
         connection.exec_driver_sql(f'SET LOCAL ROLE "{role}"')
         connection.execute(
-            text("SELECT set_config('app.workspace_id', :workspace_id, true)"),
-            {"workspace_id": str(workspace_id)},
+            _SET_CONTEXT_SQL,
+            {
+                "workspace_id": str(workspace_id),
+                "tenant_scope": session.info["tenant_scope"],
+            },
         )
     except Exception as exc:  # noqa: BLE001 - fail closed on tenant isolation
         logger.error("tenant context could not be applied: %s", exc)

@@ -143,6 +143,22 @@ The response contains the new key exactly once; the old key is invalid
 immediately. Rotate during a maintenance window because the runtime must store
 the new key before its next request.
 
+### Tenants, protocol and versions
+
+Every workspace belongs to a **tenant** (`ten_…`), a node of a tenant tree
+(`personal` / `organization` / `company`, depth ≤ 3). `tenant_id` is derived by
+the server on every row and must never be sent by clients (400
+`tenant_id_not_allowed`); row security requires both the tenant scope and the
+workspace. Operators manage tenants under `/v1/admin/tenants` (suspend/resume,
+two-party deletion with a 30-day grace period, restore); owners see
+`GET /v1/human/tenant` and confirm or cancel deletion there.
+
+All errors carry `class` / `action` / `retryable` / `retry_after_ms`
+(registry: [docs/ERROR_CODES.md](docs/ERROR_CODES.md)). Writes accept an
+`Idempotency-Key` header (REST) or `idempotency_key` argument (MCP) with a 24 h
+replay window. Declare semantics with `AgentGraph-Version` (default
+`2026-10-21`, latest `2026-11`).
+
 ### Self-service accounts
 
 Email registration is public when `HUMAN_SIGNUP_ENABLED=true`:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+from urllib.parse import parse_qs
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
@@ -23,8 +24,87 @@ from app.services import idempotency
 logger = logging.getLogger("agentgraph.protocol")
 
 _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-# Auth endpoints mint credentials; never persist their responses.
-_IDEMPOTENCY_EXCLUDED_PREFIXES = ("/v1/auth/",)
+# Auth endpoints mint credentials; never persist their responses. Admin calls
+# act across tenants and are not scoped to one tenant's idempotency records.
+_IDEMPOTENCY_EXCLUDED_PREFIXES = ("/v1/auth/", "/v1/admin/")
+# Admin routes name tenants explicitly in the path (PRD AG-ID-07 point 3).
+_TENANT_CHECK_EXCLUDED_PREFIXES = ("/v1/admin/",)
+_TENANT_HEADERS = ("tenant-id", "x-tenant-id", "agentgraph-tenant")
+_MAX_INSPECTED_BODY = 8 * 1024 * 1024
+
+
+def _tenant_checked(path: str) -> bool:
+    return (path.startswith("/v1/") or path.startswith("/mcp")) and not path.startswith(
+        _TENANT_CHECK_EXCLUDED_PREFIXES
+    )
+
+
+def _checks_body(path: str) -> bool:
+    return _tenant_checked(path)
+
+
+def _tenant_id_in_request(scope: Scope, headers: Headers) -> str | None:
+    if not _tenant_checked(scope.get("path", "")):
+        return None
+    for name in _TENANT_HEADERS:
+        if name in headers:
+            return f"header:{name}"
+    query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+    if "tenant_id" in query:
+        return "query:tenant_id"
+    return None
+
+
+def _tenant_id_in_body(path: str, headers: Headers, body: bytes) -> str | None:
+    """Reject a top-level tenant_id; nested user data (frontmatter) may use the name."""
+    if not body or len(body) > _MAX_INSPECTED_BODY:
+        return None
+    if "json" not in (headers.get("content-type") or "json"):
+        return None
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return None
+    if path.startswith("/mcp"):
+        messages = payload if isinstance(payload, list) else [payload]
+        for message in messages:
+            params = message.get("params") if isinstance(message, dict) else None
+            arguments = params.get("arguments") if isinstance(params, dict) else None
+            if isinstance(arguments, dict) and "tenant_id" in arguments:
+                return "arguments:tenant_id"
+        return None
+    if isinstance(payload, dict) and "tenant_id" in payload:
+        return "body:tenant_id"
+    if isinstance(payload, dict) and isinstance(payload.get("items"), list):
+        for item in payload["items"]:
+            if isinstance(item, dict) and "tenant_id" in item:
+                return "body:items[].tenant_id"
+    return None
+
+
+async def _read_body(receive: Receive) -> bytes | None:
+    chunks: list[bytes] = []
+    more = True
+    while more:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            return None
+        chunks.append(message.get("body", b""))
+        more = bool(message.get("more_body"))
+    return b"".join(chunks)
+
+
+def _replaying(body: bytes, receive: Receive) -> Receive:
+    delivered = False
+
+    async def replay() -> Message:
+        nonlocal delivered
+        if not delivered:
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return await receive()
+
+    return replay
 _REPLAY_HEADER = "Idempotent-Replayed"
 
 
@@ -89,16 +169,42 @@ class ProtocolMiddleware:
 
         try:
             path = scope.get("path", "")
+            method = scope.get("method", "GET")
+            violation = _tenant_id_in_request(scope, headers)
+            body: bytes | None = None
+            if violation is None and method in _WRITE_METHODS and _checks_body(path):
+                body = await _read_body(receive)
+                if body is None:
+                    return
+                violation = _tenant_id_in_body(path, headers, body)
+            if violation is not None:
+                await _error_response(
+                    ApiError(
+                        400,
+                        "tenant_id_not_allowed",
+                        "tenant_id is derived from your credential and must not be sent",
+                        details={"location": violation},
+                    ),
+                    version,
+                )(scope, receive, send_with_version)
+                return
+            downstream = receive if body is None else _replaying(body, receive)
             key = headers.get("idempotency-key")
             if (
                 key is not None
-                and scope.get("method") in _WRITE_METHODS
+                and method in _WRITE_METHODS
                 and path.startswith("/v1/")
                 and not path.startswith(_IDEMPOTENCY_EXCLUDED_PREFIXES)
             ):
-                await self._idempotent(scope, receive, send_with_version, headers, key, version)
+                if body is None:
+                    body = await _read_body(receive)
+                    if body is None:
+                        return
+                await self._idempotent(
+                    scope, downstream, send_with_version, headers, key, version, body
+                )
             else:
-                await self.app(scope, receive, send_with_version)
+                await self.app(scope, downstream, send_with_version)
         finally:
             versioning.reset_version(token)
 
@@ -110,6 +216,7 @@ class ProtocolMiddleware:
         headers: Headers,
         raw_key: str,
         version: str,
+        body: bytes,
     ) -> None:
         credential = _credential(headers)
         if credential is None:
@@ -122,15 +229,6 @@ class ProtocolMiddleware:
             await _error_response(exc, version)(scope, receive, send)
             return
 
-        chunks: list[bytes] = []
-        more = True
-        while more:
-            message = await receive()
-            if message["type"] == "http.disconnect":
-                return
-            chunks.append(message.get("body", b""))
-            more = bool(message.get("more_body"))
-        body = b"".join(chunks)
         principal = idempotency.credential_hash(credential)
         tool = f"{scope['method']} {scope.get('path', '')}"[:512]
         body_hash = idempotency.request_hash(
@@ -138,6 +236,9 @@ class ProtocolMiddleware:
         )
         try:
             replay = await idempotency.begin(principal, tool, key, body_hash)
+        except idempotency.UnknownCredential:
+            await self.app(scope, receive, send)
+            return
         except ApiError as exc:
             await _error_response(exc, version)(scope, receive, send)
             return
@@ -149,15 +250,6 @@ class ProtocolMiddleware:
             response.headers[_REPLAY_HEADER] = "true"
             await response(scope, receive, send)
             return
-
-        delivered = False
-
-        async def replay_receive() -> Message:
-            nonlocal delivered
-            if not delivered:
-                delivered = True
-                return {"type": "http.request", "body": body, "more_body": False}
-            return await receive()
 
         status_code = 500
         start_message: Message | None = None
@@ -174,7 +266,7 @@ class ProtocolMiddleware:
                 response_chunks.append(message.get("body", b""))
 
         try:
-            await self.app(scope, replay_receive, capture)
+            await self.app(scope, receive, capture)
         except BaseException:
             await idempotency.abort(principal, tool, key)
             raise

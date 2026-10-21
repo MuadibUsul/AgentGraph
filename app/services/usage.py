@@ -82,7 +82,9 @@ async def enforce_rate_limit(session: AsyncSession, principal: Principal) -> Non
     )
     limit = settings.rate_limit_default_per_minute
     async with async_session_factory() as counter_session:
-        set_session_tenant(counter_session, principal.workspace.id)
+        set_session_tenant(
+            counter_session, principal.workspace.id, principal.tenant_scope
+        )
         budget = await get_budget(counter_session, principal.workspace.id)
         limit = budget.max_requests_per_minute
         if principal.token_id is not None and principal.user_id is None:
