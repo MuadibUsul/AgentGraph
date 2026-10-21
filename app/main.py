@@ -341,6 +341,7 @@ async def root(request: Request) -> Any:
             "get_lineage",
             "list_token_tree",
             "explain_write",
+            "register_parts",
             "propose_document_change",
             "vote_on_proposal",
             "list_document_proposals",

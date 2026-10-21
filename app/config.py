@@ -142,10 +142,13 @@ class Settings(BaseSettings):
     developer_max_slots: int = 100
     pro_max_documents: int = 500_000
     pro_max_slots: int = 1_000
-    max_document_content_chars: int = 100_000
+    # PRD AG-ST-03: documents up to 1 MiB of UTF-8; larger content uses parts.
+    max_document_content_bytes: int = 1_048_576
+    # Character ceiling for request validation only; the byte limit decides.
+    max_document_content_chars: int = 4_194_304
     max_state_bytes: int = 100_000
     max_brief_bytes: int = 32_768
-    max_artifact_chars: int = 200_000
+    max_artifact_chars: int = 4_194_304
 
     # ------------------------------------------- failure-semantics protocol
     # PRD AG-ST-18: 24 h idempotency window; an in-progress record older than

@@ -702,6 +702,7 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         "get_lineage",
                         "list_token_tree",
                         "explain_write",
+                        "register_parts",
                         "get_api_docs",
                     }
                     sync = await session.call_tool("workspace_sync", {})
@@ -1075,6 +1076,7 @@ async def test_dashboard_root_and_openapi(client):
         "get_lineage",
         "list_token_tree",
         "explain_write",
+        "register_parts",
         "propose_document_change",
         "vote_on_proposal",
         "list_document_proposals",

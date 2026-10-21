@@ -42,6 +42,9 @@ from app.models import (
     WorkspaceLink,
 )
 from app.schemas import (
+    REVIEW_APPROVE_STATUSES,
+    REVIEW_NEXT_STATUSES,
+    REVIEW_REJECT_STATUSES,
     DocumentSummary,
     SlotOut,
     TaskActionResponse,
@@ -198,6 +201,34 @@ def _require_claim_owner(task: CollabTask, principal: Principal, agent: str) -> 
             "only the agent that claimed this task may hand it off",
             details={"task_key": task.task_key, "claimed_by": task.claimed_by},
         )
+
+
+def validate_review_next_status(decision: str, next_status: str | None) -> None:
+    """Single validator for REST and MCP review targets (PRD AG-CO-01 #1)."""
+    if next_status is None:
+        return
+    allowed = REVIEW_APPROVE_STATUSES if decision == "approve" else REVIEW_REJECT_STATUSES
+    if next_status not in allowed:
+        raise ApiError(
+            422,
+            "validation_error",
+            f"next_status '{next_status}' is not valid for decision '{decision}'",
+            details={
+                "field": "next_status",
+                "allowed": list(allowed),
+                "all": list(REVIEW_NEXT_STATUSES),
+            },
+        )
+
+
+def _resolve_review_history(history: list[Any] | None) -> list[Any]:
+    resolved = []
+    now = utcnow().isoformat()
+    for entry in history or []:
+        if isinstance(entry, dict) and entry.get("resolved_at") is None:
+            entry = {**entry, "resolved_at": now}
+        resolved.append(entry)
+    return resolved
 
 
 def _clear_lease(task: CollabTask) -> None:
@@ -752,6 +783,10 @@ async def handoff_task(
             session, principal, task, artifact_uri.removeprefix("doc://")
         )
 
+    if request.next_status == "REVIEWING":
+        # Resubmission resolves the outstanding feedback (PRD AG-CO-01 #3).
+        task.review_history = _resolve_review_history(task.review_history)
+        task.handoff_lease_expires_at = task.lease_expires_at
     if request.next_status == "REVIEWING" and (
         task.review_feedback is not None or task.reviewed_by is not None
     ):
@@ -860,6 +895,7 @@ async def review_task(
 ) -> TaskActionResponse:
     if not (principal.is_commander or can(principal, "task:review")):
         require_permission(principal, "task:review")
+    validate_review_next_status(request.decision, request.next_status)
     agent = effective_agent(principal, request.agent)
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
@@ -890,10 +926,14 @@ async def review_task(
     human_decision = principal.is_human and principal.is_commander
     escalated = False
 
-    task.review_feedback = request.feedback
     task.reviewed_by = principal.agent_signature
     artifact_verified = False
+    effective_status: TaskStatus | None = None
+    reassigned: bool | None = None
     if request.decision == "approve":
+        # review_feedback means "not yet addressed"; an approval leaves none.
+        task.review_feedback = None
+        task.review_history = _resolve_review_history(task.review_history)
         next_status = request.next_status or "DONE"
         task.status = TaskStatus(next_status)
         if human_decision:
@@ -922,6 +962,21 @@ async def review_task(
             except ApiError:
                 artifact_verified = False
     else:
+        task.review_feedback = request.feedback
+        task.review_round += 1
+        history = list(task.review_history or [])
+        history.append(
+            {
+                "round": task.review_round,
+                "reviewer": principal.agent_signature,
+                "decision": request.decision,
+                "next_status": request.next_status or "READY",
+                "review_feedback": request.feedback,
+                "created_at": utcnow().isoformat(),
+                "resolved_at": None,
+            }
+        )
+        task.review_history = history[-settings.max_reject_history :]
         task.ping_pong_count += 1
         entry = {
             "by": agent,
@@ -933,6 +988,7 @@ async def review_task(
         history = list(task.reject_history or [])
         history.append(entry)
         task.reject_history = history[-settings.max_reject_history :]
+        rework = request.next_status == "IN_PROGRESS"
         if human_decision:
             task.human_feedback = request.feedback
             task.status = TaskStatus.READY
@@ -945,6 +1001,18 @@ async def review_task(
             task.status = TaskStatus.READY
             event_type = "TASK_REJECTED"
         _clear_lease(task)
+        if rework and not escalated:
+            now = await db_now(session)
+            expiry = task.handoff_lease_expires_at
+            if task.handed_off_by and expiry is not None and expiry > now:
+                # Back to the same executor under the lease it still had.
+                task.status = TaskStatus.IN_PROGRESS
+                task.claimed_by = task.handed_off_by
+                task.lease_owner = task.handed_off_by
+                task.lease_expires_at = expiry
+            reassigned = False
+            effective_status = task.status
+            event_type = "TASK_RETURNED_FOR_REWORK"
         task.version += 1
         task.updated_at = utcnow()
 
@@ -980,6 +1048,8 @@ async def review_task(
     return TaskActionResponse(
         task=task_out(task),
         escalated=escalated,
+        effective_status=effective_status,
+        reassigned=reassigned,
         session_batch_id=batch,
         status=task.status,
         version=task.version,

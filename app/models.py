@@ -512,6 +512,15 @@ class CollabTask(Base):
     artifact_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     artifact_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     handed_off_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    review_round: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    review_history: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    handoff_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     human_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     review_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)

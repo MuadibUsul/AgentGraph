@@ -90,6 +90,7 @@ def slot_out(slot: ContextSlot) -> SlotOut:
         taint_sources=slot.taint_sources or [],
         updated_by=slot.updated_by,
         updated_at=slot.updated_at,
+        updated_stamp=slot.updated_stamp,
     )
 
 
@@ -151,6 +152,8 @@ def task_out(task: CollabTask) -> TaskOut:
         output_artifact=task.output_artifact or {},
         handoff_brief=task.handoff_brief,
         reject_history=task.reject_history or [],
+        review_round=task.review_round,
+        review_history=task.review_history or [],
         created_by=task.created_by,
         created_at=task.created_at,
     )
@@ -330,6 +333,9 @@ def task_snapshot(task: CollabTask) -> dict[str, Any]:
         "artifact_version": task.artifact_version,
         "artifact_hash": task.artifact_hash,
         "handed_off_by": task.handed_off_by,
+        "review_round": task.review_round,
+        "review_history": task.review_history or [],
+        "handoff_lease_expires_at": iso(task.handoff_lease_expires_at),
         "human_feedback": task.human_feedback,
         "review_feedback": task.review_feedback,
         "reviewed_by": task.reviewed_by,

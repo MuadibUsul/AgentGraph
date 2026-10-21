@@ -132,20 +132,62 @@ class ExternalActionError(ApiError):
         )
 
 
+# Bodies larger than this are not echoed back as current_content (AG-ST-05).
+MAX_CONFLICT_CONTENT_BYTES = 64 * 1024
+
+
 class VersionConflict(ApiError):
-    def __init__(self, resource: str, latest: dict[str, Any] | None) -> None:
-        super().__init__(
-            409,
-            "version_conflict",
+    """409 with everything a client needs to merge and retry without a re-read."""
+
+    def __init__(
+        self,
+        resource: str,
+        latest: dict[str, Any] | None,
+        *,
+        expected_version: int | None = None,
+        include_content: bool = False,
+    ) -> None:
+        latest = latest or {}
+        stamp = latest.get("updated_stamp") or {}
+        kind = stamp.get("kind") if isinstance(stamp, dict) else None
+        details: dict[str, Any] = {
+            "resource": resource,
+            "namespace": latest.get("namespace"),
+            "doc_key": latest.get("doc_key"),
+            "slot_key": latest.get("slot_key"),
+            "id": latest.get("canonical_id"),
+            "expected_version": expected_version,
+            "current_version": latest.get("version"),
+            "current_hash": latest.get("content_hash"),
+            "current_content_hash": latest.get("content_hash"),
+            "updated_by": latest.get("updated_by"),
+            "updated_by_type": (
+                "human" if kind in ("human", "admin") else "agent" if latest else None
+            ),
+            "updated_at": latest.get("updated_at"),
+            "latest": latest or None,
+        }
+        if include_content:
+            content = latest.get("content")
+            if content is None and "current_state" in latest:
+                content = latest.get("current_state")
+            size = len(str(content).encode("utf-8")) if content is not None else 0
+            if size <= MAX_CONFLICT_CONTENT_BYTES:
+                details["current_content"] = content
+            else:
+                details["current_content_omitted"] = {
+                    "bytes": size,
+                    "limit": MAX_CONFLICT_CONTENT_BYTES,
+                }
+        message = (
             f"{resource} changed since expected_version; re-read and merge "
-            "against the latest version",
-            details={
-                "resource": resource,
-                "current_version": latest.get("version") if latest else None,
-                "current_hash": latest.get("content_hash") if latest else None,
-                "latest": latest,
-            },
+            "against the latest version"
         )
+        if expected_version is not None and latest.get("version") is not None:
+            message = (
+                f"expected_version {expected_version} but current is {latest.get('version')}"
+            )
+        super().__init__(409, "version_conflict", message, details=details)
 
 
 class LeaseConflict(ApiError):

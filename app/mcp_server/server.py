@@ -33,6 +33,8 @@ from app.error_registry import classify, protocol_docs, retry_after_ms
 from app.errors import ApiError
 from app.models import Tenant
 from app.schemas import (
+    REVIEW_APPROVE_STATUSES,
+    REVIEW_REJECT_STATUSES,
     DocumentArchiveRequest,
     DocumentBatchUpsertItem,
     DocumentBatchUpsertRequest,
@@ -44,6 +46,7 @@ from app.schemas import (
     HandoffBrief,
     ProposalCreateRequest,
     ProposalVoteRequest,
+    RegisterPartsRequest,
     SlotPatchRequest,
     TaskClaimRequest,
     TaskCreateRequest,
@@ -92,6 +95,7 @@ IDEMPOTENT_TOOLS = frozenset(
         "restore_document",
         "register_namespace",
         "rename_document",
+        "register_parts",
     }
 )
 _CONTENT_BLOCK = TypeAdapter(types.ContentBlock)
@@ -662,7 +666,10 @@ async def review_task(
     decision: Literal["approve", "reject"],
     feedback: str | None = None,
     expected_version: int | None = None,
-    next_status: Literal["DONE", "HANDOFF", "READY"] | None = None,
+    next_status: Annotated[
+        str | None,
+        Field(description=TaskReviewRequest.model_fields["next_status"].description),
+    ] = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -670,11 +677,7 @@ async def review_task(
 
     AWAITING_HUMAN and ESCALATED_TO_HUMAN require an actual human account;
     workspace automation keys cannot resolve them. Rejections increment the
-    ping-pong counter and may escalate to human; a
-    rejected task returns to READY. For reject, omit next_status or use READY
-    (IN_PROGRESS is not a valid review target). Agent review feedback is stored
-    as review_feedback with the reviewer signature, not as human_feedback.
-    This mirrors REST POST /v1/tasks/{key}/review.
+    ping-pong counter and may escalate to human.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -853,6 +856,7 @@ async def agent_patch_shared_state(
             le=settings.max_task_lease_seconds,
         ),
     ] = settings.default_task_lease_seconds,
+    return_current_on_conflict: bool = False,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -866,6 +870,7 @@ async def agent_patch_shared_state(
         principal = await _principal_for_call(session)
         try:
             body = SlotPatchRequest(
+                return_current_on_conflict=return_current_on_conflict,
                 ops=ops,
                 expected_version=expected_version,
                 lease_epoch=lease_epoch,
@@ -975,6 +980,7 @@ async def upsert_shared_doc(
     expected_version: int = 0,
     namespace: str | None = None,
     include_content: bool = False,
+    return_current_on_conflict: bool = False,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -989,6 +995,7 @@ async def upsert_shared_doc(
         principal = await _principal_for_call(session)
         try:
             body = DocumentUpsertRequest(
+                return_current_on_conflict=return_current_on_conflict,
                 title=title,
                 content=content,
                 frontmatter=frontmatter or {},
@@ -1024,6 +1031,7 @@ async def patch_doc_section(
     new_markdown: str,
     expected_version: int,
     include_content: bool = False,
+    return_current_on_conflict: bool = False,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -1035,6 +1043,7 @@ async def patch_doc_section(
         principal = await _principal_for_call(session)
         try:
             body = DocumentSectionPatchRequest(
+                return_current_on_conflict=return_current_on_conflict,
                 section_heading=section_heading,
                 new_markdown=new_markdown,
                 expected_version=expected_version,
@@ -1066,17 +1075,25 @@ async def query_workspace(
     query: str | None = None,
     filters: dict[str, Any] | None = None,
     namespace: str | None = None,
-    limit: int = 10,
+    limit: Annotated[int, Field(ge=1, le=50)] = 10,
     include_unverified: bool = False,
+    include_own_unverified: bool = True,
     include_tainted: bool = False,
     include_archived: bool = False,
     mode: str = "hybrid",
 ) -> dict[str, Any]:
-    """Structured + semantic document discovery.
+    """Structured + semantic document discovery (semantic search, NOT exhaustive).
 
-    By default this returns VERIFIED documents plus the caller's own DRAFTs,
-    so a writer can retrieve what it just created; other agents' unverified
-    drafts stay hidden. Set include_unverified=true to search all drafts.
+    This ranks the best matches; it does not guarantee completeness. To
+    enumerate every document in a namespace use list_documents (cursor
+    pagination); for the L0 map and incremental changes use workspace_sync.
+    limit defaults to 10, at most 50.
+
+    include_own_unverified (default true) keeps your own DRAFTs in the results
+    so a writer can retrieve what it just created; include_unverified (default
+    false) adds other agents' unverified drafts. Each hit carries is_own,
+    created_by, trust and matched_chunks; excluded counts what the default
+    filters hid (unverified_by_others, archived, tainted).
 
     filters support scalar equality and {eq, gte, lte, gt, lt, exists}
     operators, e.g. {"status":"DRAFT", "due_at":{"gte":"2026-11-01"},
@@ -1092,6 +1109,7 @@ async def query_workspace(
                 namespace=namespace,
                 limit=limit,
                 include_unverified=include_unverified,
+                include_own_unverified=include_own_unverified,
                 include_tainted=include_tainted,
                 include_archived=include_archived,
                 mode=mode,
@@ -1110,6 +1128,8 @@ async def dereference(
     include_unverified: bool = False,
     include_tainted: bool = False,
     expand_parts: bool = False,
+    content_offset: Annotated[int, Field(ge=0)] = 0,
+    content_limit: Annotated[int | None, Field(ge=1, le=262_144)] = None,
 ) -> dict[str, Any]:
     """Resolve an L2 artifact/doc URI (doc://<doc_key> or a doc_… id) to full content.
 
@@ -1127,6 +1147,8 @@ async def dereference(
                 include_unverified=include_unverified,
                 include_tainted=include_tainted,
                 expand_parts=expand_parts,
+                content_offset=content_offset,
+                content_limit=content_limit,
             )
         except ApiError as exc:
             raise _api_error(exc) from exc
@@ -1206,6 +1228,34 @@ async def rename_document(
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="register_parts")
+async def register_parts(
+    parent_ref: str,
+    part_refs: list[str],
+    session_batch_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """Register existing documents as the ordered parts of parent_ref.
+
+    For content that was split by hand (e.g. to fit an old size limit): writes
+    parts / part_of / part_index frontmatter without moving any content, so
+    dereference(parent, expand_parts=true) returns the joined body.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await services.register_parts(
+                session,
+                principal,
+                parent_ref,
+                RegisterPartsRequest(part_refs=part_refs, session_batch_id=session_batch_id),
+            )
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
 
 
 @mcp.tool(name="get_token")
@@ -1658,6 +1708,23 @@ def _advertise_idempotency_keys() -> None:
 
 
 _advertise_idempotency_keys()
+
+
+def _describe_review_targets() -> None:
+    tool = mcp._tool_manager.get_tool("review_task")
+    if tool is not None:
+        tool.description = (tool.description or "").rstrip() + (
+            "\n\nnext_status (generated from the shared enum): approve -> "
+            + "|".join(REVIEW_APPROVE_STATUSES)
+            + "; reject -> "
+            + "|".join(REVIEW_REJECT_STATUSES)
+            + ". IN_PROGRESS returns the task to its executor while the executor's "
+            "lease is still valid, otherwise to READY (effective_status). This "
+            "mirrors REST POST /v1/tasks/{key}/review."
+        )
+
+
+_describe_review_targets()
 
 _http_app: ASGIApp | None = None
 

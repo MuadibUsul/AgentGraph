@@ -51,6 +51,7 @@ from app.schemas import (
     ProposalOut,
     ProposalRejectRequest,
     ProposalVoteRequest,
+    RegisterPartsRequest,
     SlotListResponse,
     SlotMutationResponse,
     SlotOut,
@@ -832,6 +833,19 @@ async def rename_document(
     return await services.rename_document(session, principal, doc_key, body)
 
 
+@router.post(
+    "/documents/{doc_key:path}/parts",
+    summary="Register existing documents as ordered parts of this document",
+)
+async def register_parts(
+    doc_key: str,
+    body: RegisterPartsRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await services.register_parts(session, principal, doc_key, body)
+
+
 @router.get("/namespaces", summary="List registered namespaces")
 async def list_namespaces(
     principal: Principal = Depends(get_principal),
@@ -936,6 +950,8 @@ async def dereference(
         include_unverified=body.include_unverified,
         include_tainted=body.include_tainted,
         expand_parts=body.expand_parts,
+        content_offset=body.content_offset,
+        content_limit=body.content_limit,
     )
 
 

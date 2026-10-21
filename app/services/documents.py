@@ -64,6 +64,7 @@ from app.schemas import (
     DocumentNormalizeResponse,
     DocumentOut,
     DocumentPurgeRequest,
+    DocumentQueryHit,
     DocumentQueryRequest,
     DocumentQueryResponse,
     DocumentRenameRequest,
@@ -75,6 +76,8 @@ from app.schemas import (
     DocumentVersionListResponse,
     DocumentVersionOut,
     DocumentVersionSummary,
+    MatchedChunk,
+    RegisterPartsRequest,
     TombstoneOut,
 )
 from app.services import addresses as address_service
@@ -87,7 +90,11 @@ from app.services.common import (
     utcnow,
 )
 from app.services.policies import enforce_policy
-from app.services.retrieval import hybrid_document_ids, reindex_document_chunks
+from app.services.retrieval import (
+    hybrid_document_ids,
+    query_vector,
+    reindex_document_chunks,
+)
 from app.services.taint import (
     clear_document_taint,
     mark_document_taint,
@@ -186,6 +193,43 @@ async def _ensure_document_quota(
     )
     if (used or 0) >= limit:
         raise QuotaExceeded("shared_documents", limit)
+
+
+def ensure_content_size(content: str) -> int:
+    """Accept up to 1 MiB of UTF-8; larger bodies must be split into parts."""
+    size = len(content.encode("utf-8"))
+    limit = settings.max_document_content_bytes
+    if size > limit:
+        raise ApiError(
+            413,
+            "content_too_large",
+            f"document content is {size} bytes; the limit is {limit} bytes. "
+            "Split it into parts (frontmatter.parts / part_of) instead.",
+            details={
+                "limit_bytes": limit,
+                "actual_bytes": size,
+                "action": "split_into_parts",
+                "spec": "AG-ST-17",
+            },
+        )
+    return size
+
+
+async def _mutation_response(
+    session: AsyncSession, document: SharedDocument, batch: uuid.UUID
+) -> DocumentMutationResponse:
+    chunks = int(
+        await session.scalar(
+            select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id == document.id)
+        )
+        or 0
+    )
+    return DocumentMutationResponse(
+        document=document_out(document),
+        session_batch_id=batch,
+        content_bytes=len(document.content.encode("utf-8")),
+        chunk_count=chunks,
+    )
 
 
 def _latest(document: SharedDocument) -> dict[str, Any]:
@@ -649,6 +693,7 @@ async def upsert_document(
     agent = actor or effective_agent(principal, request.agent)
     batch = batch_id or request.session_batch_id or uuid.uuid4()
     content, normalized_html = normalize_notion_content(request.content)
+    ensure_content_size(content)
     try:
         existing = await address_service.find_document(session, principal.workspace.id, doc_key)
     except ApiError as exc:
@@ -774,9 +819,7 @@ async def upsert_document(
         )
         if commit:
             await session.commit()
-        return DocumentMutationResponse(
-            document=document_out(document), session_batch_id=batch
-        )
+        return await _mutation_response(session, document, batch)
 
     require_permission(principal, "doc:write")
     ensure_namespace(principal, existing.namespace)
@@ -819,7 +862,12 @@ async def upsert_document(
     rebased = False
     if document.version != request.expected_version:
         if not request.rebase:
-            raise VersionConflict("shared_document", _latest(document))
+            raise VersionConflict(
+                "shared_document",
+                _latest(document),
+                expected_version=request.expected_version,
+                include_content=request.return_current_on_conflict,
+            )
         base = (
             await session.execute(
                 select(DocumentVersion).where(
@@ -829,7 +877,12 @@ async def upsert_document(
             )
         ).scalar_one_or_none()
         if base is None:
-            raise VersionConflict("shared_document", _latest(document))
+            raise VersionConflict(
+                "shared_document",
+                _latest(document),
+                expected_version=request.expected_version,
+                include_content=request.return_current_on_conflict,
+            )
         merged = three_way_document(
             base_content=base.content,
             current_content=document.content,
@@ -916,9 +969,7 @@ async def upsert_document(
     )
     if commit:
         await session.commit()
-    return DocumentMutationResponse(
-        document=document_out(document), session_batch_id=batch
-    )
+    return await _mutation_response(session, document, batch)
 
 
 _SECTION_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -965,7 +1016,12 @@ async def patch_document_section(
     rebased = False
     if document.version != request.expected_version:
         if not request.rebase:
-            raise VersionConflict("shared_document", _latest(document))
+            raise VersionConflict(
+                "shared_document",
+                _latest(document),
+                expected_version=request.expected_version,
+                include_content=request.return_current_on_conflict,
+            )
         base = (
             await session.execute(
                 select(DocumentVersion).where(
@@ -975,7 +1031,12 @@ async def patch_document_section(
             )
         ).scalar_one_or_none()
         if base is None:
-            raise VersionConflict("shared_document", _latest(document))
+            raise VersionConflict(
+                "shared_document",
+                _latest(document),
+                expected_version=request.expected_version,
+                include_content=request.return_current_on_conflict,
+            )
         base_section = extract_section(base.content, request.section_heading)
         current_section = extract_section(
             document.content, request.section_heading
@@ -1018,6 +1079,7 @@ async def patch_document_section(
     document.version += 1
     document.updated_by = agent
     document.updated_at = utcnow()
+    ensure_content_size(document.content)
     await session.flush()
     await refresh_document_taint(session, document)
     await reindex_document_chunks(session, document)
@@ -1056,9 +1118,7 @@ async def patch_document_section(
         namespace=document.namespace,
     )
     await session.commit()
-    return DocumentMutationResponse(
-        document=document_out(document), session_batch_id=batch
-    )
+    return await _mutation_response(session, document, batch)
 
 
 async def query_documents(
@@ -1066,22 +1126,22 @@ async def query_documents(
     principal: Principal,
     request: DocumentQueryRequest,
 ) -> DocumentQueryResponse:
+    """Semantic/structured discovery. Not exhaustive: use list_documents to enumerate."""
     require_permission(principal, "query")
-    conditions = [SharedDocument.workspace_id == principal.workspace.id]
+    base = [SharedDocument.workspace_id == principal.workspace.id]
     if request.namespace:
         ensure_namespace(principal, request.namespace)
-        conditions.append(SharedDocument.namespace == request.namespace)
+        base.append(SharedDocument.namespace == request.namespace)
     else:
         allowed = _allowed_namespaces(principal)
         if allowed is not None:
-            conditions.append(SharedDocument.namespace.in_(allowed))
-    for condition in _frontmatter_conditions(request.filters):
-        conditions.append(condition)
+            base.append(SharedDocument.namespace.in_(allowed))
+    base.extend(_frontmatter_conditions(request.filters))
+    conditions = list(base)
+    own = SharedDocument.created_by == principal.agent_signature
     if not request.include_unverified:
-        conditions.append(
-            (SharedDocument.verification_status == "VERIFIED")
-            | (SharedDocument.created_by == principal.agent_signature)
-        )
+        verified = SharedDocument.verification_status == "VERIFIED"
+        conditions.append(verified | own if request.include_own_unverified else verified)
     if not request.include_tainted:
         conditions.append(SharedDocument.tainted.is_(False))
     if not request.include_archived:
@@ -1097,57 +1157,176 @@ async def query_documents(
                 .limit(limit)
             )
         ).scalars().all()
-        items = [document_summary(row) for row in rows]
-        return DocumentQueryResponse(items=items, total=len(items))
+        items = [_query_hit(principal, row, []) for row in rows]
+        excluded = await _excluded_counts(
+            session, principal, request, base_ids=select(SharedDocument.id).where(*base),
+            shown={row.id for row in rows},
+        )
+        return DocumentQueryResponse(items=items, total=len(items), excluded=excluded)
 
-    filter_stmt = select(SharedDocument.id).where(*conditions)
-    ranked = await hybrid_document_ids(
-        session,
-        workspace_id=principal.workspace.id,
-        doc_filter=SharedDocument.id.in_(filter_stmt),
-        query=request.query,
-        limit=limit,
-        mode=request.mode,
-    )
+    ranked = await _rank(session, principal, request, conditions, limit)
     if not ranked:
-        # Legacy databases or documents written before chunking existed still
-        # have a whole-document embedding; use it as a best-effort fallback.
-        vector = await _embed(request.query)
-        distance = SharedDocument.embedding.cosine_distance(vector)
-        legacy = select(SharedDocument.id).where(
-            *conditions, SharedDocument.embedding.is_not(None)
-        )
-        if settings.semantic_threshold > 0:
-            legacy = legacy.where(distance <= 1 - settings.semantic_threshold)
-        legacy_ids = list(
-            (
-                await session.execute(
-                    legacy.order_by(distance).limit(limit)
-                )
-            ).scalars().all()
-        )
-        ranked = [
-            (doc_id, 1.0 / (settings.hybrid_rrf_k + rank))
-            for rank, doc_id in enumerate(legacy_ids, start=1)
-        ]
-    if not ranked:
-        return DocumentQueryResponse(items=[], total=0)
+        excluded = await _excluded_ranked(session, principal, request, base, limit, set())
+        return DocumentQueryResponse(items=[], total=0, excluded=excluded)
     ids = [doc_id for doc_id, _ in ranked]
     score_by_id = {doc_id: score for doc_id, score in ranked}
     rows = (
-        await session.execute(
-            select(SharedDocument).where(SharedDocument.id.in_(ids))
-        )
+        await session.execute(select(SharedDocument).where(SharedDocument.id.in_(ids)))
     ).scalars().all()
     by_id = {row.id: row for row in rows}
+    chunks = await _matched_chunks(session, ids, request.query)
     items = [
-        document_summary(by_id[doc_id]).model_copy(
+        _query_hit(principal, by_id[doc_id], chunks.get(doc_id, [])).model_copy(
             update={"score": round(score_by_id[doc_id], 6)}
         )
         for doc_id in ids
         if doc_id in by_id
     ]
-    return DocumentQueryResponse(items=items, total=len(items))
+    excluded = await _excluded_ranked(session, principal, request, base, limit, set(ids))
+    return DocumentQueryResponse(items=items, total=len(items), excluded=excluded)
+
+
+async def _rank(
+    session: AsyncSession,
+    principal: Principal,
+    request: DocumentQueryRequest,
+    conditions: list[Any],
+    limit: int,
+) -> list[tuple[uuid.UUID, float]]:
+    filter_stmt = select(SharedDocument.id).where(*conditions)
+    ranked = await hybrid_document_ids(
+        session,
+        workspace_id=principal.workspace.id,
+        doc_filter=SharedDocument.id.in_(filter_stmt),
+        query=request.query or "",
+        limit=limit,
+        mode=request.mode,
+    )
+    if ranked:
+        return ranked
+    # Legacy databases or documents written before chunking existed still
+    # have a whole-document embedding; use it as a best-effort fallback.
+    vector = await _embed(request.query or "")
+    distance = SharedDocument.embedding.cosine_distance(vector)
+    legacy = select(SharedDocument.id).where(*conditions, SharedDocument.embedding.is_not(None))
+    if settings.semantic_threshold > 0:
+        legacy = legacy.where(distance <= 1 - settings.semantic_threshold)
+    legacy_ids = list(
+        (await session.execute(legacy.order_by(distance).limit(limit))).scalars().all()
+    )
+    return [
+        (doc_id, 1.0 / (settings.hybrid_rrf_k + rank))
+        for rank, doc_id in enumerate(legacy_ids, start=1)
+    ]
+
+
+def _query_hit(
+    principal: Principal, document: SharedDocument, chunks: list[MatchedChunk]
+) -> DocumentQueryHit:
+    return DocumentQueryHit(
+        **document_summary(document).model_dump(),
+        created_by=document.created_by,
+        trust=document.trust_level,
+        is_own=document.created_by == principal.agent_signature,
+        matched_chunks=chunks,
+    )
+
+
+def _excluded_reason(principal: Principal, document: SharedDocument) -> str | None:
+    if document.archived_at is not None:
+        return "archived"
+    if document.tainted:
+        return "tainted"
+    if document.verification_status != "VERIFIED":
+        if document.created_by == principal.agent_signature:
+            return "own_unverified"
+        return "unverified_by_others"
+    return None
+
+
+async def _excluded_counts(
+    session: AsyncSession,
+    principal: Principal,
+    request: DocumentQueryRequest,
+    *,
+    base_ids: Any,
+    shown: set[uuid.UUID],
+) -> dict[str, int]:
+    rows = (
+        await session.execute(
+            select(SharedDocument).where(SharedDocument.id.in_(base_ids)).limit(500)
+        )
+    ).scalars().all()
+    return _tally(principal, [row for row in rows if row.id not in shown])
+
+
+async def _excluded_ranked(
+    session: AsyncSession,
+    principal: Principal,
+    request: DocumentQueryRequest,
+    base: list[Any],
+    limit: int,
+    shown: set[uuid.UUID],
+) -> dict[str, int]:
+    """How many matching hits the default filters hid (PRD AG-ST-04 point 4)."""
+    relaxed = await _rank(session, principal, request, base, limit)
+    hidden_ids = [doc_id for doc_id, _ in relaxed if doc_id not in shown]
+    if not hidden_ids:
+        return _tally(principal, [])
+    rows = (
+        await session.execute(select(SharedDocument).where(SharedDocument.id.in_(hidden_ids)))
+    ).scalars().all()
+    return _tally(principal, rows)
+
+
+def _tally(principal: Principal, rows: list[SharedDocument]) -> dict[str, int]:
+    counts = {"unverified_by_others": 0, "own_unverified": 0, "archived": 0, "tainted": 0}
+    for row in rows:
+        reason = _excluded_reason(principal, row)
+        if reason is not None:
+            counts[reason] += 1
+    return counts
+
+
+async def _matched_chunks(
+    session: AsyncSession, document_ids: list[uuid.UUID], query: str
+) -> dict[uuid.UUID, list[MatchedChunk]]:
+    """Up to three chunks per hit: literal matches first, then by similarity."""
+    if not document_ids:
+        return {}
+    vector = await query_vector(query)
+    rows = (
+        await session.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id.in_(document_ids))
+            .order_by(DocumentChunk.embedding.cosine_distance(vector))
+        )
+    ).scalars().all()
+    needle = query.strip().casefold()
+    grouped: dict[uuid.UUID, list[DocumentChunk]] = {}
+    for row in rows:
+        grouped.setdefault(row.document_id, []).append(row)
+    result: dict[uuid.UUID, list[MatchedChunk]] = {}
+    for doc_id, chunks in grouped.items():
+        literal = [chunk for chunk in chunks if needle and needle in chunk.content.casefold()]
+        ordered = literal + [chunk for chunk in chunks if chunk not in literal]
+        result[doc_id] = [
+            MatchedChunk(
+                chunk_index=chunk.chunk_index,
+                heading_path=chunk.heading,
+                snippet=_snippet(chunk.content, needle),
+            )
+            for chunk in ordered[:3]
+        ]
+    return result
+
+
+def _snippet(text: str, needle: str, width: int = 240) -> str:
+    position = text.casefold().find(needle) if needle else -1
+    if position < 0:
+        return text[:width]
+    start = max(position - width // 3, 0)
+    return text[start : start + width]
 
 
 async def dereference(
@@ -1158,6 +1337,8 @@ async def dereference(
     include_unverified: bool = False,
     include_tainted: bool = False,
     expand_parts: bool = False,
+    content_offset: int = 0,
+    content_limit: int | None = None,
 ) -> DereferenceResponse:
     require_permission(principal, "doc:read")
     doc_key = parse_doc_uri(uri)
@@ -1174,7 +1355,29 @@ async def dereference(
         return DereferenceResponse(
             uri=uri, document=document_out(document), expanded_content=expanded, parts=parts
         )
-    return DereferenceResponse(uri=uri, document=document_out(document))
+    out = document_out(document)
+    raw = document.content.encode("utf-8")
+    truncated = False
+    if content_offset or content_limit is not None:
+        start = _char_boundary(raw, min(content_offset, len(raw)))
+        end = len(raw) if content_limit is None else _char_boundary(
+            raw, min(start + content_limit, len(raw))
+        )
+        truncated = start > 0 or end < len(raw)
+        out = out.model_copy(update={"content": raw[start:end].decode("utf-8")})
+    return DereferenceResponse(
+        uri=uri,
+        document=out,
+        content_total_bytes=len(raw),
+        content_truncated=truncated,
+    )
+
+
+def _char_boundary(raw: bytes, index: int) -> int:
+    """Move a byte index back to the start of a UTF-8 character."""
+    while 0 < index < len(raw) and (raw[index] & 0xC0) == 0x80:
+        index -= 1
+    return index
 
 
 async def create_artifact(
@@ -1194,6 +1397,7 @@ async def create_artifact(
     slug = re.sub(r"[^a-z0-9._-]+", "-", task.task_key.lower()).strip("-.") or "task"
     doc_key = f"artifact/{slug[:64]}/{suffix}"
     artifact_text, _ = normalize_notion_content(artifact_text)
+    ensure_content_size(artifact_text)
     frontmatter = {
         "type": "artifact",
         "task_key": task.task_key,
@@ -1294,6 +1498,7 @@ async def human_update_document(
         document.title = request.title
     if request.content is not None:
         normalized_content, _ = normalize_notion_content(request.content)
+        ensure_content_size(normalized_content)
         new_hash = content_hash(normalized_content)
         if new_hash != (document.content_hash or content_hash(document.content)):
             document.verification_status = "DRAFT"
@@ -1952,7 +2157,10 @@ async def rename_document(
     if violation is not None:
         raise address_service.invalid_address(violation)
     if new_alias == document.doc_key:
-        return DocumentMutationResponse(document=document_out(document), session_batch_id=None)
+        return DocumentMutationResponse(
+            document=document_out(document),
+            session_batch_id=request.session_batch_id or uuid.uuid4(),
+        )
     taken = await address_service.find_document(session, principal.workspace.id, new_alias)
     if taken is not None and taken.id != document.id:
         raise ApiError(
@@ -2067,4 +2275,75 @@ async def purge_document(
         purged_at=tombstone.purged_at,
         reason=tombstone.reason,
     )
+
+
+async def register_parts(
+    session: AsyncSession,
+    principal: Principal,
+    parent_ref: str,
+    request: RegisterPartsRequest,
+) -> dict[str, Any]:
+    """Register existing documents as ordered parts of a parent (PRD AG-ST-03).
+
+    Only frontmatter changes (parent ``parts``, each part ``part_of`` and
+    ``part_index``); no content moves, so references and history stay intact.
+    """
+    require_permission(principal, "doc:write")
+    batch = request.session_batch_id or uuid.uuid4()
+    parent = await _get_document(session, principal.workspace.id, parent_ref)
+    parts = [
+        await _get_document(session, principal.workspace.id, ref) for ref in request.part_refs
+    ]
+    if any(part.id == parent.id for part in parts):
+        raise ApiError(422, "validation_error", "a document cannot be its own part",
+                       details={"field": "part_refs"})
+    for index, part in enumerate(parts):
+        frontmatter = {
+            **(part.frontmatter or {}),
+            "part_of": {"$ref": parent.canonical_id},
+            "part_index": index,
+        }
+        await upsert_document(
+            session,
+            principal,
+            part.doc_key,
+            DocumentUpsertRequest(
+                content=part.content,
+                title=part.title,
+                frontmatter=frontmatter,
+                expected_version=part.version,
+                namespace=part.namespace,
+                session_batch_id=batch,
+            ),
+            commit=False,
+        )
+    parent_frontmatter = {
+        **(parent.frontmatter or {}),
+        "parts": [
+            {"$ref": part.canonical_id, "index": index} for index, part in enumerate(parts)
+        ],
+    }
+    result = await upsert_document(
+        session,
+        principal,
+        parent.doc_key,
+        DocumentUpsertRequest(
+            content=parent.content,
+            title=parent.title,
+            frontmatter=parent_frontmatter,
+            expected_version=parent.version,
+            namespace=parent.namespace,
+            session_batch_id=batch,
+        ),
+        commit=False,
+    )
+    await session.commit()
+    return {
+        "parent": result.document.model_dump(mode="json"),
+        "parts": [
+            {"index": index, "id": part.canonical_id, "alias": part.doc_key}
+            for index, part in enumerate(parts)
+        ],
+        "session_batch_id": str(batch),
+    }
 

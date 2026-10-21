@@ -5,9 +5,16 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.config import get_settings
 from app.models import LinkType, TaskStatus
@@ -18,6 +25,11 @@ Namespace = str
 RoleName = Literal["SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"]
 _KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$"
 _NAMESPACE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+
+
+# Document bodies are stored byte-for-byte (PRD AG-ST-03): exempt them from
+# the model-wide whitespace stripping applied to identifiers and labels.
+RawText = Annotated[str, StringConstraints(strip_whitespace=False)]
 
 
 class StrictModel(BaseModel):
@@ -185,7 +197,7 @@ class TaskReleaseRequest(StrictModel):
 class TaskHandoffRequest(StrictModel):
     next_status: Literal["REVIEWING", "HANDOFF", "DONE", "AWAITING_HUMAN", "FAILED"]
     brief: HandoffBrief | None = None
-    artifact_text: str | None = Field(
+    artifact_text: RawText | None = Field(
         default=None, max_length=settings.max_artifact_chars
     )
     artifact_uri: str | None = Field(default=None, max_length=2_048)
@@ -215,11 +227,23 @@ class TaskHandoffRequest(StrictModel):
         return self
 
 
+# One enum for REST and MCP review targets (PRD AG-CO-01); the service
+# validates against it so both paths accept and reject exactly the same values.
+REVIEW_NEXT_STATUSES: tuple[str, ...] = ("IN_PROGRESS", "DONE", "HANDOFF", "READY")
+REVIEW_APPROVE_STATUSES: tuple[str, ...] = ("DONE", "HANDOFF", "READY")
+REVIEW_REJECT_STATUSES: tuple[str, ...] = ("READY", "IN_PROGRESS")
+
+
 class TaskReviewRequest(StrictModel):
     decision: Literal["approve", "reject"]
     feedback: str | None = Field(default=None, max_length=8_000)
     expected_version: int | None = Field(default=None, ge=1)
-    next_status: Literal["DONE", "HANDOFF", "READY"] | None = None
+    next_status: str | None = Field(
+        default=None,
+        description="approve: " + "|".join(REVIEW_APPROVE_STATUSES)
+        + "; reject: " + "|".join(REVIEW_REJECT_STATUSES)
+        + " (IN_PROGRESS sends the task back to its executor for rework)",
+    )
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
 
@@ -227,19 +251,6 @@ class TaskReviewRequest(StrictModel):
     @classmethod
     def _agent(cls, value: str | None) -> str | None:
         return _clean_agent(value)
-
-    @model_validator(mode="after")
-    def _decision_status(self) -> TaskReviewRequest:
-        if self.next_status is not None:
-            if self.decision == "approve" and self.next_status not in (
-                "DONE",
-                "HANDOFF",
-                "READY",
-            ):
-                raise ValueError("approve next_status must be DONE, HANDOFF or READY")
-            if self.decision == "reject" and self.next_status not in ("READY",):
-                raise ValueError("reject next_status must be READY")
-        return self
 
 
 class TaskEscalateRequest(StrictModel):
@@ -270,6 +281,10 @@ class AdminTaskCancelRequest(StrictModel):
 
 
 class SlotPatchRequest(StrictModel):
+    return_current_on_conflict: bool = Field(
+        default=False,
+        description="On 409 version_conflict include current_content (bodies <= 64 KiB)",
+    )
     ops: list[dict[str, Any]] = Field(min_length=1, max_length=100)
     expected_version: int = Field(ge=1)
     lease_epoch: int | None = Field(default=None, ge=0)
@@ -287,6 +302,10 @@ class SlotPatchRequest(StrictModel):
 
 
 class SlotReplaceRequest(StrictModel):
+    return_current_on_conflict: bool = Field(
+        default=False,
+        description="On 409 version_conflict include current_content (bodies <= 64 KiB)",
+    )
     state: dict[str, Any]
     expected_version: int = Field(ge=0)
     goal: str | None = Field(default=None, max_length=8_000)
@@ -351,8 +370,12 @@ class HumanSlotUpdateRequest(StrictModel):
 
 
 class DocumentUpsertRequest(StrictModel):
+    return_current_on_conflict: bool = Field(
+        default=False,
+        description="On 409 version_conflict include current_content (bodies <= 64 KiB)",
+    )
     title: str | None = Field(default=None, max_length=256)
-    content: str = Field(min_length=1, max_length=settings.max_document_content_chars)
+    content: RawText = Field(min_length=1, max_length=settings.max_document_content_chars)
     frontmatter: dict[str, Any] = Field(default_factory=dict)
     expected_version: int = Field(ge=0)
     namespace: Namespace | None = Field(
@@ -381,8 +404,12 @@ class AdminDocumentCreateRequest(DocumentUpsertRequest):
 
 
 class DocumentSectionPatchRequest(StrictModel):
+    return_current_on_conflict: bool = Field(
+        default=False,
+        description="On 409 version_conflict include current_content (bodies <= 64 KiB)",
+    )
     section_heading: str = Field(min_length=1, max_length=256)
-    new_markdown: str = Field(
+    new_markdown: RawText = Field(
         max_length=settings.max_document_content_chars,
         description=(
             "Replacement section body only. Do not include the heading; a "
@@ -406,6 +433,9 @@ class DocumentQueryRequest(StrictModel):
     namespace: Namespace | None = Field(default=None, pattern=_NAMESPACE_PATTERN + "$")
     limit: int = Field(default=10, ge=1, le=50)
     include_unverified: bool = False
+    include_own_unverified: bool = Field(
+        default=True, description="Include your own unverified drafts (default true)"
+    )
     include_tainted: bool = False
     include_archived: bool = False
     mode: Literal["auto", "semantic", "keyword", "hybrid"] = "hybrid"
@@ -419,7 +449,7 @@ class DocumentQueryRequest(StrictModel):
 
 class DocumentHumanUpdateRequest(StrictModel):
     title: str | None = Field(default=None, max_length=256)
-    content: str | None = Field(
+    content: RawText | None = Field(
         default=None, max_length=settings.max_document_content_chars
     )
     frontmatter: dict[str, Any] | None = None
@@ -452,6 +482,10 @@ class DereferenceRequest(StrictModel):
     uri: str = Field(min_length=1, max_length=2_048)
     include_unverified: bool = False
     include_tainted: bool = False
+    content_offset: int = Field(default=0, ge=0, description="Byte offset into the body")
+    content_limit: int | None = Field(
+        default=None, ge=1, le=262_144, description="Bytes to return (<= 256 KiB)"
+    )
     expand_parts: bool = Field(
         default=False,
         description="Concatenate frontmatter.parts in index order (<= 4 MiB)",
@@ -677,6 +711,8 @@ class TaskOut(TaskSummary):
     handoff_brief: dict[str, Any] | None = None
     human_feedback: str | None = None
     reject_history: list[Any] = Field(default_factory=list)
+    review_round: int = 0
+    review_history: list[Any] = Field(default_factory=list)
     created_by: str
     created_at: datetime
 
@@ -688,6 +724,8 @@ class TaskListResponse(BaseModel):
 class TaskActionResponse(BaseModel):
     task: TaskOut
     escalated: bool = False
+    effective_status: TaskStatus | None = None
+    reassigned: bool | None = None
     artifact_uri: str | None = None
     session_batch_id: uuid.UUID
     status: TaskStatus
@@ -725,6 +763,7 @@ class SlotOut(BaseModel):
     taint_sources: list[Any] = Field(default_factory=list)
     updated_by: str
     updated_at: datetime
+    updated_stamp: dict[str, Any] | None = None
 
 
 class SlotSummary(BaseModel):
@@ -763,6 +802,11 @@ class DocumentArchiveRequest(StrictModel):
 class DocumentRenameRequest(StrictModel):
     new_alias: str = Field(min_length=1, max_length=256)
     expected_version: int | None = Field(default=None, ge=1)
+    session_batch_id: uuid.UUID | None = None
+
+
+class RegisterPartsRequest(StrictModel):
+    part_refs: list[str] = Field(min_length=1, max_length=100)
     session_batch_id: uuid.UUID | None = None
 
 
@@ -857,6 +901,8 @@ class DocumentListResponse(BaseModel):
 class DocumentMutationResponse(BaseModel):
     document: DocumentOut
     session_batch_id: uuid.UUID
+    content_bytes: int | None = None
+    chunk_count: int | None = None
 
 
 class DocumentBatchUpsertResult(BaseModel):
@@ -874,10 +920,27 @@ class DocumentNormalizeResponse(BaseModel):
     document: DocumentOut
 
 
+class MatchedChunk(BaseModel):
+    chunk_index: int
+    heading_path: str | None = None
+    snippet: str
+
+
+class DocumentQueryHit(DocumentSummary):
+    created_by: str | None = None
+    trust: str | None = None
+    is_own: bool = False
+    matched_chunks: list[MatchedChunk] = Field(default_factory=list)
+
+
 class DocumentQueryResponse(BaseModel):
-    items: list[DocumentSummary]
+    items: list[DocumentQueryHit]
     total: int
     next_cursor: str | None = None
+    excluded: dict[str, int] = Field(
+        default_factory=dict,
+        description="Hits hidden by the default filters (unverified_by_others, archived, tainted)",
+    )
 
 
 class DereferenceBatchRequest(StrictModel):
@@ -900,6 +963,8 @@ class DereferenceBatchResponse(BaseModel):
 class DereferenceResponse(BaseModel):
     uri: str
     document: DocumentOut
+    content_total_bytes: int | None = None
+    content_truncated: bool = False
     expanded_content: str | None = None
     parts: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -1149,7 +1214,7 @@ TaskContextResponse.model_rebuild()
 
 
 class ProposalCreateRequest(StrictModel):
-    content: str = Field(min_length=1, max_length=settings.max_proposal_content_chars)
+    content: RawText = Field(min_length=1, max_length=settings.max_proposal_content_chars)
     title: str | None = Field(default=None, max_length=256)
     frontmatter: dict[str, Any] = Field(default_factory=dict)
     base_version: int = Field(ge=1)

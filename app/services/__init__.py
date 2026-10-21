@@ -44,6 +44,7 @@ from app.services.documents import (
     patch_document_section,
     purge_document,
     query_documents,
+    register_parts,
     rename_document,
     restore_document,
     set_document_status,
@@ -122,6 +123,7 @@ from app.services.workspace import (
 )
 
 __all__ = [
+    "register_parts",
     "purge_document",
     "rename_document",
     "append_event",

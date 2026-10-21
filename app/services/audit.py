@@ -62,7 +62,8 @@ _TASK_FIELDS = (
     "title", "description", "status", "priority", "assigned_role", "namespace",
     "claimed_by", "lease_owner", "lease_expires_at", "input_context",
     "output_artifact", "handoff_brief", "artifact_uri", "artifact_version",
-    "artifact_hash", "handed_off_by", "human_feedback", "reject_history",
+    "artifact_hash", "handed_off_by", "review_round", "review_history",
+    "human_feedback", "reject_history",
     "ping_pong_count", "max_retries", "lease_epoch", "tainted", "taint_sources",
 )
 
@@ -299,6 +300,9 @@ def _apply_task_undo(task: CollabTask, before: dict[str, Any]) -> None:
         task.artifact_version = before.get("artifact_version")
         task.artifact_hash = before.get("artifact_hash")
         task.handed_off_by = before.get("handed_off_by")
+    if "review_round" in before:
+        task.review_round = int(before["review_round"] or 0)
+        task.review_history = before.get("review_history") or []
     task.human_feedback = before.get("human_feedback", task.human_feedback)
     task.reject_history = before.get("reject_history", task.reject_history) or []
     task.ping_pong_count = before.get("ping_pong_count", task.ping_pong_count)
