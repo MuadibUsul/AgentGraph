@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import Principal
 from app.config import get_settings
 from app.database import async_session_factory
-from app.errors import BudgetExceeded, RateLimited
+from app.errors import ApiError, BudgetExceeded, RateLimited
 from app.models import AgentToken, UsageLedger, WorkspaceBudget
 from app.tenant import set_session_tenant
 
@@ -68,7 +68,12 @@ async def enforce_rate_limit(session: AsyncSession, principal: Principal) -> Non
     """
     if not settings.rate_limit_enabled:
         return
-    identity = f"{principal.workspace.id}:{principal.agent_signature}:{principal.token_id}"
+    actor_key = (
+        str(principal.token_id)
+        if principal.token_id
+        else str(principal.user_id) if principal.user_id else "workspace"
+    )
+    identity = f"{principal.workspace.id}:{principal.auth_kind.value}:{actor_key}"
     bucket = (
         f"{principal.workspace.id}:"
         + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
@@ -106,6 +111,54 @@ RETURNING count
         await counter_session.commit()
     if int(count or 0) > limit:
         raise RateLimited(settings.rate_limit_window_seconds)
+
+
+async def enforce_embedding_budget(
+    session: AsyncSession, workspace_id: uuid.UUID, chars: int
+) -> None:
+    """Bound embedding spend per workspace per minute.
+
+    This counter is committed in its own transaction: provider calls already
+    incurred the cost even if the surrounding document write later rolls back.
+    """
+    if not settings.rate_limit_enabled or chars <= 0:
+        return
+    window = 60
+    bucket = f"embedding-bytes:{workspace_id}"[:160]
+    async with async_session_factory() as counter_session:
+        count = await counter_session.scalar(
+            text(
+                """
+INSERT INTO rate_limit_windows (workspace_id, bucket, window_start, count)
+VALUES (
+    CAST(:workspace_id AS uuid),
+    :bucket,
+    to_timestamp(floor(extract(epoch from now()) / :window) * :window),
+    :chars
+)
+ON CONFLICT (bucket, window_start)
+DO UPDATE SET count = rate_limit_windows.count + EXCLUDED.count
+RETURNING count
+"""
+            ),
+            {
+                "workspace_id": str(workspace_id),
+                "bucket": bucket,
+                "window": window,
+                "chars": chars,
+            },
+        )
+        await counter_session.commit()
+    if int(count or 0) > settings.embedding_bytes_per_minute:
+        raise ApiError(
+            429,
+            "embedding_budget_exceeded",
+            "workspace embedding byte budget is exhausted; retry later",
+            details={
+                "window_seconds": window,
+                "limit_bytes": settings.embedding_bytes_per_minute,
+            },
+        )
 
 
 async def record_usage(

@@ -747,6 +747,13 @@ async def test_webhook_delivery_and_external_action_compensation(
         json={},
     )
     assert compensation.status_code == 200, compensation.text
+    compensation_body = compensation.json()
+    assert compensation_body["status"] == "PENDING_APPROVAL"
+    approved_compensation = await client.post(
+        f"/v1/admin/workspaces/{wid}/external-actions/{compensation_body['id']}/approve",
+        headers=admin_headers,
+    )
+    assert approved_compensation.status_code == 200, approved_compensation.text
     final = None
     for _ in range(30):
         listing = await client.get(
@@ -1123,7 +1130,7 @@ async def test_dependency_becomes_ready_when_parent_is_done(
         f"/v1/tasks/{parent}/handoff",
         headers=executor["headers"],
         json={
-            "next_status": "DONE",
+            "next_status": "REVIEWING",
             "brief": {
                 "summary": "parent complete",
                 "key_metrics": {},
@@ -1133,6 +1140,16 @@ async def test_dependency_becomes_ready_when_parent_is_done(
         },
     )
     assert done.status_code == 200, done.text
+    reviewed = await client.post(
+        f"/v1/tasks/{parent}/review",
+        headers=workspace["headers"],
+        json={
+            "decision": "approve",
+            "next_status": "DONE",
+            "expected_version": done.json()["task"]["version"],
+        },
+    )
+    assert reviewed.status_code == 200, reviewed.text
     child_after = await client.get(f"/v1/tasks/{child}", headers=workspace["headers"])
     assert child_after.status_code == 200
     assert child_after.json()["status"] == "READY"
@@ -1427,7 +1444,7 @@ async def test_backfill_verifies_legacy_artifacts_and_clears_downstream_taint(
             f"/v1/tasks/{key}/handoff",
             headers=executor["headers"],
             json={
-                "next_status": "DONE",
+                "next_status": "REVIEWING",
                 "brief": {
                     "summary": "legacy artifact",
                     "key_metrics": {},
@@ -1438,6 +1455,30 @@ async def test_backfill_verifies_legacy_artifacts_and_clears_downstream_taint(
             },
         )
         assert handed.status_code == 200, handed.text
+        reviewed = await client.post(
+            f"/v1/tasks/{key}/review",
+            headers=workspace["headers"],
+            json={
+                "decision": "approve",
+                "next_status": "DONE",
+                "expected_version": handed.json()["task"]["version"],
+            },
+        )
+        assert reviewed.status_code == 200, reviewed.text
+        current = await client.get(
+            f"/v1/admin/workspaces/{wid}/documents/{doc_key}",
+            headers=admin_headers,
+        )
+        assert current.status_code == 200, current.text
+        deprecated = await client.post(
+            f"/v1/admin/workspaces/{wid}/documents/{doc_key}/deprecate",
+            headers=admin_headers,
+            json={
+                "expected_version": current.json()["version"],
+                "note": "simulate legacy unverified artifact",
+            },
+        )
+        assert deprecated.status_code == 200, deprecated.text
 
     backfill = await client.post(
         f"/v1/admin/workspaces/{wid}/documents/backfill-verified",

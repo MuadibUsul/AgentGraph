@@ -150,14 +150,29 @@ def task_out(task: CollabTask) -> TaskOut:
     )
 
 
-def document_summary(document: SharedDocument) -> DocumentSummary:
+def _compact_frontmatter(value: dict[str, Any], limit: int = 8_192) -> dict[str, Any]:
+    if len(json.dumps(value, ensure_ascii=False, default=str)) <= limit:
+        return value
+    return {
+        "_truncated": True,
+        "_bytes": len(json.dumps(value, ensure_ascii=False, default=str)),
+        "_keys": list(value)[:50],
+    }
+
+
+def document_summary(
+    document: SharedDocument, *, compact_frontmatter: bool = False
+) -> DocumentSummary:
+    frontmatter = document.frontmatter or {}
+    if compact_frontmatter:
+        frontmatter = _compact_frontmatter(frontmatter)
     return DocumentSummary(
         id=document.id,
         doc_key=document.doc_key,
         title=document.title,
         namespace=document.namespace,
         version=document.version,
-        frontmatter=document.frontmatter or {},
+        frontmatter=frontmatter,
         verification_status=document.verification_status,
         trust_level=document.trust_level,
         verified_version=document.verified_version,
@@ -315,6 +330,27 @@ def task_snapshot(task: CollabTask) -> dict[str, Any]:
     }
 
 
+_audit_actor: ContextVar[tuple[str | None, uuid.UUID | None, uuid.UUID | None]] = (
+    ContextVar("agentgraph_audit_actor", default=(None, None, None))
+)
+
+
+def set_audit_actor_values(
+    auth_kind: str | None,
+    token_id: uuid.UUID | None,
+    user_id: uuid.UUID | None,
+) -> None:
+    _audit_actor.set((auth_kind, token_id, user_id))
+
+
+def set_audit_actor(principal: Any) -> None:
+    set_audit_actor_values(
+        getattr(principal.auth_kind, "value", None),
+        getattr(principal, "token_id", None),
+        getattr(principal, "user_id", None),
+    )
+
+
 async def record_audit(
     session: AsyncSession,
     *,
@@ -327,10 +363,14 @@ async def record_audit(
     before: dict[str, Any],
     after: dict[str, Any],
 ) -> StateAuditDiff:
+    auth_kind, token_id, user_id = _audit_actor.get()
     entry = StateAuditDiff(
         workspace_id=workspace_id,
         session_batch_id=session_batch_id,
         agent_signature=agent_signature,
+        actor_auth_kind=auth_kind,
+        actor_token_id=token_id,
+        actor_user_id=user_id,
         target_table=target_table,
         target_record_id=target_record_id,
         operation=operation,

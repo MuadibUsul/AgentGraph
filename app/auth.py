@@ -207,7 +207,10 @@ async def get_principal(
             headers={"WWW-Authenticate": "Bearer"},
         )
     await activate_tenant(session, principal.workspace.id)
+    from app.services.common import set_audit_actor
     from app.services.usage import enforce_rate_limit
+
+    set_audit_actor(principal)
 
     await enforce_rate_limit(session, principal)
     return principal
@@ -272,7 +275,10 @@ def principal_for_human(user: HumanUser, workspace: Workspace) -> Principal:
     )
 
 
-def require_admin(request: Request) -> None:
+async def require_admin(request: Request) -> None:
+    from app.services.common import set_audit_actor_values
+
+    set_audit_actor_values("human_admin", None, None)
     if not settings.admin_token:
         raise ApiError(
             503,

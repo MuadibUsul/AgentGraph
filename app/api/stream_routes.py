@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app.auth import (
     Principal,
-    RoleScope,
+    can,
     extract_bearer_token,
     principal_for_admin,
     require_admin,
@@ -27,6 +27,7 @@ from app.errors import ApiError
 from app.events import event_bus
 from app.models import WorkspaceEvent
 from app.services.common import domain_event_type
+from app.services.usage import enforce_rate_limit
 from app.services.workspace import get_workspace
 from app.tenant import set_session_tenant
 
@@ -89,19 +90,32 @@ async def get_stream_principal(request: Request) -> Principal:
         principal = await resolve_principal(
             session, raw_key, agent_hint=request.headers.get("X-Agent-Signature")
         )
-    if principal is None:
-        raise ApiError(401, "unauthorized", "invalid or inactive API key")
-    return principal
+        if principal is None:
+            raise ApiError(401, "unauthorized", "invalid or inactive API key")
+        from app.services.common import set_audit_actor
+
+        set_audit_actor(principal)
+        await enforce_rate_limit(session, principal)
+        return principal
+
+
+_TABLE_PERMISSIONS = {
+    "context_slots": "state:read",
+    "collab_tasks": "task:read",
+    "shared_documents": "doc:read",
+    "timeline_streams": "timeline:read",
+    "document_proposals": "proposal:read",
+    "external_actions": "action:read",
+    "workspace_links": "link:read",
+}
 
 
 def _event_allowed(event: dict[str, Any], principal: Principal, filters: StreamFilters) -> bool:
     if str(event.get("workspace_id")) != str(principal.workspace.id):
         return False
     table = event.get("table", "")
-    if principal.role is RoleScope.SCOUT and table in (
-        "context_slots",
-        "timeline_streams",
-    ):
+    permission = _TABLE_PERMISSIONS.get(table)
+    if permission is not None and not can(principal, permission):
         return False
     if filters.tables and table not in filters.tables:
         return False
@@ -114,11 +128,12 @@ def _event_allowed(event: dict[str, Any], principal: Principal, filters: StreamF
         return False
     if filters.namespace and event.get("namespace") != filters.namespace:
         return False
-    if table in ("shared_documents", "timeline_streams"):
-        allowed = principal.allowed_namespaces
-        if not principal.is_commander and "*" not in allowed:
-            if event.get("namespace") not in allowed:
-                return False
+    if not principal.is_commander and "*" not in principal.allowed_namespaces:
+        if table in ("document_proposals", "workspace_links"):
+            # These tables have no trustworthy namespace in the event payload.
+            return False
+        if event.get("namespace") not in principal.allowed_namespaces:
+            return False
     return True
 
 
@@ -193,12 +208,58 @@ def _frame(event: dict[str, Any]) -> str:
     )
 
 
+_sse_lock = asyncio.Lock()
+_sse_total = 0
+_sse_by_principal: dict[str, int] = {}
+
+
+def _sse_key(principal: Principal) -> str:
+    return (
+        f"{principal.workspace.id}:{principal.auth_kind.value}:"
+        f"{principal.token_id or principal.agent_signature}"
+    )
+
+
+async def _acquire_sse(principal: Principal) -> None:
+    global _sse_total
+    key = _sse_key(principal)
+    async with _sse_lock:
+        if _sse_total >= settings.sse_max_connections:
+            raise ApiError(429, "sse_capacity", "too many event streams; retry later")
+        if _sse_by_principal.get(key, 0) >= settings.sse_max_connections_per_principal:
+            raise ApiError(429, "sse_capacity", "too many event streams for this principal")
+        _sse_total += 1
+        _sse_by_principal[key] = _sse_by_principal.get(key, 0) + 1
+
+
+def _release_sse(principal: Principal) -> None:
+    global _sse_total
+    key = _sse_key(principal)
+    if _sse_by_principal.get(key, 0) > 0:
+        _sse_by_principal[key] -= 1
+        _sse_total = max(0, _sse_total - 1)
+        if _sse_by_principal[key] == 0:
+            _sse_by_principal.pop(key, None)
+
+
 async def _event_stream(
     principal: Principal,
     filters: StreamFilters,
     last_event_id: int | None,
 ) -> AsyncIterator[str]:
-    cursor = 0
+    try:
+        async for frame in _stream_events(principal, filters, last_event_id, 0):
+            yield frame
+    finally:
+        _release_sse(principal)
+
+
+async def _stream_events(
+    principal: Principal,
+    filters: StreamFilters,
+    last_event_id: int | None,
+    cursor: int,
+) -> AsyncIterator[str]:
     async with event_bus.subscribe() as queue:
         yield (
             "retry: 3000\n"
@@ -263,6 +324,7 @@ async def stream(
     last_event_id: str | None = Query(default=None),
     principal: Principal = Depends(get_stream_principal),
 ) -> StreamingResponse:
+    await _acquire_sse(principal)
     return _streaming_response(
         principal,
         StreamFilters(tables, status, assigned_role, namespace),
@@ -285,8 +347,10 @@ async def admin_stream(
 ) -> StreamingResponse:
     async with async_session_factory() as session:
         workspace = await get_workspace(session, workspace_id)
+    admin_principal = principal_for_admin(workspace)
+    await _acquire_sse(admin_principal)
     return _streaming_response(
-        principal_for_admin(workspace),
+        admin_principal,
         StreamFilters(tables, status, assigned_role, namespace),
         _parse_last_event_id(request, last_event_id),
     )

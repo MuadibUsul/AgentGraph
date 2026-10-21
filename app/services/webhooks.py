@@ -7,7 +7,7 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,10 +107,16 @@ async def create_rule(
     request: WebhookRuleCreateRequest,
 ) -> WebhookRuleOut:
     await validate_target(request.url)
+    latest_event_id = await session.scalar(
+        select(func.max(WorkspaceEvent.id)).where(
+            WorkspaceEvent.workspace_id == workspace_id
+        )
+    )
     rule = WebhookRule(
         workspace_id=workspace_id,
         name=request.name,
         url=request.url,
+        last_event_id=int(latest_event_id or 0),
         secret=request.secret or new_secret(),
         event_types=request.event_types,
         tables=request.tables,
@@ -292,6 +298,10 @@ async def process_deliveries(session: AsyncSession) -> int:
         if rule is None or event is None:
             delivery.status = "FAILED"
             delivery.last_error = "rule or event no longer exists"
+            continue
+        if not rule.active:
+            delivery.status = "CANCELED"
+            delivery.last_error = "rule is inactive"
             continue
         result = await send_json(
             rule.url,

@@ -46,7 +46,9 @@ export default function LoginPage() {
           localStorage.removeItem(SESSION_KEY);
         }
       }).catch(() => undefined);
-    } else if (localStorage.getItem(TOKEN_KEY)) {
+    } else if (
+      sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY)
+    ) {
       window.location.assign("/dashboard/");
     }
     void fetch(`${normalizeBase(base)}/v1/auth/config`, {
@@ -107,6 +109,7 @@ export default function LoginPage() {
 
   async function finish(session: AuthSession) {
     localStorage.setItem(SESSION_KEY, session.token);
+    sessionStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.setItem(BASE_KEY, normalizeBase(apiBase));
     window.location.assign("/dashboard/");
@@ -196,9 +199,6 @@ export default function LoginPage() {
         </a>
         <div className="auth-header-actions">
           <LanguageToggle />
-          <a className="auth-operator-link" href="/dashboard/connect/">
-            {t("Operator access")} <span aria-hidden>→</span>
-          </a>
         </div>
       </header>
 

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, effective_agent, ensure_namespace, require_permission
 from app.config import get_settings
+from app.errors import Forbidden
 from app.models import TimelineStream, Workspace
 from app.schemas import TimelineEventRequest, TimelineItemOut
 from app.services.common import append_event, timeline_out, utcnow
@@ -62,6 +63,7 @@ async def list_timeline(
     hours: int = 24,
     event_type: str | None = None,
     namespace: str | None = None,
+    allowed_namespaces: list[str] | None = None,
 ) -> list[TimelineItemOut]:
     since = utcnow() - timedelta(hours=hours)
     query = select(TimelineStream).where(
@@ -71,7 +73,11 @@ async def list_timeline(
     if event_type:
         query = query.where(TimelineStream.event_type == event_type)
     if namespace:
+        if allowed_namespaces is not None and namespace not in allowed_namespaces:
+            raise Forbidden("namespace is outside this token's scope")
         query = query.where(TimelineStream.namespace == namespace)
+    elif allowed_namespaces is not None:
+        query = query.where(TimelineStream.namespace.in_(allowed_namespaces))
     events = (
         await session.execute(
             query.order_by(TimelineStream.created_at.desc()).limit(limit)

@@ -189,7 +189,8 @@ export default function ConsolePage() {
     const devDefault =
       window.location.port === "3000" ? "http://localhost:8000" : window.location.origin;
     const base = storedBase || devDefault;
-    const token = localStorage.getItem(TOKEN_KEY) || "";
+    const token =
+      sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || "";
     const session = localStorage.getItem(SESSION_KEY) || "";
     setApiBase(base);
     setAdminToken(token);
@@ -440,7 +441,8 @@ export default function ConsolePage() {
       setApiBase(cleanBase);
       setAdminToken(cleanToken);
       localStorage.setItem(BASE_KEY, cleanBase);
-      localStorage.setItem(TOKEN_KEY, cleanToken);
+      sessionStorage.setItem(TOKEN_KEY, cleanToken);
+      localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(SESSION_KEY);
       setSelectedId((current) =>
         current && list.some((workspace) => workspace.id === current)
@@ -487,6 +489,7 @@ export default function ConsolePage() {
     setError(null);
     localStorage.setItem(BASE_KEY, normalizeBase(base));
     localStorage.setItem(SESSION_KEY, token);
+    sessionStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(TOKEN_KEY);
     void probe(base);
   }
@@ -664,6 +667,7 @@ export default function ConsolePage() {
         // Local sign-out still clears the browser session.
       }
     }
+    sessionStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(SESSION_KEY);
     setConnected(false);

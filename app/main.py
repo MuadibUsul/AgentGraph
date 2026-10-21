@@ -49,6 +49,17 @@ mcp_http_app = create_http_app() if settings.mcp_enabled else None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.is_production:
+        token = settings.admin_token or ""
+        weak = token in {
+            "change-me-in-production",
+            "dev-admin-token-change-me",
+            "agentgraph-dev-admin",
+        }
+        if len(token) < 32 or weak:
+            raise RuntimeError(
+                "production ADMIN_TOKEN must be at least 32 random characters"
+            )
     if settings.auto_init_db:
         await apply_schema()
     await event_bus.start()
@@ -109,6 +120,38 @@ app = FastAPI(
         else None
     ),
 )
+
+_CSP = (
+    "default-src 'self'; base-uri 'self'; object-src 'none'; "
+    "frame-ancestors 'none'; form-action 'self'; "
+    "script-src 'self' 'unsafe-inline' https://accounts.google.com "
+    "https://www.gstatic.com https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+    "https://fonts.googleapis.com https://accounts.google.com; "
+    "font-src 'self' https://fonts.gstatic.com data:; "
+    "img-src 'self' data: blob: https:; "
+    "connect-src 'self' https://accounts.google.com "
+    "https://oauth2.googleapis.com; "
+    "frame-src https://accounts.google.com"
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _CSP)
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Permissions-Policy", "geolocation=(), microphone=(), camera=()"
+    )
+    if settings.is_production:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
 
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(

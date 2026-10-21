@@ -388,12 +388,22 @@ async def test_task_lease_handoff_l2_and_dependencies(client, admin_headers, wor
     )
     assert child_task["status"] == "TODO"
     await claim(client, executor["headers"], parent)
-    await handoff(
+    handed = await handoff(
         client,
         executor["headers"],
         parent,
-        next_status="DONE",
+        next_status="REVIEWING",
     )
+    reviewed = await client.post(
+        f"/v1/tasks/{parent}/review",
+        headers=commander,
+        json={
+            "decision": "approve",
+            "next_status": "DONE",
+            "expected_version": handed["task"]["version"],
+        },
+    )
+    assert reviewed.status_code == 200, reviewed.text
     child_after = await client.get(f"/v1/tasks/{child}", headers=commander)
     assert child_after.status_code == 200
     assert child_after.json()["status"] == "READY"
@@ -724,7 +734,8 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                     assert mcp_created.isError is False
                     assert json.loads(mcp_created.content[0].text)["title"] == "MCP created task"
                     claimed = await session.call_tool(
-                        "agent_claim_and_read", {"task_key": key}
+                        "agent_claim_and_read",
+                        {"task_key": key, "lease_seconds": 3600},
                     )
                     assert claimed.isError is False
                     assert json.loads(claimed.content[0].text)["task"]["status"] == "IN_PROGRESS"
@@ -806,7 +817,7 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         "agent_handoff_task",
                         {
                             "task_key": key,
-                            "next_status": "DONE",
+                            "next_status": "REVIEWING",
                             "brief": {
                                 "summary": "MCP handoff",
                                 "key_metrics": {"x": 1},
@@ -817,7 +828,18 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         },
                     )
                     assert hand.isError is False
-                    artifact_uri = json.loads(hand.content[0].text)["artifact_uri"]
+                    hand_task = json.loads(hand.content[0].text)
+                    reviewed = await client.post(
+                        f"/v1/tasks/{key}/review",
+                        headers=commander,
+                        json={
+                            "decision": "approve",
+                            "next_status": "DONE",
+                            "expected_version": hand_task["task"]["version"],
+                        },
+                    )
+                    assert reviewed.status_code == 200, reviewed.text
+                    artifact_uri = hand_task["artifact_uri"]
                     deref = await session.call_tool(
                         "dereference", {"uri": artifact_uri}
                     )
@@ -1016,18 +1038,27 @@ async def test_dashboard_root_and_openapi(client):
     assert root.json()["version"] == "3.2.1"
     assert set(root.json()["primitives"]) == {
         "workspace_sync",
+        "create_task",
+        "review_task",
+        "request_human_review",
         "agent_claim_and_read",
         "agent_patch_shared_state",
         "agent_handoff_task",
         "agent_escalate_to_human",
         "upsert_shared_doc",
+        "upsert_many",
         "patch_doc_section",
         "query_workspace",
+        "list_documents",
         "dereference",
+        "dereference_many",
+        "archive_document",
+        "restore_document",
         "propose_document_change",
         "vote_on_proposal",
         "list_document_proposals",
         "draft_external_action",
+        "get_api_docs",
     }
     openapi = await client.get("/openapi.json")
     assert openapi.status_code == 200

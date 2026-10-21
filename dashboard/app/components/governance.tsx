@@ -507,6 +507,16 @@ export function GovernanceView({
                         <span className={`pill ${statusTone(action.status)}`}>{t(action.status)}</span>
                       </div>
                       <div className="mono muted">{action.method} {action.target_url}</div>
+                      {action.payload && (
+                        <pre className="json-preview" aria-label="Action payload">
+                          {JSON.stringify(action.payload, null, 2)}
+                        </pre>
+                      )}
+                      {action.headers && Object.keys(action.headers).length > 0 && (
+                        <pre className="json-preview" aria-label="Action headers">
+                          {JSON.stringify(action.headers, null, 2)}
+                        </pre>
+                      )}
                       <div className="proposal-meta">
                         <span>{t("{attempts}/{max} attempts", { attempts: action.attempts, max: action.max_attempts })}</span>
                         <span>{t("by")} {action.created_by}</span>

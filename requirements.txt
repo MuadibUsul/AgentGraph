@@ -11,5 +11,5 @@ httpx==0.28.1
 jsonpatch==1.33
 
 jsonschema==4.26.0
-numpy>=2,<2.4
+numpy==2.3.5
 beautifulsoup4==4.15.0

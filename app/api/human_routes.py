@@ -259,7 +259,7 @@ async def deprecate_document(
 async def change_document_taint(
     doc_key: str,
     body: DocumentTaintRequest,
-    principal: Principal = Depends(get_human_principal),
+    principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentMutationResponse:
     return await services.set_document_taint(
@@ -375,7 +375,10 @@ async def external_actions(
     session: AsyncSession = Depends(get_db),
 ) -> ExternalActionListResponse:
     return await services.list_actions(
-        session, principal.workspace.id, limit=limit
+        session,
+        principal.workspace.id,
+        limit=limit,
+        include_payload=True,
     )
 
 
@@ -466,7 +469,7 @@ async def budget(
 @router.put("/budget", response_model=BudgetOut, summary="Update budget limits")
 async def update_budget(
     body: BudgetUpdateRequest,
-    principal: Principal = Depends(get_human_writer),
+    principal: Principal = Depends(_owner),
     session: AsyncSession = Depends(get_db),
 ) -> BudgetOut:
     row = await services.set_budget(
@@ -570,7 +573,7 @@ async def policies(
 )
 async def create_policy(
     body: PolicyCreateRequest,
-    principal: Principal = Depends(get_human_writer),
+    principal: Principal = Depends(_owner),
     session: AsyncSession = Depends(get_db),
 ) -> PolicyOut:
     return await services.create_policy(
@@ -586,7 +589,7 @@ async def create_policy(
 async def update_policy(
     policy_id: uuid.UUID,
     body: PolicyUpdateRequest,
-    principal: Principal = Depends(get_human_writer),
+    principal: Principal = Depends(_owner),
     session: AsyncSession = Depends(get_db),
 ) -> PolicyOut:
     return await services.update_policy(
@@ -601,7 +604,7 @@ async def update_policy(
 )
 async def delete_policy(
     policy_id: uuid.UUID,
-    principal: Principal = Depends(get_human_writer),
+    principal: Principal = Depends(_owner),
     session: AsyncSession = Depends(get_db),
 ) -> None:
     await services.delete_policy(
@@ -629,7 +632,7 @@ async def webhooks(
 )
 async def create_webhook(
     body: WebhookRuleCreateRequest,
-    principal: Principal = Depends(get_human_writer),
+    principal: Principal = Depends(_owner),
     session: AsyncSession = Depends(get_db),
 ) -> WebhookRuleOut:
     return await services.create_rule(
@@ -645,7 +648,7 @@ async def create_webhook(
 async def update_webhook(
     rule_id: uuid.UUID,
     body: WebhookRuleUpdateRequest,
-    principal: Principal = Depends(get_human_writer),
+    principal: Principal = Depends(_owner),
     session: AsyncSession = Depends(get_db),
 ) -> WebhookRuleOut:
     return await services.update_rule(
@@ -660,7 +663,7 @@ async def update_webhook(
 )
 async def delete_webhook(
     rule_id: uuid.UUID,
-    principal: Principal = Depends(get_human_writer),
+    principal: Principal = Depends(_owner),
     session: AsyncSession = Depends(get_db),
 ) -> None:
     await services.delete_rule(
@@ -674,7 +677,7 @@ async def delete_webhook(
 )
 async def test_webhook(
     rule_id: uuid.UUID,
-    principal: Principal = Depends(get_human_writer),
+    principal: Principal = Depends(_owner),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     return await services.test_rule(
@@ -703,7 +706,7 @@ async def webhook_deliveries(
     summary="Rebuild chunk indexes for this workspace",
 )
 async def reindex(
-    principal: Principal = Depends(get_human_writer),
+    principal: Principal = Depends(_owner),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     count = await backfill_workspace_chunks(

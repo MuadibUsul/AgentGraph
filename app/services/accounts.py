@@ -8,6 +8,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import anyio
 import httpx
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -35,6 +36,8 @@ from app.schemas import (
 from app.services.common import workspace_info
 
 settings = get_settings()
+_PASSWORD_LIMITER = anyio.CapacityLimiter(4)
+_DUMMY_PASSWORD_HASH = ""
 
 
 def _b64(value: bytes) -> str:
@@ -68,6 +71,21 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
+_DUMMY_PASSWORD_HASH = hash_password("agentgraph-dummy-password")
+
+
+async def _hash_password_async(password: str) -> str:
+    return await anyio.to_thread.run_sync(
+        hash_password, password, limiter=_PASSWORD_LIMITER
+    )
+
+
+async def _verify_password_async(password: str, encoded: str) -> bool:
+    return await anyio.to_thread.run_sync(
+        verify_password, password, encoded, limiter=_PASSWORD_LIMITER
+    )
+
+
 def user_out(user: HumanUser) -> HumanUserOut:
     return HumanUserOut(
         id=user.id,
@@ -81,7 +99,10 @@ def user_out(user: HumanUser) -> HumanUserOut:
 
 
 async def _rate_limit_login(
-    session: AsyncSession, key: str, workspace_id: uuid.UUID | None
+    session: AsyncSession,
+    key: str,
+    workspace_id: uuid.UUID | None,
+    limit: int | None = None,
 ) -> None:
     if not settings.rate_limit_enabled:
         return
@@ -106,7 +127,9 @@ RETURNING count
             "bucket": bucket,
         },
     )
-    if int(count or 0) > settings.human_login_max_attempts_per_minute:
+    effective_limit = limit or settings.human_login_max_attempts_per_minute
+    await session.commit()
+    if int(count or 0) > effective_limit:
         from app.errors import RateLimited
 
         raise RateLimited(60)
@@ -129,7 +152,7 @@ async def create_human_user(
         email=email,
         display_name=request.display_name,
         role=request.role,
-        password_hash=hash_password(temporary_password),
+        password_hash=await _hash_password_async(temporary_password),
         is_active=True,
     )
     session.add(user)
@@ -179,7 +202,7 @@ async def update_human_user(
                 .values(revoked_at=datetime.now(timezone.utc))
             )
     if request.password is not None:
-        user.password_hash = hash_password(request.password)
+        user.password_hash = await _hash_password_async(request.password)
         await session.execute(
             update(HumanSession)
             .where(
@@ -231,6 +254,8 @@ async def _provision_account(
     display_name: str,
     workspace_name: str | None,
     password_hash: str,
+    google_sub: str | None = None,
+    email_verified: bool = False,
 ) -> tuple[HumanUser, Workspace]:
     existing = await session.scalar(
         select(HumanUser.id).where(HumanUser.email == email)
@@ -249,6 +274,8 @@ async def _provision_account(
         workspace_id=workspace.id,
         email=email,
         display_name=display_name[:128],
+        google_sub=google_sub,
+        email_verified=email_verified,
         role="OWNER",
         password_hash=password_hash,
         is_active=True,
@@ -272,15 +299,40 @@ async def register(
     if not settings.human_signup_enabled:
         raise ApiError(403, "signup_disabled", "self-service signup is disabled")
     email = request.email.strip().lower()
+    client = ip_address or "unknown"
     await _rate_limit_login(
-        session, f"register:{ip_address or 'unknown'}:{email}", None
+        session,
+        f"register-ip:{client}",
+        None,
+        settings.auth_ip_max_attempts_per_minute,
     )
+    await _rate_limit_login(
+        session,
+        "register-global",
+        None,
+        settings.signup_global_max_per_minute,
+    )
+    await _rate_limit_login(
+        session,
+        f"register:{client}:{email}",
+        None,
+        settings.human_login_max_attempts_per_minute,
+    )
+    existing = await session.scalar(
+        select(HumanUser.id).where(HumanUser.email == email)
+    )
+    if existing is not None:
+        raise ApiError(
+            409,
+            "account_exists",
+            "unable to create an account with that email; sign in or reset access",
+        )
     user, workspace = await _provision_account(
         session,
         email=email,
         display_name=request.display_name.strip(),
         workspace_name=request.workspace_name,
-        password_hash=hash_password(request.password),
+        password_hash=await _hash_password_async(request.password),
     )
     return await _issue_session(
         session, user, workspace, ip_address=ip_address, user_agent=user_agent
@@ -328,10 +380,21 @@ async def google_login(
     ip_address: str | None = None,
     user_agent: str | None = None,
 ) -> HumanSessionOut:
+    client = ip_address or "unknown"
+    await _rate_limit_login(
+        session,
+        f"google-ip:{client}",
+        None,
+        settings.auth_ip_max_attempts_per_minute,
+    )
     data = await _verify_google_credential(request.credential)
     email = str(data["email"]).strip().lower()
+    google_sub = str(data["sub"])
     await _rate_limit_login(
-        session, f"google:{ip_address or 'unknown'}:{email}", None
+        session,
+        f"google:{client}:{email}",
+        None,
+        settings.human_login_max_attempts_per_minute,
     )
     user = (
         await session.execute(select(HumanUser).where(HumanUser.email == email))
@@ -339,6 +402,19 @@ async def google_login(
     if user is not None:
         if not user.is_active:
             raise Forbidden("this human account is disabled")
+        if user.google_sub is None:
+            raise ApiError(
+                409,
+                "account_link_required",
+                "this email already has a password account; sign in with the "
+                "password and link Google from account settings",
+            )
+        if not hmac.compare_digest(user.google_sub, google_sub):
+            raise ApiError(
+                401,
+                "google_identity_mismatch",
+                "this Google identity does not match the linked account",
+            )
         workspace = await session.get(Workspace, user.workspace_id)
         if workspace is None:
             raise NotFound("workspace")
@@ -355,11 +431,73 @@ async def google_login(
         email=email,
         display_name=display_name,
         workspace_name=request.workspace_name,
-        password_hash=hash_password(secrets.token_urlsafe(32)),
+        password_hash=await _hash_password_async(secrets.token_urlsafe(32)),
+        google_sub=google_sub,
+        email_verified=True,
     )
     return await _issue_session(
         session, user, workspace, ip_address=ip_address, user_agent=user_agent
     )
+
+
+async def change_password(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    current_password: str,
+    new_password: str,
+    *,
+    current_session_id: uuid.UUID | None = None,
+) -> None:
+    user = await session.get(HumanUser, user_id)
+    if user is None or not user.is_active:
+        raise NotFound("human_user")
+    if not await _verify_password_async(current_password, user.password_hash):
+        raise ApiError(401, "invalid_credentials", "current password is incorrect")
+    user.password_hash = await _hash_password_async(new_password)
+    query = update(HumanSession).where(HumanSession.user_id == user.id)
+    if current_session_id is not None:
+        query = query.where(HumanSession.id != current_session_id)
+    await session.execute(query.values(revoked_at=datetime.now(timezone.utc)))
+    await session.commit()
+
+
+async def link_google(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    credential: str,
+) -> HumanUserOut:
+    data = await _verify_google_credential(credential)
+    user = await session.get(HumanUser, user_id)
+    if user is None or not user.is_active:
+        raise NotFound("human_user")
+    email = str(data["email"]).strip().lower()
+    if email != user.email:
+        raise ApiError(
+            409,
+            "google_email_mismatch",
+            "the Google email does not match this account",
+        )
+    google_sub = str(data["sub"])
+    if user.google_sub is not None and not hmac.compare_digest(
+        user.google_sub, google_sub
+    ):
+        raise ApiError(
+            409, "google_identity_conflict", "another Google identity is linked"
+        )
+    duplicate = await session.scalar(
+        select(HumanUser.id).where(
+            HumanUser.google_sub == google_sub,
+            HumanUser.id != user.id,
+        )
+    )
+    if duplicate is not None:
+        raise ApiError(
+            409, "google_identity_conflict", "this Google identity is already linked"
+        )
+    user.google_sub = google_sub
+    user.email_verified = True
+    await session.commit()
+    return user_out(user)
 
 
 async def login(
@@ -375,11 +513,22 @@ async def login(
             select(HumanUser).where(HumanUser.email == email)
         )
     ).scalar_one_or_none()
+    client = ip_address or "unknown"
     await _rate_limit_login(
-        session, f"{ip_address or 'unknown'}:{email}", user.workspace_id if user else None
+        session,
+        f"login-ip:{client}",
+        None,
+        settings.auth_ip_max_attempts_per_minute,
     )
-    if user is None or not verify_password(request.password, user.password_hash):
-        await session.commit()
+    await _rate_limit_login(
+        session,
+        f"{client}:{email}",
+        user.workspace_id if user else None,
+        settings.human_login_max_attempts_per_minute,
+    )
+    encoded = user.password_hash if user is not None else _DUMMY_PASSWORD_HASH
+    valid = await _verify_password_async(request.password, encoded)
+    if user is None or not valid:
         raise ApiError(401, "invalid_credentials", "email or password is incorrect")
     if not user.is_active:
         await session.commit()

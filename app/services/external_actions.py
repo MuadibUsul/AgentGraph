@@ -9,6 +9,7 @@ from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import Principal, ensure_namespace, require_permission
 from app.config import get_settings
 from app.database import async_session_factory
 from app.errors import ApiError, ExternalActionError, NotFound
@@ -28,12 +29,16 @@ logger = logging.getLogger("agentgraph.actions")
 settings = get_settings()
 
 
-def action_out(action: ExternalAction) -> ExternalActionOut:
+def action_out(
+    action: ExternalAction, *, include_payload: bool = False
+) -> ExternalActionOut:
     return ExternalActionOut(
         id=action.id,
         action_type=action.action_type,
         target_url=action.target_url,
         method=action.method,
+        payload=(action.payload or {}) if include_payload else None,
+        headers=(action.headers or {}) if include_payload else None,
         idempotency_key=action.idempotency_key,
         status=action.status,
         attempts=action.attempts,
@@ -56,11 +61,14 @@ def action_out(action: ExternalAction) -> ExternalActionOut:
 
 async def create_action(
     session: AsyncSession,
-    *,
-    workspace_id: uuid.UUID,
-    actor: str,
+    principal: Principal,
     request: ExternalActionCreateRequest,
+    *,
+    actor: str,
 ) -> ExternalActionOut:
+    require_permission(principal, "action:propose")
+    workspace_id = principal.workspace.id
+    ensure_namespace(principal, request.namespace, write=True)
     existing = (
         await session.execute(
             select(ExternalAction).where(
@@ -70,6 +78,7 @@ async def create_action(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        ensure_namespace(principal, existing.namespace)
         return action_out(existing)
     await validate_target(request.target_url)
     await assert_budget(session, workspace_id)
@@ -125,17 +134,26 @@ async def create_action(
 
 
 async def list_actions(
-    session: AsyncSession, workspace_id: uuid.UUID, *, limit: int = 100
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    *,
+    limit: int = 100,
+    allowed_namespaces: list[str] | None = None,
+    include_payload: bool = False,
 ) -> ExternalActionListResponse:
+    query = select(ExternalAction).where(
+        ExternalAction.workspace_id == workspace_id
+    )
+    if allowed_namespaces is not None:
+        query = query.where(ExternalAction.namespace.in_(allowed_namespaces))
     rows = (
         await session.execute(
-            select(ExternalAction)
-            .where(ExternalAction.workspace_id == workspace_id)
-            .order_by(ExternalAction.created_at.desc())
-            .limit(min(limit, 500))
+            query.order_by(ExternalAction.created_at.desc()).limit(min(limit, 500))
         )
     ).scalars().all()
-    return ExternalActionListResponse(items=[action_out(row) for row in rows])
+    return ExternalActionListResponse(
+        items=[action_out(row, include_payload=include_payload) for row in rows]
+    )
 
 
 async def _get_action(
@@ -241,12 +259,12 @@ async def compensate_action(
         headers=action.headers,
         payload=payload,
         idempotency_key=f"comp:{action.id}",
-        status="APPROVED",
+        status="PENDING_APPROVAL",
         attempts=0,
         max_attempts=settings.outbound_max_attempts,
-        approved_by=actor,
-        approved_at=utcnow(),
-        next_attempt_at=utcnow(),
+        approved_by=None,
+        approved_at=None,
+        next_attempt_at=None,
         compensates_action_id=action.id,
         namespace=action.namespace,
         session_batch_id=action.session_batch_id,
@@ -310,12 +328,12 @@ async def schedule_compensations_for_batch(
                 headers=action.headers,
                 payload=action.compensation_payload or {},
                 idempotency_key=f"comp:{action.id}",
-                status="APPROVED",
+                status="PENDING_APPROVAL",
                 attempts=0,
                 max_attempts=settings.outbound_max_attempts,
-                approved_by=actor,
-                approved_at=utcnow(),
-                next_attempt_at=utcnow(),
+                approved_by=None,
+                approved_at=None,
+                next_attempt_at=None,
                 compensates_action_id=action.id,
                 namespace=action.namespace,
                 session_batch_id=batch_id,

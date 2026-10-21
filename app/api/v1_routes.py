@@ -102,10 +102,18 @@ async def whoami(principal: Principal = Depends(get_principal)) -> WhoAmIRespons
 )
 async def workspace_map(
     since: str | None = Query(default=None),
+    include_unverified: bool = Query(default=False),
+    include_tainted: bool = Query(default=False),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> WorkspaceMapResponse:
-    return await services.workspace_map(session, principal, since=since)
+    return await services.workspace_map(
+        session,
+        principal,
+        since=since,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
+    )
 
 
 @router.get(
@@ -356,6 +364,8 @@ async def list_documents(
     limit: int = Query(default=100, ge=1, le=500),
     cursor: str | None = Query(default=None),
     include_archived: bool = Query(default=False),
+    include_unverified: bool = Query(default=False),
+    include_tainted: bool = Query(default=False),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentListResponse:
@@ -366,6 +376,8 @@ async def list_documents(
         limit=limit,
         cursor=cursor,
         include_archived=include_archived,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
     )
 
 
@@ -422,10 +434,18 @@ async def deprecate_document(
 )
 async def list_document_versions(
     doc_key: str,
+    include_unverified: bool = Query(default=False),
+    include_tainted: bool = Query(default=False),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentVersionListResponse:
-    return await services.list_document_versions(session, principal, doc_key)
+    return await services.list_document_versions(
+        session,
+        principal,
+        doc_key,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
+    )
 
 
 @router.get(
@@ -436,11 +456,18 @@ async def list_document_versions(
 async def get_document_version(
     doc_key: str,
     version: int,
+    include_unverified: bool = Query(default=False),
+    include_tainted: bool = Query(default=False),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentVersionOut:
     return await services.get_document_version(
-        session, principal, doc_key, version
+        session,
+        principal,
+        doc_key,
+        version,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
     )
 
 
@@ -636,9 +663,9 @@ async def propose_external_action(
 
     return await services.create_action(
         session,
-        workspace_id=principal.workspace.id,
+        principal,
+        body,
         actor=effective_agent(principal, body.agent),
-        request=body,
     )
 
 
@@ -654,7 +681,14 @@ async def list_workspace_actions(
 ) -> ExternalActionListResponse:
     require_permission(principal, "action:read")
     return await services.list_actions(
-        session, principal.workspace.id, limit=limit
+        session,
+        principal.workspace.id,
+        limit=limit,
+        allowed_namespaces=(
+            None
+            if principal.is_commander or "*" in principal.allowed_namespaces
+            else principal.allowed_namespaces
+        ),
     )
 
 
@@ -681,7 +715,13 @@ async def batch_dereference(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DereferenceBatchResponse:
-    return await services.batch_dereference(session, principal, body.uris)
+    return await services.batch_dereference(
+        session,
+        principal,
+        body.uris,
+        include_unverified=body.include_unverified,
+        include_tainted=body.include_tainted,
+    )
 
 
 @router.post(
@@ -733,10 +773,18 @@ async def upsert_document(
 )
 async def get_document(
     doc_key: str,
+    include_unverified: bool = Query(default=False),
+    include_tainted: bool = Query(default=False),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentOut:
-    return await services.get_document(session, principal, doc_key)
+    return await services.get_document(
+        session,
+        principal,
+        doc_key,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
+    )
 
 
 @router.post(
@@ -762,7 +810,13 @@ async def dereference(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DereferenceResponse:
-    return await services.dereference(session, principal, body.uri)
+    return await services.dereference(
+        session,
+        principal,
+        body.uri,
+        include_unverified=body.include_unverified,
+        include_tainted=body.include_tainted,
+    )
 
 
 # ------------------------------------------------------------------ links
@@ -835,6 +889,11 @@ async def list_timeline(
             hours=hours,
             event_type=event_type,
             namespace=namespace,
+            allowed_namespaces=(
+                None
+                if principal.is_commander or "*" in principal.allowed_namespaces
+                else principal.allowed_namespaces
+            ),
         )
     )
 
@@ -852,7 +911,15 @@ async def audit(
 ) -> AuditListResponse:
     require_permission(principal, "audit:read")
     return await services.list_audit(
-        session, principal.workspace, limit=limit, batch_id=batch_id
+        session,
+        principal.workspace,
+        limit=limit,
+        batch_id=batch_id,
+        allowed_namespaces=(
+            None
+            if principal.is_commander or "*" in principal.allowed_namespaces
+            else principal.allowed_namespaces
+        ),
     )
 
 

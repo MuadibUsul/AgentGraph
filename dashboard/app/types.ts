@@ -358,6 +358,8 @@ export interface ExternalAction {
   action_type: string;
   target_url: string;
   method: string;
+  payload: Record<string, unknown> | null;
+  headers: Record<string, string> | null;
   idempotency_key: string;
   status: string;
   attempts: number;

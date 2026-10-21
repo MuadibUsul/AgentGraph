@@ -368,13 +368,13 @@ async def test_lease_epoch_rejects_stale_handoff(client, admin_headers, workspac
         f"/v1/tasks/{key}/handoff",
         headers=executor["headers"],
         json={
-            "next_status": "DONE",
+            "next_status": "REVIEWING",
             "brief": brief,
             "lease_epoch": epoch,
         },
     )
     assert good.status_code == 200
-    assert good.json()["task"]["status"] == "DONE"
+    assert good.json()["task"]["status"] == "REVIEWING"
 
 
 async def test_dependency_cycle_is_rejected(client, workspace):

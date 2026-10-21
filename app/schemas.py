@@ -450,6 +450,8 @@ class DocumentHumanUpdateRequest(StrictModel):
 
 class DereferenceRequest(StrictModel):
     uri: str = Field(min_length=1, max_length=2_048)
+    include_unverified: bool = False
+    include_tainted: bool = False
 
 
 # --------------------------------------------------------------------- links
@@ -784,6 +786,8 @@ class DocumentQueryResponse(BaseModel):
 
 class DereferenceBatchRequest(StrictModel):
     uris: list[str] = Field(min_length=1, max_length=25)
+    include_unverified: bool = False
+    include_tainted: bool = False
 
 
 class DereferenceBatchItem(BaseModel):
@@ -937,6 +941,9 @@ class AuditDiffOut(BaseModel):
     id: uuid.UUID
     session_batch_id: uuid.UUID
     agent_signature: str
+    actor_auth_kind: str | None = None
+    actor_token_id: uuid.UUID | None = None
+    actor_user_id: uuid.UUID | None = None
     target_table: str
     target_record_id: uuid.UUID
     operation: str
@@ -1071,6 +1078,7 @@ class ProposalVoteOut(BaseModel):
 class ProposalOut(BaseModel):
     id: uuid.UUID
     doc_key: str
+    namespace: str = "default"
     title: str
     content: str
     frontmatter: dict[str, Any]
@@ -1162,7 +1170,7 @@ class PolicyListResponse(BaseModel):
 class HumanUserCreateRequest(StrictModel):
     email: str = Field(min_length=3, max_length=320)
     display_name: str = Field(min_length=1, max_length=128)
-    role: Literal["OWNER", "REVIEWER", "VIEWER"] = "REVIEWER"
+    role: Literal["OWNER", "REVIEWER", "VIEWER"] = "VIEWER"
     password: str | None = Field(default=None, min_length=8, max_length=256)
 
     @field_validator("email")
@@ -1238,6 +1246,15 @@ class HumanRegisterRequest(StrictModel):
 
 class GoogleLoginRequest(StrictModel):
     credential: str = Field(min_length=20, max_length=16_384)
+
+
+class GoogleLinkRequest(StrictModel):
+    credential: str = Field(min_length=20, max_length=16_384)
+
+
+class PasswordChangeRequest(StrictModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)
     display_name: str | None = Field(default=None, max_length=128)
     workspace_name: str | None = Field(default=None, max_length=128)
 
@@ -1414,12 +1431,20 @@ class ExternalActionRejectRequest(StrictModel):
 class ExternalActionCompensateRequest(StrictModel):
     payload: dict[str, Any] | None = None
 
+    @model_validator(mode="after")
+    def _size(self) -> ExternalActionCompensateRequest:
+        if _serialized_size(self.payload or {}) > settings.max_state_bytes:
+            raise ValueError("compensation payload is too large")
+        return self
+
 
 class ExternalActionOut(BaseModel):
     id: uuid.UUID
     action_type: str
     target_url: str
     method: str
+    payload: dict[str, Any] | None = None
+    headers: dict[str, str] | None = None
     idempotency_key: str
     status: str
     attempts: int

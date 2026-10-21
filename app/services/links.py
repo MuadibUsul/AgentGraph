@@ -9,7 +9,7 @@ from sqlalchemy import or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Principal, require_permission
+from app.auth import Principal, ensure_namespace, require_permission
 from app.errors import ApiError, NotFound
 from app.models import CollabTask, ContextSlot, LinkType, SharedDocument, WorkspaceLink
 from app.schemas import LinkCreateRequest, LinkListResponse
@@ -18,18 +18,18 @@ from app.services.common import append_event, link_out
 _MODELS = (CollabTask, ContextSlot, SharedDocument)
 
 
-async def _node_exists(
+async def _node_namespace(
     session: AsyncSession, workspace_id: uuid.UUID, node_id: uuid.UUID
-) -> bool:
+) -> str | None:
     for model in _MODELS:
         found = await session.scalar(
-            select(model.id).where(
+            select(model.namespace).where(
                 model.workspace_id == workspace_id, model.id == node_id
             )
         )
         if found is not None:
-            return True
-    return False
+            return str(found)
+    return None
 
 
 async def _would_create_dependency_cycle(
@@ -97,12 +97,16 @@ async def create_link(
 ) -> WorkspaceLink:
     require_permission(principal, "link:write")
     for node in (request.source_id, request.target_id):
-        if not await _node_exists(session, principal.workspace.id, node):
+        namespace = await _node_namespace(
+            session, principal.workspace.id, node
+        )
+        if namespace is None:
             raise NotFound(
                 "workspace_node",
                 "source_id and target_id must reference a task, document or slot "
                 "in this workspace",
             )
+        ensure_namespace(principal, namespace, write=True)
     if request.relation_type == LinkType.DEPENDS_ON and await _would_create_dependency_cycle(
         session,
         principal.workspace.id,
@@ -171,4 +175,28 @@ async def list_links(
             query.order_by(WorkspaceLink.created_at.desc()).limit(min(limit, 500))
         )
     ).scalars().all()
+    if not principal.is_commander and "*" not in principal.allowed_namespaces:
+        allowed = set(principal.allowed_namespaces)
+        node_ids = {
+            node_id
+            for link in links
+            for node_id in (link.source_id, link.target_id)
+        }
+        scopes: dict[uuid.UUID, str] = {}
+        for model in _MODELS:
+            rows = (
+                await session.execute(
+                    select(model.id, model.namespace).where(
+                        model.workspace_id == principal.workspace.id,
+                        model.id.in_(node_ids),
+                    )
+                )
+            ).all()
+            scopes.update({row.id: row.namespace for row in rows})
+        links = [
+            link
+            for link in links
+            if scopes.get(link.source_id) in allowed
+            and scopes.get(link.target_id) in allowed
+        ]
     return LinkListResponse(items=[link_out(link) for link in links])

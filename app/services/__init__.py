@@ -1,12 +1,18 @@
 """v3 shared blackboard service layer."""
 
 from app.services.accounts import (
+    change_password as human_change_password,
+)
+from app.services.accounts import (
     create_human_user,
     list_human_users,
     update_human_user,
 )
 from app.services.accounts import (
     google_login as human_google_login,
+)
+from app.services.accounts import (
+    link_google as human_link_google,
 )
 from app.services.accounts import (
     login as human_login,
@@ -174,6 +180,8 @@ __all__ = [
     "create_human_user",
     "list_human_users",
     "human_google_login",
+    "human_change_password",
+    "human_link_google",
     "human_login",
     "human_me",
     "human_register",

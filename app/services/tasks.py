@@ -205,7 +205,7 @@ def _clear_lease(task: CollabTask) -> None:
 
 
 async def _upstream_briefs(
-    session: AsyncSession, task: CollabTask
+    session: AsyncSession, task: CollabTask, principal: Principal
 ) -> list[dict[str, Any]]:
     target_ids = (
         await session.execute(
@@ -226,6 +226,8 @@ async def _upstream_briefs(
             )
         )
     ).scalars().all()
+    if not principal.is_commander and "*" not in principal.allowed_namespaces:
+        rows = [row for row in rows if row.namespace in principal.allowed_namespaces]
     return [
         {
             "task_key": row.task_key,
@@ -253,14 +255,15 @@ async def _context_slots(
         keys.extend(str(item) for item in many if isinstance(item, str))
     if not keys:
         return []
-    slots = (
-        await session.execute(
-            select(ContextSlot).where(
-                ContextSlot.workspace_id == task.workspace_id,
-                ContextSlot.slot_key.in_(keys),
-            )
+    query = select(ContextSlot).where(
+        ContextSlot.workspace_id == task.workspace_id,
+        ContextSlot.slot_key.in_(keys),
+    )
+    if not principal.is_commander and "*" not in principal.allowed_namespaces:
+        query = query.where(
+            ContextSlot.namespace.in_(principal.allowed_namespaces)
         )
-    ).scalars().all()
+    slots = (await session.execute(query)).scalars().all()
     return [slot_out(slot) for slot in slots]
 
 
@@ -519,7 +522,7 @@ async def claim_task(
     await session.commit()
     return TaskContextResponse(
         task=task_out(task),
-        upstream_briefs=await _upstream_briefs(session, task),
+        upstream_briefs=await _upstream_briefs(session, task, principal),
         slots=await _context_slots(session, principal, task),
         documents=await _context_documents(session, principal, task),
         session_batch_id=batch,
@@ -600,7 +603,7 @@ async def release_task(
 
 
 async def _release_dependents(
-    session: AsyncSession, completed: CollabTask
+    session: AsyncSession, completed: CollabTask, principal: Principal
 ) -> None:
     dependent_ids = (
         await session.execute(
@@ -623,6 +626,12 @@ async def _release_dependents(
             )
         ).scalar_one_or_none()
         if dependent is None or dependent.status is not TaskStatus.TODO:
+            continue
+        if (
+            not principal.is_commander
+            and "*" not in principal.allowed_namespaces
+            and dependent.namespace not in principal.allowed_namespaces
+        ):
             continue
         dependency_ids = (
             await session.execute(
@@ -742,12 +751,18 @@ async def handoff_task(
         task.review_feedback = None
         task.reviewed_by = None
 
+    if request.next_status == "DONE" and not principal.is_human:
+        raise Forbidden(
+            "agents must hand off to REVIEWING; only a human can mark a task DONE"
+        )
+    if request.human_feedback is not None and not principal.is_human:
+        raise Forbidden("human_feedback is reserved for human reviewers")
     before = task_snapshot(task)
     task.status = TaskStatus(request.next_status)
     task.handoff_brief = brief
     task.artifact_uri = artifact_uri
     task.output_artifact = request.output_artifact
-    task.human_feedback = request.human_feedback
+    task.human_feedback = request.human_feedback if principal.is_human else None
     _clear_lease(task)
     task.version += 1
     task.updated_at = utcnow()
@@ -778,7 +793,7 @@ async def handoff_task(
         namespace=task.namespace,
     )
     if task.status is TaskStatus.DONE:
-        await _release_dependents(session, task)
+        await _release_dependents(session, task, principal)
 
     next_task: CollabTask | None = None
     if request.create_next is not None:
@@ -833,8 +848,11 @@ async def review_task(
         TaskStatus.ESCALATED_TO_HUMAN,
     ):
         raise TaskNotReviewable(task.status.value, request.decision)
-    if task.status is TaskStatus.ESCALATED_TO_HUMAN and not principal.is_commander:
-        raise EscalatedToHuman(task_out(task).model_dump(mode="json"))
+    if task.status in (TaskStatus.AWAITING_HUMAN, TaskStatus.ESCALATED_TO_HUMAN):
+        if not principal.is_human:
+            raise Forbidden(
+                "a human account is required to resolve a task awaiting human review"
+            )
     _check_version(task, request.expected_version)
     _check_lease(task, agent)
     before = task_snapshot(task)
@@ -842,7 +860,7 @@ async def review_task(
     escalated = False
 
     task.review_feedback = request.feedback
-    task.reviewed_by = agent
+    task.reviewed_by = principal.agent_signature
     artifact_verified = False
     if request.decision == "approve":
         next_status = request.next_status or "DONE"
@@ -856,7 +874,7 @@ async def review_task(
         task.updated_at = utcnow()
         event_type = "HUMAN_APPROVED" if human_decision else "TASK_APPROVED"
         if task.status is TaskStatus.DONE:
-            await _release_dependents(session, task)
+            await _release_dependents(session, task, principal)
         if task.artifact_uri and task.artifact_uri.startswith("doc://"):
             try:
                 artifact_verified = await verify_artifact_for_review(
@@ -954,7 +972,6 @@ async def escalate_task(
         raise InvalidStateTransition(task.status.value, "ESCALATED_TO_HUMAN")
     before = task_snapshot(task)
     task.status = TaskStatus.ESCALATED_TO_HUMAN
-    task.human_feedback = request.reason
     _clear_lease(task)
     task.version += 1
     task.updated_at = utcnow()

@@ -441,6 +441,7 @@ const ZH: Record<string, string> = {
   "By continuing, you agree to the workspace terms and acceptable-use policy.":
     "继续即表示你同意工作区条款和可接受使用政策。",
   "Operator access": "运维入口",
+  "External image blocked": "外部图片已阻止加载",
   "User sign in": "用户登录",
   "Deployment operator": "部署运维",
   "Control-plane access": "控制平面入口",

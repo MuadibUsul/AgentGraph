@@ -96,11 +96,35 @@ def _decode_sync_cursor(cursor: str) -> datetime:
     return value
 
 
+def _document_visibility(
+    principal: Principal,
+    *,
+    include_unverified: bool,
+    include_tainted: bool,
+) -> list[Any]:
+    if principal.is_commander:
+        return []
+    conditions: list[Any] = []
+    if not include_unverified and not can(principal, "doc:verify"):
+        conditions.append(
+            (SharedDocument.verification_status == "VERIFIED")
+            | (SharedDocument.created_by == principal.agent_signature)
+        )
+    if not include_tainted:
+        conditions.append(
+            SharedDocument.tainted.is_(False)
+            | (SharedDocument.created_by == principal.agent_signature)
+        )
+    return conditions
+
+
 async def workspace_map(
     session: AsyncSession,
     principal: Principal,
     *,
     since: str | None = None,
+    include_unverified: bool = False,
+    include_tainted: bool = False,
 ) -> WorkspaceMapResponse:
     require_permission(principal, "workspace:read")
     workspace_id = principal.workspace.id
@@ -140,6 +164,15 @@ async def workspace_map(
         docs_query = docs_query.where(SharedDocument.archived_at.is_(None))
     else:
         docs_query = docs_query.where(SharedDocument.updated_at > cursor_time)
+    visibility = _document_visibility(
+        principal,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
+    )
+    for condition in visibility:
+        docs_query = docs_query.where(condition)
+        doc_count_query = doc_count_query.where(condition)
+        doc_namespace_query = doc_namespace_query.where(condition)
     documents = (
         await session.execute(
             docs_query.order_by(SharedDocument.updated_at.desc()).limit(
@@ -270,7 +303,10 @@ async def workspace_map(
         roles=[role.value for role in AgentRole],
         tasks=[task_summary(task) for task in tasks],
         slots=[slot_summary(slot) for slot in slots],
-        documents=[document_summary(document) for document in documents],
+        documents=[
+            document_summary(document, compact_frontmatter=True)
+            for document in documents
+        ],
         outputs=[
             WorkspaceOutput(
                 task_key=task.task_key,

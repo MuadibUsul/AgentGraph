@@ -11,11 +11,14 @@ from app.config import get_settings
 from app.database import get_db
 from app.schemas import (
     AuthConfigResponse,
+    GoogleLinkRequest,
     GoogleLoginRequest,
     HumanLoginRequest,
     HumanMeResponse,
     HumanRegisterRequest,
     HumanSessionOut,
+    HumanUserOut,
+    PasswordChangeRequest,
 )
 
 router = APIRouter(prefix="/v1/auth", tags=["Human Auth"])
@@ -24,11 +27,11 @@ settings = get_settings()
 
 def _client_ip(request: Request) -> str | None:
     forwarded = request.headers.get("x-forwarded-for")
-    return (
-        forwarded.split(",")[0].strip()
-        if forwarded
-        else (request.client.host if request.client else None)
-    )
+    if forwarded:
+        # Caddy overwrites client-supplied values; taking the last hop avoids
+        # trusting an attacker-appended left-most value behind a proxy chain.
+        return forwarded.split(",")[-1].strip() or None
+    return request.client.host if request.client else None
 
 
 @router.get(
@@ -78,6 +81,40 @@ async def google_login(
         body,
         ip_address=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
+    )
+
+
+@router.post(
+    "/password",
+    status_code=204,
+    summary="Change the signed-in user's password and revoke other sessions",
+)
+async def change_password(
+    body: PasswordChangeRequest,
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    await services.human_change_password(
+        session,
+        principal.user_id,
+        body.current_password,
+        body.new_password,
+        current_session_id=principal.token_id,
+    )
+
+
+@router.post(
+    "/google/link",
+    response_model=HumanUserOut,
+    summary="Link a Google identity to the signed-in password account",
+)
+async def google_link(
+    body: GoogleLinkRequest,
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> HumanUserOut:
+    return await services.human_link_google(
+        session, principal.user_id, body.credential
     )
 
 

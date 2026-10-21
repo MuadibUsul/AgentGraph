@@ -84,6 +84,7 @@ def _proposal_out(
     return ProposalOut(
         id=proposal.id,
         doc_key=proposal.doc_key,
+        namespace=proposal.namespace,
         title=proposal.title,
         content=proposal.content,
         frontmatter=proposal.frontmatter or {},
@@ -171,6 +172,7 @@ async def create_proposal(
     proposal = DocumentProposal(
         workspace_id=principal.workspace.id,
         doc_key=doc_key,
+        namespace=document.namespace,
         title=title,
         content=request.content,
         frontmatter=request.frontmatter,
@@ -218,6 +220,10 @@ async def list_proposals(
     query = select(DocumentProposal).where(
         DocumentProposal.workspace_id == principal.workspace.id
     )
+    if not principal.is_commander and "*" not in principal.allowed_namespaces:
+        query = query.where(
+            DocumentProposal.namespace.in_(principal.allowed_namespaces)
+        )
     if doc_key:
         document = await _get_document(session, principal.workspace.id, doc_key)
         ensure_namespace(principal, document.namespace)
@@ -243,6 +249,7 @@ async def get_proposal(
 ) -> ProposalOut:
     require_permission(principal, "proposal:read")
     proposal = await _get_proposal(session, principal.workspace.id, proposal_id)
+    ensure_namespace(principal, proposal.namespace)
     votes = (await _votes(session, [proposal.id])).get(proposal.id, [])
     return _proposal_out(proposal, votes)
 
@@ -255,6 +262,7 @@ async def vote_proposal(
 ) -> ProposalOut:
     require_permission(principal, "proposal:vote")
     proposal = await _get_proposal(session, principal.workspace.id, proposal_id)
+    ensure_namespace(principal, proposal.namespace)
     if proposal.status != "PENDING":
         raise ApiError(409, "proposal_not_pending", "only pending proposals can be voted on")
     if proposal.created_by == principal.agent_signature:

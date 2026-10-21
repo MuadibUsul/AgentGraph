@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.embeddings import get_embedding_provider
-from app.errors import NotFound, UndoConflict
+from app.errors import Forbidden, NotFound, UndoConflict
 from app.models import (
     CollabTask,
     ContextSlot,
@@ -101,7 +101,16 @@ async def list_audit(
     *,
     limit: int = 50,
     batch_id: uuid.UUID | None = None,
+    allowed_namespaces: list[str] | None = None,
 ) -> AuditListResponse:
+    if (
+        allowed_namespaces is not None
+        and "*" not in allowed_namespaces
+    ):
+        raise Forbidden(
+            "audit diffs span all namespaces; a namespace-restricted token "
+            "cannot read them"
+        )
     batch_query = (
         select(
             StateAuditDiff.session_batch_id,
@@ -145,6 +154,9 @@ async def list_audit(
             id=row.id,
             session_batch_id=row.session_batch_id,
             agent_signature=row.agent_signature,
+            actor_auth_kind=row.actor_auth_kind,
+            actor_token_id=row.actor_token_id,
+            actor_user_id=row.actor_user_id,
             target_table=row.target_table,
             target_record_id=row.target_record_id,
             operation=row.operation,

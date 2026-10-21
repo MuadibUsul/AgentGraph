@@ -3,7 +3,7 @@
 > 版本：v3.2.1  
 > 定位：**人机共驾的多 Agent 共享工作空间 / 黑板系统（Human-in-the-Loop Shared Blackboard）**  
 > 技术栈：FastAPI + PostgreSQL 16 + pgvector + MCP + Next.js 14  
-> 当前状态：v3.2.1 已完成并部署到 Tlines 服务器；94 项自动化测试通过，生产 HTTPS 控制台、cookbook/benchmark 与设计验收已执行
+> 当前状态：v3.2.1 已完成并部署到 Tlines 服务器；99 项自动化测试通过，生产 HTTPS 控制台、cookbook/benchmark 与设计验收已执行
 
 ---
 
@@ -156,10 +156,13 @@ E:\Codes\AgentGraph\
 │
 ├── sql/
 │   ├── init.sql                          # 基础 DDL + outbox 触发器（幂等）
-│   └── migrations/v3_2_production.sql     # v3.2 生产扩展（提案/策略/污点/账号/RLS/检索/出站）
 │   └── migrations/
 │       ├── v2_to_v3_collab.sql           # v2→v3 原地迁移（保留数据）
-│       └── v3_hardening.sql              # 版本/信任/fencing/outbox 增量迁移
+│       ├── v3_hardening.sql              # 版本/信任/fencing/outbox 增量迁移
+│       ├── v3_2_production.sql           # v3.2 生产扩展（提案/策略/污点/账号/RLS/检索/出站）
+│       ├── v3_2_1_mcp_improvements.sql   # MCP 评审/反馈
+│       ├── v3_3_agent_feedback.sql       # 软归档
+│       └── v3_4_security_hardening.sql   # 安全加固（提案 namespace/Google sub/审计主体/RLS）
 │
 ├── dashboard/
 │   ├── package.json                      # Next.js 14.2 / React 18 / react-markdown
@@ -562,7 +565,7 @@ v2 数据库（memory_crystals / causal_edges）
 
 已有 v3.0 库也走同一 hardening 路径；全新库由 init.sql 直接创建 3.1 schema，
 随后幂等 hardening 作为自检。两种情况都已验证：v2 dump 迁移后得到 7 个文档、
-7 个初始版本、3 条链接、2 个槽位；fresh schema 的 94 项测试全部通过。
+7 个初始版本、3 条链接、2 个槽位；fresh schema 的 99 项测试全部通过。
 
 迁移前建议备份：
 
@@ -584,7 +587,7 @@ docker compose exec -T db pg_dump -U agentgraph -d agentgraph \
 
 ```bash
 export TEST_DATABASE_URL="postgresql+asyncpg://agentgraph:agentgraph@localhost:55432/agentgraph"
-pytest -q        # 当前 94 passed
+pytest -q        # 当前 99 passed
 ruff check .
 ```
 
@@ -684,10 +687,26 @@ GET/POST/PATCH /v1/admin/workspaces/{id}/human-users
 `agentgraph_app` 是无登录、无 BYPASSRLS 的数据库角色。principal 解析后，
 请求事务执行 `SET LOCAL ROLE agentgraph_app` 与
 `set_config('app.workspace_id', …, true)`；SQLAlchemy `after_begin` 为后续事务
-自动重新应用。所有 workspace 表启用 `FORCE ROW LEVEL SECURITY`，策略要求
-`workspace_id = current_setting('app.workspace_id')` 或管理员 bypass。
+自动重新应用。所有 workspace 表启用 `FORCE ROW LEVEL SECURITY`，策略只允许
+`workspace_id = current_setting('app.workspace_id')`；v3.4 移除了
+`app.bypass_rls` 逃生开关，并把激活失败改为 503 fail-closed。
 认证查询在上下文建立前以连接用户执行；后台分发器无 workspace 上下文，
-以连接角色跨租户扫描。
+以连接角色跨租户扫描，因此必须保持显式 workspace 过滤。
+
+### 12.4.1 v3.4 安全边界
+
+- **namespace**：提案、审计、时间线、任务上下文槽位、links、SSE 与外部动作
+  全部执行 `allowed_namespaces`；受限 Agent 只能列举/读取自己的或已验证的文档。
+- **人类门禁**：`AWAITING_HUMAN`/`ESCALATED_TO_HUMAN` 只能由真实人类账号处理；
+  Agent 只能 handoff 到 `REVIEWING`/`HANDOFF`，不能写 `human_feedback`。
+- **角色**：新成员默认 `VIEWER`；只有 `OWNER` 能改预算、策略、Webhook 和 reindex。
+- **出站**：DNS 只解析一次并固定 IP；拒绝非 global/CGNAT 地址；每次 Webhook
+  发送重新校验；响应体有字节上限和总超时；审批列表展示 payload/headers；
+  补偿动作必须单独审批。
+- **审计**：`state_audit_diffs` 记录 `actor_auth_kind`/`actor_token_id`/
+  `actor_user_id`，即使 workspace key 指定了显示名也能识别真实认证主体。
+- **浏览器**：Operator token 使用 sessionStorage；CSP/HSTS/X-Frame/nosniff/
+  Referrer-Policy 由应用中间件输出；Markdown 外部图片不自动加载。
 
 ### 12.5 检索与索引
 
@@ -752,7 +771,7 @@ Agent token 可覆盖 per-minute 与月 token 预算。
 2. v3.1 库：`v3_2_production.sql`（全部 DDL 幂等、角色/策略可重入）→ 记录 `3.2.0`；v3.2.1 再执行 `v3_2_1_mcp_improvements.sql`。
 3. v2 dump：`v2_to_v3_collab.sql` → hardening → v3.2；原有文档哈希/首版本回填。
 
-验证：`94 passed`（fresh pgvector）、生产 HTTPS `/readyz` 返回 3.2.1、公开控制台
+验证：`99 passed`（fresh pgvector）、生产 HTTPS `/readyz` 返回 3.2.1、公开控制台
 Governance 面板实际加载、`scripts/benchmark_retrieval.py` 生成真实 recall/latency 报告。
 
 ## 13. 扩展点与当前边界

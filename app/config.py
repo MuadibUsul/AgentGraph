@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     password_hash_r: int = 8
     password_hash_p: int = 1
     human_login_max_attempts_per_minute: int = Field(default=10, ge=1, le=1_000)
+    auth_ip_max_attempts_per_minute: int = Field(default=60, ge=1, le=10_000)
+    auth_global_max_attempts_per_minute: int = Field(default=600, ge=1, le=100_000)
+    signup_global_max_per_minute: int = Field(default=60, ge=1, le=10_000)
     human_signup_enabled: bool = True
     signup_default_tier: str = "free"
     google_client_id: str | None = None
@@ -123,6 +126,7 @@ class Settings(BaseSettings):
     outbound_dispatch_interval_seconds: int = Field(default=5, ge=1, le=300)
     outbound_max_attempts: int = Field(default=5, ge=1, le=20)
     outbound_timeout_seconds: float = 10.0
+    outbound_max_response_bytes: int = Field(default=65_536, ge=1_024, le=1_048_576)
     outbound_allow_private_networks: bool = True
     outbound_allowed_hosts: list[str] = Field(default_factory=list)
     outbound_signing_secret: str | None = None
@@ -143,6 +147,9 @@ class Settings(BaseSettings):
 
     # -------------------------------------------------------------- realtime
     sse_heartbeat_seconds: int = Field(default=15, ge=5, le=120)
+    sse_max_connections: int = Field(default=200, ge=1, le=10_000)
+    sse_max_connections_per_principal: int = Field(default=5, ge=1, le=100)
+    embedding_bytes_per_minute: int = Field(default=5_000_000, ge=100_000)
     sse_replay_limit: int = Field(default=500, ge=1, le=5_000)
     event_retention_days: int = Field(default=7, ge=1, le=365)
     auto_timeline_events: bool = True

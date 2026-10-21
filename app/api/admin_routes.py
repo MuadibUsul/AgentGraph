@@ -949,7 +949,9 @@ async def list_external_actions(
     session: AsyncSession = Depends(get_db),
 ) -> ExternalActionListResponse:
     await services.get_workspace(session, workspace_id)
-    return await services.list_actions(session, workspace_id)
+    return await services.list_actions(
+        session, workspace_id, include_payload=True
+    )
 
 
 @router.post(

@@ -237,6 +237,11 @@ async def _principal_for_call(session: AsyncSession) -> Principal:
                 )
             _stdio_principal = principal
     await activate_tenant(session, principal.workspace.id)
+    from app.services.common import set_audit_actor
+    from app.services.usage import enforce_rate_limit
+
+    set_audit_actor(principal)
+    await enforce_rate_limit(session, principal)
     set_event_platform("mcp")
     return principal
 
@@ -307,6 +312,8 @@ async def workspace_sync(
     namespace: str | None = None,
     compact: bool = False,
     since: str | None = None,
+    include_unverified: bool = False,
+    include_tainted: bool = False,
 ) -> dict[str, Any]:
     """Load the L0 blackboard map without raw document/state payloads.
 
@@ -324,7 +331,13 @@ async def workspace_sync(
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
-            board = await services.workspace_map(session, principal, since=since)
+            board = await services.workspace_map(
+                session,
+                principal,
+                since=since,
+                include_unverified=include_unverified,
+                include_tainted=include_tainted,
+            )
         except ApiError as exc:
             raise _api_error(exc) from exc
     payload = board.model_dump(mode="json")
@@ -450,9 +463,11 @@ async def review_task(
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
-    """Approve or reject a task in REVIEWING/AWAITING_HUMAN (AUDITOR/human).
+    """Approve or reject a task in REVIEWING (AUDITOR/human) or a human-state task.
 
-    Rejections increment the ping-pong counter and may escalate to human; a
+    AWAITING_HUMAN and ESCALATED_TO_HUMAN require an actual human account;
+    workspace automation keys cannot resolve them. Rejections increment the
+    ping-pong counter and may escalate to human; a
     rejected task returns to READY. For reject, omit next_status or use READY
     (IN_PROGRESS is not a valid review target). Agent review feedback is stored
     as review_feedback with the reviewer signature, not as human_feedback.
@@ -688,12 +703,13 @@ async def agent_handoff_task(
 ) -> dict[str, Any]:
     """Hand off work with a required L1 brief and optional L2 artifact.
 
-    REVIEWING/HANDOFF/DONE require a structured brief with summary,
-    key_metrics, unverified_hypotheses and risk_flag (boolean). Providing
-    artifact_text stores the L2 body as a document and returns artifact_uri
-    (doc://...); artifact_text and artifact_uri are mutually exclusive. The
-    lease is released. REVIEWING enters the ping-pong circuit breaker on
-    rejection.
+    REVIEWING/HANDOFF require a structured brief with summary, key_metrics,
+    unverified_hypotheses and risk_flag (boolean). Agents must use REVIEWING;
+    DONE is human-only, and human_feedback is rejected for non-human callers.
+    Providing artifact_text stores the L2 body as a document and returns
+    artifact_uri (doc://...); artifact_text and artifact_uri are mutually
+    exclusive. The lease is released. REVIEWING enters the ping-pong circuit
+    breaker on rejection.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -886,12 +902,25 @@ async def query_workspace(
 
 
 @mcp.tool(name="dereference")
-async def dereference(uri: str) -> dict[str, Any]:
-    """Resolve an L2 artifact/doc URI (doc://<doc_key>) to full content."""
+async def dereference(
+    uri: str,
+    include_unverified: bool = False,
+    include_tainted: bool = False,
+) -> dict[str, Any]:
+    """Resolve an L2 artifact/doc URI (doc://<doc_key>) to full content.
+
+    Other agents' unverified or tainted documents require the explicit flags.
+    """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
-            result = await services.dereference(session, principal, uri)
+            result = await services.dereference(
+                session,
+                principal,
+                uri,
+                include_unverified=include_unverified,
+                include_tainted=include_tainted,
+            )
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result.model_dump(mode="json"))
@@ -1015,9 +1044,9 @@ async def draft_external_action(
             )
             result = await services.create_action(
                 session,
-                workspace_id=principal.workspace.id,
+                principal,
+                body,
                 actor=_actor(principal, None),
-                request=body,
             )
         except ValidationError as exc:
             raise _validation_error(exc) from exc
@@ -1032,6 +1061,8 @@ async def list_documents(
     cursor: str | None = None,
     limit: int = 100,
     include_archived: bool = False,
+    include_unverified: bool = False,
+    include_tainted: bool = False,
     filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Exhaustively enumerate documents in a namespace with an opaque cursor.
@@ -1052,6 +1083,8 @@ async def list_documents(
                 limit=limit,
                 cursor=cursor,
                 include_archived=include_archived,
+                include_unverified=include_unverified,
+                include_tainted=include_tainted,
             )
         except ApiError as exc:
             raise _api_error(exc) from exc
@@ -1113,7 +1146,11 @@ async def upsert_many(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 @mcp.tool(name="dereference_many")
-async def dereference_many(uris: list[str]) -> dict[str, Any]:
+async def dereference_many(
+    uris: list[str],
+    include_unverified: bool = False,
+    include_tainted: bool = False,
+) -> dict[str, Any]:
     """Resolve up to 25 L2 URIs; each result has ok plus document or error.
 
     One failed URI does not hide successful items.
@@ -1121,7 +1158,13 @@ async def dereference_many(uris: list[str]) -> dict[str, Any]:
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
-            result = await services.batch_dereference(session, principal, uris)
+            result = await services.batch_dereference(
+                session,
+                principal,
+                uris,
+                include_unverified=include_unverified,
+                include_tainted=include_tainted,
+            )
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result.model_dump(mode="json"))

@@ -80,6 +80,7 @@ from app.services.taint import (
     recompute_downstream_document_taint,
     refresh_document_taint,
 )
+from app.services.usage import enforce_embedding_budget
 
 settings = get_settings()
 
@@ -178,6 +179,49 @@ def _allowed_namespaces(principal: Principal) -> list[str] | None:
     if principal.is_commander or "*" in principal.allowed_namespaces:
         return None
     return principal.allowed_namespaces
+
+
+def _visibility_conditions(
+    principal: Principal,
+    *,
+    include_unverified: bool,
+    include_tainted: bool,
+) -> list[Any]:
+    if principal.is_commander:
+        return []
+    conditions: list[Any] = []
+    if not include_unverified and not can(principal, "doc:verify"):
+        conditions.append(
+            (SharedDocument.verification_status == "VERIFIED")
+            | (SharedDocument.created_by == principal.agent_signature)
+        )
+    if not include_tainted:
+        conditions.append(
+            SharedDocument.tainted.is_(False)
+            | (SharedDocument.created_by == principal.agent_signature)
+        )
+    return conditions
+
+
+def _ensure_document_visible(
+    principal: Principal,
+    document: SharedDocument,
+    *,
+    include_unverified: bool,
+    include_tainted: bool,
+) -> None:
+    if principal.is_commander:
+        return
+    own = document.created_by == principal.agent_signature
+    if (
+        not include_unverified
+        and not own
+        and not can(principal, "doc:verify")
+        and document.verification_status != "VERIFIED"
+    ):
+        raise NotFound("shared_document")
+    if not include_tainted and not own and document.tainted:
+        raise NotFound("shared_document")
 
 
 async def _get_document(
@@ -304,6 +348,8 @@ async def list_documents(
     limit: int = 100,
     cursor: str | None = None,
     include_archived: bool = False,
+    include_unverified: bool = False,
+    include_tainted: bool = False,
 ) -> DocumentListResponse:
     require_permission(principal, "doc:read")
     query = select(SharedDocument).where(
@@ -321,6 +367,12 @@ async def list_documents(
             query = query.where(condition)
     if not include_archived:
         query = query.where(SharedDocument.archived_at.is_(None))
+    for condition in _visibility_conditions(
+        principal,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
+    ):
+        query = query.where(condition)
     page_size = min(limit, settings.max_page_size)
     if cursor:
         cursor_time, cursor_id = _decode_cursor(cursor)
@@ -341,7 +393,9 @@ async def list_documents(
         next_cursor = _encode_cursor(last.updated_at, last.id)
         rows = rows[:page_size]
     return DocumentListResponse(
-        items=[document_summary(row) for row in rows],
+        items=[
+            document_summary(row, compact_frontmatter=True) for row in rows
+        ],
         next_cursor=next_cursor,
         namespace=namespace,
         count=len(rows),
@@ -370,6 +424,9 @@ async def _set_document_archived(
         raise Forbidden(
             f"only the creator or a workspace commander can {action} this document"
         )
+    ensure_not_human_locked(
+        principal, "shared_document", document.locked_by_human, document.human_note
+    )
     if request.expected_version is not None and document.version != request.expected_version:
         raise VersionConflict("shared_document", _latest(document))
     batch = uuid.uuid4()
@@ -464,11 +521,20 @@ async def batch_dereference(
     session: AsyncSession,
     principal: Principal,
     uris: list[str],
+    *,
+    include_unverified: bool = False,
+    include_tainted: bool = False,
 ) -> DereferenceBatchResponse:
     items: list[DereferenceBatchItem] = []
     for uri in uris:
         try:
-            result = await dereference(session, principal, uri)
+            result = await dereference(
+                session,
+                principal,
+                uri,
+                include_unverified=include_unverified,
+                include_tainted=include_tainted,
+            )
             items.append(DereferenceBatchItem(uri=uri, ok=True, document=result.document))
         except ApiError as exc:
             items.append(DereferenceBatchItem(uri=uri, ok=False, error=exc.body()["error"]))
@@ -476,11 +542,22 @@ async def batch_dereference(
 
 
 async def get_document(
-    session: AsyncSession, principal: Principal, doc_key: str
+    session: AsyncSession,
+    principal: Principal,
+    doc_key: str,
+    *,
+    include_unverified: bool = False,
+    include_tainted: bool = False,
 ) -> DocumentOut:
     require_permission(principal, "doc:read")
     document = await _get_document(session, principal.workspace.id, doc_key)
     ensure_namespace(principal, document.namespace)
+    _ensure_document_visible(
+        principal,
+        document,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
+    )
     return document_out(document)
 
 
@@ -522,6 +599,9 @@ async def upsert_document(
             content_bytes=len(content.encode("utf-8")),
         )
         await _ensure_document_quota(session, principal.workspace)
+        await enforce_embedding_budget(
+            session, principal.workspace.id, len(content.encode("utf-8"))
+        )
         vector = await _embed(content)
         provider = get_embedding_provider()
         document = SharedDocument(
@@ -680,6 +760,9 @@ async def upsert_document(
     document.content = content
     document.content_hash = new_hash
     document.frontmatter = frontmatter
+    await enforce_embedding_budget(
+        session, principal.workspace.id, len(content.encode("utf-8"))
+    )
     document.embedding = await _embed(content)
     document.embedding_model = get_embedding_provider().model
     document.namespace = namespace
@@ -821,6 +904,9 @@ async def patch_document_section(
     document.verification_status = "DRAFT"
     document.verified_version = None
     document.verified_hash = None
+    await enforce_embedding_budget(
+        session, principal.workspace.id, len(document.content.encode("utf-8"))
+    )
     document.embedding = await _embed(document.content)
     document.embedding_model = get_embedding_provider().model
     document.version += 1
@@ -959,12 +1045,23 @@ async def query_documents(
 
 
 async def dereference(
-    session: AsyncSession, principal: Principal, uri: str
+    session: AsyncSession,
+    principal: Principal,
+    uri: str,
+    *,
+    include_unverified: bool = False,
+    include_tainted: bool = False,
 ) -> DereferenceResponse:
     require_permission(principal, "doc:read")
     doc_key = parse_doc_uri(uri)
     document = await _get_document(session, principal.workspace.id, doc_key)
     ensure_namespace(principal, document.namespace)
+    _ensure_document_visible(
+        principal,
+        document,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
+    )
     return DereferenceResponse(uri=uri, document=document_out(document))
 
 
@@ -1014,6 +1111,9 @@ async def create_artifact(
     session.add(document)
     await session.flush()
     await refresh_document_taint(session, document)
+    await enforce_embedding_budget(
+        session, workspace.id, len(artifact_text.encode("utf-8"))
+    )
     await reindex_document_chunks(session, document)
     await _record_version(
         session,
@@ -1075,6 +1175,9 @@ async def human_update_document(
             document.verified_hash = None
         document.content = normalized_content
         document.content_hash = new_hash
+        await enforce_embedding_budget(
+            session, workspace.id, len(normalized_content.encode("utf-8"))
+        )
         document.embedding = await _embed(normalized_content)
         document.embedding_model = get_embedding_provider().model
     if request.frontmatter is not None:
@@ -1369,11 +1472,22 @@ async def set_document_status(
 
 
 async def list_document_versions(
-    session: AsyncSession, principal: Principal, doc_key: str
+    session: AsyncSession,
+    principal: Principal,
+    doc_key: str,
+    *,
+    include_unverified: bool = False,
+    include_tainted: bool = False,
 ) -> DocumentVersionListResponse:
     require_permission(principal, "doc:read")
     document = await _get_document(session, principal.workspace.id, doc_key)
     ensure_namespace(principal, document.namespace)
+    _ensure_document_visible(
+        principal,
+        document,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
+    )
     versions = (
         await session.execute(
             select(DocumentVersion)
@@ -1391,10 +1505,19 @@ async def get_document_version(
     principal: Principal,
     doc_key: str,
     version_number: int,
+    *,
+    include_unverified: bool = False,
+    include_tainted: bool = False,
 ) -> DocumentVersionOut:
     require_permission(principal, "doc:read")
     document = await _get_document(session, principal.workspace.id, doc_key)
     ensure_namespace(principal, document.namespace)
+    _ensure_document_visible(
+        principal,
+        document,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
+    )
     version = (
         await session.execute(
             select(DocumentVersion).where(
@@ -1414,8 +1537,8 @@ async def set_document_taint(
     doc_key: str,
     request: DocumentTaintRequest,
 ) -> DocumentMutationResponse:
-    if not principal.is_human:
-        raise Forbidden("a human reviewer must change taint state")
+    if not principal.is_human or not principal.is_commander:
+        raise Forbidden("a human owner/reviewer must change taint state")
     batch = uuid.uuid4()
     document = await _get_document(
         session, principal.workspace.id, doc_key, for_update=True
@@ -1487,6 +1610,9 @@ async def normalize_document_html(
     document.verification_status = "DRAFT"
     document.verified_version = None
     document.verified_hash = None
+    await enforce_embedding_budget(
+        session, workspace.id, len(content.encode("utf-8"))
+    )
     document.embedding = await _embed(content)
     document.embedding_model = get_embedding_provider().model
     document.version += 1

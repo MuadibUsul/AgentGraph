@@ -16,6 +16,7 @@ from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.errors import ApiError
 
 logger = logging.getLogger("agentgraph.tenant")
 settings = get_settings()
@@ -47,14 +48,16 @@ async def activate_tenant(session: Session, workspace_id: uuid.UUID | str) -> No
             text("SELECT set_config('app.workspace_id', :workspace_id, true)"),
             {"workspace_id": str(workspace_id)},
         )
-    except Exception as exc:  # noqa: BLE001 - optional deployment capability
-        logger.warning(
-            "tenant RLS activation failed (role=%s): %s; continuing with "
-            "application-level workspace filters",
-            role,
-            exc,
+    except Exception as exc:  # noqa: BLE001 - fail closed on tenant isolation
+        logger.error(
+            "tenant RLS activation failed (role=%s): %s", role, exc
         )
         session.info.pop("workspace_id", None)
+        raise ApiError(
+            503,
+            "tenant_context_unavailable",
+            "tenant row-security context could not be established",
+        ) from exc
 
 
 @event.listens_for(Session, "after_begin")
@@ -71,8 +74,13 @@ def _apply_tenant_context(
             text("SELECT set_config('app.workspace_id', :workspace_id, true)"),
             {"workspace_id": str(workspace_id)},
         )
-    except Exception as exc:  # noqa: BLE001 - readiness/error path
-        logger.warning("tenant context could not be applied: %s", exc)
+    except Exception as exc:  # noqa: BLE001 - fail closed on tenant isolation
+        logger.error("tenant context could not be applied: %s", exc)
+        raise ApiError(
+            503,
+            "tenant_context_unavailable",
+            "tenant row-security context could not be established",
+        ) from exc
 
 
 __all__ = ["activate_tenant", "set_session_tenant"]

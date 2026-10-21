@@ -164,7 +164,11 @@ because the backend verifies the ID token with Google. Until the client ID is
 set, the login page hides the Google button and `/v1/auth/config` reports
 `google_enabled: false`.
 `GET /v1/auth/config` tells the console whether signup and Google are enabled.
-Email verification (delivery of a confirmation link) is not implemented yet.
+Google identities are bound by `google_sub`; an existing password account is
+never auto-linked by email. Signed-in users can call `POST /v1/auth/google/link`
+with a Google ID token, or change their password with `POST /v1/auth/password`.
+Email verification delivery and forgot-password email are not implemented yet;
+new self-service accounts are created with `email_verified=false`.
 
 ### First collaborative turn
 
@@ -220,8 +224,9 @@ curl -s -X POST http://localhost:8000/v1/admin/workspaces/<uuid>/batches/<batch_
   `namespace_counts` gives per-namespace totals. Pass `since=<next_cursor>` to
   receive only documents, tasks, slots and timeline events changed after that
   cursor, then store the new `next_cursor`; this replaces full-map polling.
-- **L1** — every handoff to `REVIEWING`, `HANDOFF`, or `DONE` requires:
-  `summary`, `key_metrics`, `unverified_hypotheses`, `risk_flag`.
+- **L1** — every handoff to `REVIEWING` or `HANDOFF` requires `summary`,
+  `key_metrics`, `unverified_hypotheses`, `risk_flag`. Agents cannot mark a task
+  `DONE` or write `human_feedback`; those are human/reviewer actions.
 - **L2** — artifact text is stored as a shared document under
   `artifact/<task_key>/<id>`; `artifact_uri` is `doc://<doc_key>`. Load it only
   with `dereference(uri)`.
@@ -253,9 +258,9 @@ counter.
 Task states:
 
 ```
-TODO → READY → IN_PROGRESS → REVIEWING → DONE
+TODO → READY → IN_PROGRESS → REVIEWING → DONE   (DONE requires a human)
                      ├────────► HANDOFF
-                     ├────────► AWAITING_HUMAN / ESCALATED_TO_HUMAN
+                     ├────────► AWAITING_HUMAN / ESCALATED_TO_HUMAN (human-only)
                      └────────► FAILED
 lease expiry (IN_PROGRESS/REVIEWING) → READY
 ```
@@ -432,6 +437,30 @@ Production `/docs` and `/openapi.json` are protected by HTTP Basic when
 
 The console is a Next.js 14 static export. The production image builds it in a
 multi-stage Docker build and FastAPI serves it at `/dashboard/`.
+
+### Security hardening (v3.4)
+
+- Namespace checks are enforced on proposals, audit, timeline, task context,
+  links, SSE events and external actions; a restricted agent cannot read or
+  mutate another namespace.
+- `ESCALATED_TO_HUMAN` and `AWAITING_HUMAN` require a real human account; a
+  workspace automation key cannot resolve them. Agents must hand off to
+  `REVIEWING`, not `DONE`.
+- `VIEWER` is read-only and cannot change taint; new human accounts default to
+  `VIEWER`, and only `OWNER` can manage budgets, policies, webhooks and reindex.
+- External-action approval lists return the actual payload/headers; compensation
+  actions are created as `PENDING_APPROVAL`.
+- Outbound DNS is resolved once and pinned; CGNAT/non-global addresses are
+  rejected; response bodies are bounded and have a hard deadline.
+- Registration/login hashing runs in a bounded thread pool; auth counters are
+  committed independently; per-IP/global auth budgets and an embedding-byte
+  budget limit abuse.
+- MCP and SSE share the request limiter; SSE has global/per-principal connection
+  caps. Security headers (CSP, HSTS in production, X-Frame-Options, nosniff,
+  Referrer-Policy) are emitted by the app. Production refuses a missing/weak
+  `ADMIN_TOKEN`.
+- The operator token is session-scoped in the browser; the customer login page
+  no longer advertises the operator entry point.
 
 ## Data Model
 
@@ -683,8 +712,10 @@ Implemented in v3.2:
   with cascade cleanup and dependency-cycle detection.
 - **Hybrid retrieval** — Markdown chunks, HNSW, generated tsvector, pg_trgm,
   RRF fusion, verified/taint filters and an admin reindex endpoint.
-- **Outbound control** — signed persistent webhooks with retries, external actions
-  requiring human approval, idempotency keys, attempts ledger and compensation.
+- **Outbound control** — signed persistent webhooks with retries, DNS-pinned
+  outbound connections, external actions requiring human approval with a visible
+  payload/headers, idempotency keys, attempts ledger, and separately-approved
+  compensation actions. Webhooks/tests revalidate their target on every send.
   A reference bot-side receiver is included at `scripts/webhook_receiver.py`:
   it verifies `X-AgentGraph-Timestamp`/`X-AgentGraph-Signature`, rejects stale
   deliveries, and appends verified events to a JSONL outbox for the bot loop.
@@ -725,7 +756,7 @@ Implemented in v3.2:
   active content/unsafe URLs, repairs existing documents via an admin endpoint,
   and renders legacy raw HTML through a sanitized `rehype-raw` pipeline.
 
-Verification: `94 passed` against a fresh pgvector database, production smoke
+Verification: `99 passed` against a fresh pgvector database, production smoke
 test, public HTTPS dashboard, and a real retrieval benchmark
 (`docs/benchmarks/latest.md`).
 

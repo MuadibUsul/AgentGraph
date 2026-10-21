@@ -522,6 +522,13 @@ class StateAuditDiff(Base):
         UUID(as_uuid=True), nullable=False
     )
     agent_signature: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_auth_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actor_token_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     target_table: Mapped[str] = mapped_column(String(64), nullable=False)
     target_record_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False
@@ -712,6 +719,9 @@ class DocumentProposal(Base):
         nullable=False,
     )
     doc_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    namespace: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="default", server_default=text("'default'")
+    )
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     frontmatter: Mapped[dict[str, Any]] = mapped_column(
@@ -863,9 +873,13 @@ class HumanUser(Base):
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    google_sub: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
     role: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="REVIEWER",
-        server_default=text("'REVIEWER'"),
+        String(16), nullable=False, default="VIEWER",
+        server_default=text("'VIEWER'"),
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("TRUE")

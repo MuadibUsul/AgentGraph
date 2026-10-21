@@ -46,7 +46,8 @@ export default function ConnectPage() {
         }
         throw new Error(message);
       }
-      localStorage.setItem(TOKEN_KEY, token.trim());
+      sessionStorage.setItem(TOKEN_KEY, token.trim());
+      localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(SESSION_KEY);
       localStorage.setItem(BASE_KEY, normalizeBase(apiBase));
       window.location.assign("/dashboard/");
@@ -120,7 +121,7 @@ export default function ConnectPage() {
                   value={token}
                   onChange={(event) => setToken(event.target.value)}
                   placeholder="ADMIN_TOKEN"
-                  autoComplete="current-password"
+                  autoComplete="off"
                   required
                 />
               </label>
