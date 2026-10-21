@@ -165,7 +165,8 @@ E:\Codes\AgentGraph\
 │       ├── v3_4_security_hardening.sql   # 安全加固（提案 namespace/Google sub/审计主体/RLS）
 │       ├── v3_5_artifact_binding.sql     # 任务产出物版本/哈希绑定与交接人记录
 │       ├── v3_6_failure_protocol.sql     # 失败语义协议：幂等记录（AG-ST-18）
-│       └── v3_7_tenants.sql              # 租户树、tenant_id 全表推导、成员、RLS 租户范围（AG-ID-07）
+│       ├── v3_7_tenants.sql              # 租户树、tenant_id 全表推导、成员、RLS 租户范围（AG-ID-07）
+│       └── v3_8_addresses.sql            # canonical ID、别名重定向、墓碑、namespace 注册、$ref 引用（AG-ST-17）
 │
 ├── dashboard/
 │   ├── package.json                      # Next.js 14.2 / React 18 / react-markdown

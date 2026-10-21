@@ -23,6 +23,7 @@ from app.schemas import (
     BudgetUpdateRequest,
     DocumentHumanUpdateRequest,
     DocumentMutationResponse,
+    DocumentPurgeRequest,
     DocumentStatusRequest,
     DocumentTaintRequest,
     DocumentVerifyRequest,
@@ -51,6 +52,7 @@ from app.schemas import (
     TaskReviewRequest,
     TenantDeleteRequest,
     TenantOut,
+    TombstoneOut,
     UsageOut,
     WebhookDeliveryListResponse,
     WebhookRuleCreateRequest,
@@ -757,3 +759,18 @@ async def restore_tenant(
     session: AsyncSession = Depends(get_db),
 ) -> TenantOut:
     return await tenant_service.owner_restore_tenant(session, principal)
+
+
+@router.post(
+    "/documents/{doc_key:path}/purge",
+    response_model=TombstoneOut,
+    summary="Physically delete an archived document; a tombstone keeps its address",
+)
+async def purge_document(
+    doc_key: str,
+    body: DocumentPurgeRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> TombstoneOut:
+    return await services.purge_document(session, principal, doc_key, body)
+

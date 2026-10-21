@@ -153,6 +153,17 @@ workspace. Operators manage tenants under `/v1/admin/tenants` (suspend/resume,
 two-party deletion with a 30-day grace period, restore); owners see
 `GET /v1/human/tenant` and confirm or cancel deletion there.
 
+Every object has an opaque **canonical id** (`doc_…`, `task_…`, `ws_…`,
+`tok_…`, `prn_…`, `slot_…`) next to its alias (`doc_key`, `task_key`); every
+reference accepts either. `POST /v1/documents/{ref}/rename` keeps the id and
+redirects the old alias forever; owners purge archived documents with
+`POST /v1/human/documents/{ref}/purge`, leaving a tombstone (410 `gone`, alias
+never reused). Register namespaces with `POST /v1/namespaces`; frontmatter
+`{"$ref": …}` values are stored as canonical ids; `dereference(expand_parts)`
+joins `frontmatter.parts`. Under API version `2026-11` the address grammar and
+register-before-use are enforced; the baseline accepts legacy keys with
+`legacy_alias` / `namespace_auto_registered` warnings.
+
 All errors carry `class` / `action` / `retryable` / `retry_after_ms`
 (registry: [docs/ERROR_CODES.md](docs/ERROR_CODES.md)). Writes accept an
 `Idempotency-Key` header (REST) or `idempotency_key` argument (MCP) with a 24 h

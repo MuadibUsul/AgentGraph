@@ -62,6 +62,7 @@ def iso(value: datetime | None) -> str | None:
 def workspace_info(workspace: Workspace) -> WorkspaceInfo:
     return WorkspaceInfo(
         id=workspace.id,
+        canonical_id=workspace.canonical_id,
         name=workspace.name,
         tier=workspace.tier,
         created_at=workspace.created_at,
@@ -71,6 +72,7 @@ def workspace_info(workspace: Workspace) -> WorkspaceInfo:
 def slot_out(slot: ContextSlot) -> SlotOut:
     return SlotOut(
         id=slot.id,
+        canonical_id=slot.canonical_id,
         slot_key=slot.slot_key,
         goal=slot.goal,
         current_state=slot.current_state or {},
@@ -94,6 +96,7 @@ def slot_out(slot: ContextSlot) -> SlotOut:
 def slot_summary(slot: ContextSlot) -> SlotSummary:
     return SlotSummary(
         id=slot.id,
+        canonical_id=slot.canonical_id,
         slot_key=slot.slot_key,
         namespace=slot.namespace,
         version=slot.version,
@@ -112,6 +115,8 @@ def task_summary(task: CollabTask) -> TaskSummary:
     brief = task.handoff_brief if isinstance(task.handoff_brief, dict) else {}
     return TaskSummary(
         id=task.id,
+        canonical_id=task.canonical_id,
+        alias=task.task_key,
         task_key=task.task_key,
         title=task.title,
         status=task.status,
@@ -168,6 +173,8 @@ def document_summary(
         frontmatter = _compact_frontmatter(frontmatter)
     return DocumentSummary(
         id=document.id,
+        canonical_id=document.canonical_id,
+        alias=document.doc_key,
         doc_key=document.doc_key,
         title=document.title,
         namespace=document.namespace,
@@ -242,6 +249,7 @@ def link_out(link: Any) -> LinkOut:
 def agent_token_out(token: AgentToken) -> AgentTokenOut:
     return AgentTokenOut(
         id=token.id,
+        canonical_id=token.canonical_id,
         agent_signature=token.agent_signature,
         role_scope=token.role_scope.value,
         allowed_namespaces=list(token.allowed_namespaces or ["*"]),

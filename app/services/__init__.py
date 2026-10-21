@@ -42,7 +42,9 @@ from app.services.documents import (
     normalize_document_html,
     normalize_workspace_html_documents,
     patch_document_section,
+    purge_document,
     query_documents,
+    rename_document,
     restore_document,
     set_document_status,
     set_document_taint,
@@ -120,6 +122,8 @@ from app.services.workspace import (
 )
 
 __all__ = [
+    "purge_document",
+    "rename_document",
     "append_event",
     "archive_document",
     "batch_dereference",

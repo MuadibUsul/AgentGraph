@@ -36,6 +36,7 @@ from app.schemas import (
     SlotPatchRequest,
     SlotReplaceRequest,
 )
+from app.services import addresses as address_service
 from app.services.common import (
     append_event,
     db_now,
@@ -165,6 +166,7 @@ async def replace_slot(
             raise VersionConflict("context_slot", None)
         namespace = request.namespace or "default"
         ensure_namespace(principal, namespace, write=True)
+        await address_service.ensure_namespace_registered(session, principal, namespace)
         await enforce_policy(
             session,
             principal,

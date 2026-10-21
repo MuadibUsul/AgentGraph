@@ -165,6 +165,10 @@ def patch_markdown_section(
 
 def parse_doc_uri(uri: str) -> str:
     cleaned = uri.strip()
+    from app.addresses import is_canonical
+
+    if is_canonical(cleaned, "doc"):
+        return cleaned
     for prefix in ("doc://", "doc:///"):
         if cleaned.startswith(prefix):
             doc_key = cleaned[len(prefix):].strip("/")

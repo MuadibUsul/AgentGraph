@@ -695,6 +695,9 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         "dereference_many",
                         "archive_document",
                         "restore_document",
+                        "rename_document",
+                        "register_namespace",
+                        "list_namespaces",
                         "get_api_docs",
                     }
                     sync = await session.call_tool("workspace_sync", {})
@@ -1061,6 +1064,9 @@ async def test_dashboard_root_and_openapi(client):
         "dereference_many",
         "archive_document",
         "restore_document",
+        "rename_document",
+        "register_namespace",
+        "list_namespaces",
         "propose_document_change",
         "vote_on_proposal",
         "list_document_proposals",

@@ -75,6 +75,11 @@ def _enum_values(members: type[enum.Enum]) -> list[str]:
 class Workspace(Base):
     __tablename__ = "workspaces"
 
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
         server_default=text("uuid_generate_v4()"),
@@ -192,6 +197,12 @@ class Membership(Base):
 class AgentToken(Base):
     __tablename__ = "agent_tokens"
 
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    __mapper_args__ = {"eager_defaults": True}
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
         server_default=text("uuid_generate_v4()"),
@@ -244,6 +255,15 @@ class AgentToken(Base):
 
 class SharedDocument(Base):
     __tablename__ = "shared_documents"
+
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    alias_legacy: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
@@ -341,6 +361,12 @@ class SharedDocument(Base):
 class ContextSlot(Base):
     __tablename__ = "context_slots"
 
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    __mapper_args__ = {"eager_defaults": True}
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
         server_default=text("uuid_generate_v4()"),
@@ -400,6 +426,12 @@ class ContextSlot(Base):
 
 class CollabTask(Base):
     __tablename__ = "collab_tasks"
+
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
@@ -961,6 +993,12 @@ class PathPolicy(Base):
 class HumanUser(Base):
     __tablename__ = "human_users"
 
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    __mapper_args__ = {"eager_defaults": True}
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
@@ -1378,3 +1416,97 @@ class WebhookDelivery(Base):
         UniqueConstraint("rule_id", "event_id", name="uq_webhook_delivery_event"),
         Index("idx_webhook_deliveries_pending", "status", "next_attempt_at"),
     )
+
+
+class AliasRedirect(Base):
+    """A renamed alias that keeps resolving to the same object forever."""
+
+    __tablename__ = "alias_redirects"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    object_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    old_alias: Mapped[str] = mapped_column(String(512), nullable=False)
+    target_canonical_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    renamed_by: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+
+
+class Tombstone(Base):
+    """Content-free record of a purged object; id and alias are never reused."""
+
+    __tablename__ = "tombstones"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    object_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    canonical_id: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    alias: Mapped[str] = mapped_column(String(512), nullable=False)
+    namespace: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    purged_by: Mapped[str] = mapped_column(String(256), nullable=False)
+    purged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class NamespaceRecord(Base):
+    """Register-before-use namespace registry (PRD AG-ST-17 point 7)."""
+
+    __tablename__ = "namespaces"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    namespace: Mapped[str] = mapped_column(String(64), nullable=False)
+    purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    doc_type_default: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="collaborative",
+        server_default=text("'collaborative'"),
+    )
+    write_policy: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="open", server_default=text("'open'")
+    )
+    auto_registered: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    created_by: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+
+
+class DocumentRef(Base):
+    """A declared {"$ref"} edge from a document version's frontmatter."""
+
+    __tablename__ = "document_refs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shared_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    field_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    target_canonical_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    target_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="declared", server_default=text("'declared'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+

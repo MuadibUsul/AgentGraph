@@ -19,7 +19,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app import services
+from app import services, warnings_context
 from app.auth import (
     PERMISSIONS,
     AuthKind,
@@ -37,6 +37,7 @@ from app.schemas import (
     DocumentBatchUpsertItem,
     DocumentBatchUpsertRequest,
     DocumentQueryRequest,
+    DocumentRenameRequest,
     DocumentSectionPatchRequest,
     DocumentUpsertRequest,
     ExternalActionCreateRequest,
@@ -50,6 +51,7 @@ from app.schemas import (
     TaskHandoffRequest,
     TaskReviewRequest,
 )
+from app.services import addresses as address_service
 from app.services import idempotency
 from app.services.common import set_event_platform
 from app.tenant import activate_tenant
@@ -85,6 +87,8 @@ IDEMPOTENT_TOOLS = frozenset(
         "vote_on_proposal",
         "archive_document",
         "restore_document",
+        "register_namespace",
+        "rename_document",
     }
 )
 _CONTENT_BLOCK = TypeAdapter(types.ContentBlock)
@@ -113,6 +117,38 @@ def _mark_replayed_text(block: Any) -> Any:
                 type="text", text=json.dumps(payload, ensure_ascii=False, default=str)
             )
     return block
+
+
+def _merge_text_block(block: Any, collected: list[dict[str, Any]]) -> Any:
+    if getattr(block, "type", None) != "text":
+        return block
+    try:
+        payload = json.loads(block.text)
+    except (TypeError, ValueError):
+        return block
+    if not isinstance(payload, dict):
+        return block
+    return types.TextContent(
+        type="text",
+        text=json.dumps(
+            warnings_context.merge_warnings(payload, collected), ensure_ascii=False, default=str
+        ),
+    )
+
+
+def _with_warnings(result: Any, collected: list[dict[str, Any]]) -> Any:
+    """Attach soft-constraint warnings (PRD §6 warnings[]) to a tool result."""
+    if not collected or isinstance(result, types.CallToolResult):
+        return result
+    if isinstance(result, tuple) and len(result) == 2:
+        content, structured = result
+        return (
+            [_merge_text_block(block, collected) for block in content],
+            warnings_context.merge_warnings(structured, collected),
+        )
+    if isinstance(result, dict):
+        return warnings_context.merge_warnings(result, collected)
+    return [_merge_text_block(block, collected) for block in result]
 
 
 def _load_result(stored: dict[str, Any]) -> Any:
@@ -192,6 +228,11 @@ class AgentGraphFastMCP(FastMCP):
         self, name: str, arguments: dict[str, Any]
     ) -> types.CallToolResult | Any:
         _current_tool.set(name)
+        collected = warnings_context.begin_collection()
+        result = await self._dispatch(name, arguments)
+        return _with_warnings(result, collected)
+
+    async def _dispatch(self, name: str, arguments: dict[str, Any]) -> Any:
         try:
             key = None
             if name in IDEMPOTENT_TOOLS and isinstance(arguments, dict):
@@ -1064,10 +1105,13 @@ async def dereference(
     uri: str,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    expand_parts: bool = False,
 ) -> dict[str, Any]:
-    """Resolve an L2 artifact/doc URI (doc://<doc_key>) to full content.
+    """Resolve an L2 artifact/doc URI (doc://<doc_key> or a doc_… id) to full content.
 
     Other agents' unverified or tainted documents require the explicit flags.
+    expand_parts=true concatenates frontmatter.parts in index order (<= 4 MiB)
+    into expanded_content; each part keeps its own id.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -1078,7 +1122,83 @@ async def dereference(
                 uri,
                 include_unverified=include_unverified,
                 include_tainted=include_tainted,
+                expand_parts=expand_parts,
             )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="register_namespace")
+async def register_namespace(
+    namespace: str,
+    purpose: str | None = None,
+    doc_type_default: Literal["collaborative", "log"] = "collaborative",
+    write_policy: Literal["open", "proposal_required", "human_only"] = "open",
+) -> dict[str, Any]:
+    """Register a namespace before writing to it (register-before-use).
+
+    Namespaces match ^[a-z][a-z0-9-]{1,31}$; system/handoff/reviews/tasks/ag and
+    names starting with _ are reserved. Under API version 2026-11 writing to an
+    unregistered namespace fails with namespace_not_registered; call this, then
+    retry the write unchanged. Idempotent: an existing namespace is returned.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await address_service.register_namespace(
+                session,
+                principal,
+                namespace=namespace,
+                purpose=purpose,
+                doc_type_default=doc_type_default,
+                write_policy=write_policy,
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_namespaces")
+async def list_namespaces() -> dict[str, Any]:
+    """List registered namespaces with their purpose and default document type."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await address_service.list_namespaces(session, principal)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="rename_document")
+async def rename_document(
+    ref: str,
+    new_alias: str,
+    expected_version: int | None = None,
+    session_batch_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """Change a document's alias (doc_key). The canonical id never changes.
+
+    ref accepts the doc_… id or the current alias. The old alias keeps
+    resolving to the same document forever (alias_redirected warning) and is
+    never assigned to another document.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await services.rename_document(
+                session,
+                principal,
+                ref,
+                DocumentRenameRequest(
+                    new_alias=new_alias,
+                    expected_version=expected_version,
+                    session_batch_id=session_batch_id,
+                ),
+            )
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result.model_dump(mode="json"))

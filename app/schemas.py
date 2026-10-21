@@ -452,6 +452,10 @@ class DereferenceRequest(StrictModel):
     uri: str = Field(min_length=1, max_length=2_048)
     include_unverified: bool = False
     include_tainted: bool = False
+    expand_parts: bool = Field(
+        default=False,
+        description="Concatenate frontmatter.parts in index order (<= 4 MiB)",
+    )
 
 
 # --------------------------------------------------------------------- links
@@ -572,6 +576,9 @@ class UpdateWorkspaceRequest(StrictModel):
 
 class WorkspaceInfo(BaseModel):
     id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
     name: str
     tier: str
     created_at: datetime
@@ -634,6 +641,10 @@ class WhoAmIResponse(BaseModel):
 
 class TaskSummary(BaseModel):
     id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
+    alias: str | None = Field(default=None, description="Current human-readable alias")
     task_key: str
     title: str
     status: TaskStatus
@@ -692,6 +703,9 @@ class TaskContextResponse(BaseModel):
 
 class SlotOut(BaseModel):
     id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
     slot_key: str
     goal: str | None
     current_state: dict[str, Any]
@@ -713,6 +727,9 @@ class SlotOut(BaseModel):
 
 class SlotSummary(BaseModel):
     id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
     slot_key: str
     namespace: str
     version: int
@@ -741,6 +758,35 @@ class DocumentArchiveRequest(StrictModel):
     expected_version: int | None = Field(default=None, ge=1)
 
 
+class DocumentRenameRequest(StrictModel):
+    new_alias: str = Field(min_length=1, max_length=256)
+    expected_version: int | None = Field(default=None, ge=1)
+    session_batch_id: uuid.UUID | None = None
+
+
+class DocumentPurgeRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=4_000)
+    confirm: str = Field(min_length=1, max_length=256, description="The document alias")
+
+
+class TombstoneOut(BaseModel):
+    id: str
+    alias: str
+    type: str
+    last_version: int | None = None
+    last_content_hash: str | None = None
+    purged_by: str
+    purged_at: datetime
+    reason: str | None = None
+
+
+class NamespaceRegisterRequest(StrictModel):
+    namespace: str = Field(min_length=1, max_length=64)
+    purpose: str | None = Field(default=None, max_length=4_000)
+    doc_type_default: Literal["collaborative", "log"] = "collaborative"
+    write_policy: Literal["open", "proposal_required", "human_only"] = "open"
+
+
 class DocumentBatchUpsertItem(DocumentUpsertRequest):
     doc_key: str = Field(
         pattern=_KEY_PATTERN + "$", min_length=1, max_length=256
@@ -762,6 +808,10 @@ class DocumentBatchUpsertRequest(StrictModel):
 
 class DocumentSummary(BaseModel):
     id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
+    alias: str | None = Field(default=None, description="Current human-readable alias")
     doc_key: str
     title: str
     namespace: str
@@ -846,6 +896,8 @@ class DereferenceBatchResponse(BaseModel):
 class DereferenceResponse(BaseModel):
     uri: str
     document: DocumentOut
+    expanded_content: str | None = None
+    parts: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class LinkOut(BaseModel):
@@ -959,6 +1011,9 @@ class ApiKeyRotatedResponse(BaseModel):
 
 class AgentTokenOut(BaseModel):
     id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
     agent_signature: str
     role_scope: str
     allowed_namespaces: list[str]

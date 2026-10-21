@@ -38,7 +38,6 @@ from app.models import (
     CollabTask,
     ContextSlot,
     LinkType,
-    SharedDocument,
     TaskStatus,
     WorkspaceLink,
 )
@@ -57,6 +56,7 @@ from app.schemas import (
     TaskRenewRequest,
     TaskReviewRequest,
 )
+from app.services import addresses as address_service
 from app.services.common import (
     append_event,
     db_now,
@@ -155,13 +155,10 @@ async def _get_task(
     *,
     for_update: bool = False,
 ) -> CollabTask:
-    query = select(CollabTask).where(
-        CollabTask.workspace_id == workspace_id,
-        CollabTask.task_key == task_key,
+    # Accepts a canonical id (task_…), the task_key or a redirected key.
+    task = await address_service.find_task(
+        session, workspace_id, task_key, for_update=for_update
     )
-    if for_update:
-        query = query.with_for_update()
-    task = (await session.execute(query)).scalar_one_or_none()
     if task is None:
         raise NotFound("collab_task", f"task '{task_key}' not found")
     return task
@@ -288,14 +285,16 @@ async def _context_documents(
         keys.extend(str(item) for item in many if isinstance(item, str))
     if not keys:
         return []
-    docs = (
-        await session.execute(
-            select(SharedDocument).where(
-                SharedDocument.workspace_id == task.workspace_id,
-                SharedDocument.doc_key.in_(keys),
-            )
-        )
-    ).scalars().all()
+    # Resolve each pointer by id, alias or redirect so renames never break
+    # a task's context (PRD AG-ST-17 acceptance 1).
+    docs = []
+    for key in dict.fromkeys(keys):
+        try:
+            document = await address_service.find_document(session, task.workspace_id, key)
+        except ApiError:
+            document = None
+        if document is not None:
+            docs.append(document)
     allowed = (
         None
         if principal.is_commander or "*" in principal.allowed_namespaces
@@ -318,6 +317,7 @@ async def _create_task_core(
     require_permission(principal, "task:create")
     namespace = request.namespace or "default"
     ensure_namespace(principal, namespace, write=True)
+    await address_service.ensure_namespace_registered(session, principal, namespace)
     task_key = request.task_key or f"TASK-{uuid.uuid4().hex[:8].upper()}"
     await enforce_policy(
         session,

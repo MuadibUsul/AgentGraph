@@ -28,6 +28,7 @@ from app.schemas import (
     DocumentOut,
     DocumentQueryRequest,
     DocumentQueryResponse,
+    DocumentRenameRequest,
     DocumentSectionPatchRequest,
     DocumentStatusRequest,
     DocumentTaintRequest,
@@ -41,6 +42,7 @@ from app.schemas import (
     LinkCreateRequest,
     LinkListResponse,
     LinkOut,
+    NamespaceRegisterRequest,
     PolicyListResponse,
     ProposalApplyRequest,
     ProposalApplyResponse,
@@ -73,6 +75,7 @@ from app.schemas import (
     WorkspaceMapResponse,
     WorkspaceStatsResponse,
 )
+from app.services import addresses as address_service
 
 router = APIRouter(prefix="/v1", tags=["AgentGraph v3"])
 
@@ -760,6 +763,45 @@ async def archive_document(
 
 
 @router.post(
+    "/documents/{doc_key:path}/rename",
+    response_model=DocumentMutationResponse,
+    summary="Change a document alias; the canonical id stays and the old alias redirects",
+)
+async def rename_document(
+    doc_key: str,
+    body: DocumentRenameRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> DocumentMutationResponse:
+    return await services.rename_document(session, principal, doc_key, body)
+
+
+@router.get("/namespaces", summary="List registered namespaces")
+async def list_namespaces(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "workspace:read")
+    return await address_service.list_namespaces(session, principal)
+
+
+@router.post("/namespaces", status_code=201, summary="Register a namespace before writing to it")
+async def register_namespace(
+    body: NamespaceRegisterRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await address_service.register_namespace(
+        session,
+        principal,
+        namespace=body.namespace,
+        purpose=body.purpose,
+        doc_type_default=body.doc_type_default,
+        write_policy=body.write_policy,
+    )
+
+
+@router.post(
     "/documents/{doc_key:path}/restore",
     response_model=DocumentMutationResponse,
     summary="Restore a soft-archived shared document (creator or commander)",
@@ -837,6 +879,7 @@ async def dereference(
         body.uri,
         include_unverified=body.include_unverified,
         include_tainted=body.include_tainted,
+        expand_parts=body.expand_parts,
     )
 
 

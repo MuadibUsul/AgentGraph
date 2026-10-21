@@ -11,10 +11,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Numeric, case, func, select, tuple_
+from sqlalchemy import Numeric, case, func, select, tuple_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.addresses import doc_key_violation, is_canonical, is_legacy_alias
 from app.auth import (
     Principal,
     can,
@@ -39,7 +40,15 @@ from app.errors import (
     TaintBlocked,
     VersionConflict,
 )
-from app.models import CollabTask, DocumentVersion, SharedDocument, TaskStatus, Workspace
+from app.models import (
+    CollabTask,
+    DocumentChunk,
+    DocumentProposal,
+    DocumentVersion,
+    SharedDocument,
+    TaskStatus,
+    Workspace,
+)
 from app.schemas import (
     DereferenceBatchItem,
     DereferenceBatchResponse,
@@ -53,8 +62,10 @@ from app.schemas import (
     DocumentMutationResponse,
     DocumentNormalizeResponse,
     DocumentOut,
+    DocumentPurgeRequest,
     DocumentQueryRequest,
     DocumentQueryResponse,
+    DocumentRenameRequest,
     DocumentSectionPatchRequest,
     DocumentStatusRequest,
     DocumentTaintRequest,
@@ -63,7 +74,9 @@ from app.schemas import (
     DocumentVersionListResponse,
     DocumentVersionOut,
     DocumentVersionSummary,
+    TombstoneOut,
 )
+from app.services import addresses as address_service
 from app.services.common import (
     append_event,
     document_out,
@@ -82,6 +95,7 @@ from app.services.taint import (
     refresh_document_taint,
 )
 from app.services.usage import enforce_embedding_budget
+from app.versioning import LATEST_VERSION, at_least
 
 settings = get_settings()
 
@@ -232,16 +246,10 @@ async def _get_document(
     *,
     for_update: bool = False,
 ) -> SharedDocument:
-    query = select(SharedDocument).where(
-        SharedDocument.workspace_id == workspace_id,
-        SharedDocument.doc_key == doc_key,
+    # Accepts a canonical id, an alias or a redirected alias (AG-ST-17).
+    return await address_service.resolve_document(
+        session, workspace_id, doc_key, for_update=for_update
     )
-    if for_update:
-        query = query.with_for_update()
-    document = (await session.execute(query)).scalar_one_or_none()
-    if document is None:
-        raise NotFound("shared_document", f"document '{doc_key}' not found")
-    return document
 
 
 def _title_for(
@@ -624,14 +632,21 @@ async def upsert_document(
     agent = actor or effective_agent(principal, request.agent)
     batch = batch_id or request.session_batch_id or uuid.uuid4()
     content, normalized_html = normalize_notion_content(request.content)
-    existing = (
-        await session.execute(
-            select(SharedDocument).where(
-                SharedDocument.workspace_id == principal.workspace.id,
-                SharedDocument.doc_key == doc_key,
-            )
+    try:
+        existing = await address_service.find_document(session, principal.workspace.id, doc_key)
+    except ApiError as exc:
+        if exc.code != "gone" or request.expected_version != 0:
+            raise
+        # Creating at a purged address: answered by ensure_alias_available below.
+        existing = None
+    if existing is not None:
+        doc_key = existing.doc_key
+    frontmatter_in = request.frontmatter
+    ref_edges: list[tuple[str, str, str | None]] = []
+    if address_service.has_refs(frontmatter_in):
+        frontmatter_in, ref_edges = await address_service.resolve_frontmatter_refs(
+            session, principal.workspace.id, frontmatter_in
         )
-    ).scalar_one_or_none()
 
     if existing is None:
         require_permission(principal, "doc:create")
@@ -639,13 +654,20 @@ async def upsert_document(
         ensure_namespace(principal, namespace, write=True)
         if request.expected_version != 0:
             raise VersionConflict("shared_document", None)
+        if is_canonical(doc_key):
+            raise NotFound("shared_document", f"document '{doc_key}' not found")
+        legacy = address_service.check_new_document_address(namespace, doc_key)
+        await address_service.ensure_alias_available(
+            session, principal.workspace.id, "document", doc_key
+        )
+        await address_service.ensure_namespace_registered(session, principal, namespace)
         policy = await enforce_policy(
             session,
             principal,
             resource_type="document",
             key=doc_key,
             action="create",
-            payload=request.frontmatter,
+            payload=frontmatter_in,
             content_bytes=len(content.encode("utf-8")),
         )
         await _ensure_document_quota(session, principal.workspace)
@@ -660,7 +682,8 @@ async def upsert_document(
             title=_title_for(request, doc_key, content),
             content=content,
             content_hash=content_hash(content),
-            frontmatter=request.frontmatter,
+            frontmatter=frontmatter_in,
+            alias_legacy=legacy,
             verification_status="DRAFT",
             trust_level="TRUSTED" if principal.is_human else "UNTRUSTED",
             verified_version=None,
@@ -716,6 +739,7 @@ async def upsert_document(
             batch_id=batch,
             change_summary="document created",
         )
+        await address_service.record_document_refs(session, document, ref_edges)
         await append_event(
             session,
             workspace_id=principal.workspace.id,
@@ -739,6 +763,18 @@ async def upsert_document(
 
     require_permission(principal, "doc:write")
     ensure_namespace(principal, existing.namespace)
+    if request.expected_version == 0 and at_least(LATEST_VERSION):
+        # Creating over an existing alias is refused, never an overwrite.
+        raise ApiError(
+            409,
+            "alias_taken",
+            f"document alias '{doc_key}' already exists",
+            details={
+                "alias": doc_key,
+                "id": existing.canonical_id,
+                "current_version": existing.version,
+            },
+        )
     ensure_not_human_locked(
         principal, "shared_document", existing.locked_by_human, existing.human_note
     )
@@ -748,11 +784,13 @@ async def upsert_document(
         resource_type="document",
         key=doc_key,
         action="write",
-        payload=request.frontmatter,
+        payload=frontmatter_in,
         content_bytes=len(content.encode("utf-8")),
     )
     namespace = request.namespace or existing.namespace
     ensure_namespace(principal, namespace, write=True)
+    if namespace != existing.namespace:
+        await address_service.ensure_namespace_registered(session, principal, namespace)
 
     document = await _get_document(
         session, principal.workspace.id, doc_key, for_update=True
@@ -784,7 +822,7 @@ async def upsert_document(
             proposed_title=requested_title,
             base_frontmatter=base.frontmatter or {},
             current_frontmatter=document.frontmatter or {},
-            proposed_frontmatter=request.frontmatter,
+            proposed_frontmatter=frontmatter_in,
         )
         if merged.conflicts:
             await session.rollback()
@@ -798,7 +836,7 @@ async def upsert_document(
         rebased = True
     else:
         title = requested_title
-        frontmatter = request.frontmatter
+        frontmatter = frontmatter_in
 
     before = document_snapshot(document)
     new_hash = content_hash(content)
@@ -831,6 +869,7 @@ async def upsert_document(
         change_summary="document updated"
         + (" with rebase" if rebased else ""),
     )
+    await address_service.record_document_refs(session, document, ref_edges)
     await record_audit(
         session,
         workspace_id=principal.workspace.id,
@@ -1101,6 +1140,7 @@ async def dereference(
     *,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    expand_parts: bool = False,
 ) -> DereferenceResponse:
     require_permission(principal, "doc:read")
     doc_key = parse_doc_uri(uri)
@@ -1112,6 +1152,11 @@ async def dereference(
         include_unverified=include_unverified,
         include_tainted=include_tainted,
     )
+    if expand_parts:
+        expanded, parts = await address_service.expand_parts(session, principal, document)
+        return DereferenceResponse(
+            uri=uri, document=document_out(document), expanded_content=expanded, parts=parts
+        )
     return DereferenceResponse(uri=uri, document=document_out(document))
 
 
@@ -1128,7 +1173,9 @@ async def create_artifact(
 ) -> tuple[SharedDocument, str]:
     await _ensure_document_quota(session, workspace)
     suffix = uuid.uuid4().hex[:10]
-    doc_key = f"artifact/{task.task_key}/{suffix}"
+    # Server-generated keys follow the address grammar (lowercase segments).
+    slug = re.sub(r"[^a-z0-9._-]+", "-", task.task_key.lower()).strip("-.") or "task"
+    doc_key = f"artifact/{slug[:64]}/{suffix}"
     artifact_text, _ = normalize_notion_content(artifact_text)
     frontmatter = {
         "type": "artifact",
@@ -1864,3 +1911,143 @@ async def backfill_verified_artifacts(
         "tainted_skipped": len(tainted),
         "missing": len(missing),
     }
+
+
+async def rename_document(
+    session: AsyncSession,
+    principal: Principal,
+    ref: str,
+    request: DocumentRenameRequest,
+) -> DocumentMutationResponse:
+    """Change a document's alias; the id stays and the old alias redirects forever."""
+    require_permission(principal, "doc:write")
+    document = await _get_document(session, principal.workspace.id, ref, for_update=True)
+    ensure_namespace(principal, document.namespace, write=True)
+    if not _can_manage_document(principal, document):
+        raise Forbidden("only the creator or a workspace commander can rename this document")
+    ensure_not_human_locked(
+        principal, "shared_document", document.locked_by_human, document.human_note
+    )
+    if request.expected_version is not None and document.version != request.expected_version:
+        raise VersionConflict("shared_document", _latest(document))
+    new_alias = request.new_alias.strip()
+    violation = doc_key_violation(new_alias)
+    if violation is not None:
+        raise address_service.invalid_address(violation)
+    if new_alias == document.doc_key:
+        return DocumentMutationResponse(document=document_out(document), session_batch_id=None)
+    taken = await address_service.find_document(session, principal.workspace.id, new_alias)
+    if taken is not None and taken.id != document.id:
+        raise ApiError(
+            409,
+            "alias_taken",
+            f"document alias '{new_alias}' already exists",
+            details={"alias": new_alias, "id": taken.canonical_id},
+        )
+    await address_service.ensure_alias_available(
+        session, principal.workspace.id, "document", new_alias
+    )
+    batch = request.session_batch_id or uuid.uuid4()
+    before = document_snapshot(document)
+    old_alias = document.doc_key
+    document.doc_key = new_alias
+    document.alias_legacy = is_legacy_alias(document.namespace, new_alias)
+    document.updated_by = principal.agent_signature
+    document.updated_at = utcnow()
+    await address_service.add_redirect(
+        session,
+        principal.workspace.id,
+        "document",
+        old_alias,
+        document.canonical_id,
+        principal.agent_signature,
+    )
+    await session.execute(
+        update(DocumentChunk)
+        .where(DocumentChunk.document_id == document.id)
+        .values(doc_key=new_alias)
+    )
+    await session.execute(
+        update(DocumentProposal)
+        .where(
+            DocumentProposal.workspace_id == principal.workspace.id,
+            DocumentProposal.doc_key == old_alias,
+        )
+        .values(doc_key=new_alias)
+    )
+    await session.flush()
+    await record_audit(
+        session,
+        workspace_id=principal.workspace.id,
+        session_batch_id=batch,
+        agent_signature=principal.agent_signature,
+        target_table="shared_documents",
+        target_record_id=document.id,
+        operation="UPDATE",
+        before=before,
+        after=document_snapshot(document),
+    )
+    await append_event(
+        session,
+        workspace_id=principal.workspace.id,
+        agent=principal.agent_signature,
+        event_type="DOC_RENAMED",
+        payload={
+            "id": document.canonical_id,
+            "doc_key": new_alias,
+            "previous_alias": old_alias,
+        },
+        namespace=document.namespace,
+    )
+    await session.commit()
+    return DocumentMutationResponse(document=document_out(document), session_batch_id=batch)
+
+
+async def purge_document(
+    session: AsyncSession,
+    principal: Principal,
+    ref: str,
+    request: DocumentPurgeRequest,
+) -> TombstoneOut:
+    """Physically delete an archived document, leaving a tombstone (human only)."""
+    if not principal.is_human or not principal.is_commander:
+        raise Forbidden("only a human owner or reviewer can purge documents")
+    document = await _get_document(session, principal.workspace.id, ref, for_update=True)
+    if request.confirm != document.doc_key:
+        raise ApiError(
+            409,
+            "workspace_confirmation_mismatch",
+            "confirm must exactly match the document alias",
+            details={"alias": document.doc_key},
+        )
+    if document.archived_at is None:
+        raise ApiError(
+            409,
+            "retention_not_met",
+            "archive the document before purging it",
+            details={"id": document.canonical_id, "action": "archive_document"},
+        )
+    tombstone = await address_service.tombstone_document(
+        session, document, purged_by=principal.agent_signature, reason=request.reason
+    )
+    await append_event(
+        session,
+        workspace_id=principal.workspace.id,
+        agent=principal.agent_signature,
+        event_type="DOC_PURGED",
+        payload={"id": document.canonical_id, "doc_key": document.doc_key},
+        namespace=document.namespace,
+    )
+    await session.delete(document)
+    await session.commit()
+    return TombstoneOut(
+        id=tombstone.canonical_id,
+        alias=tombstone.alias,
+        type=tombstone.object_type,
+        last_version=tombstone.last_version,
+        last_content_hash=tombstone.last_content_hash,
+        purged_by=tombstone.purged_by,
+        purged_at=tombstone.purged_at,
+        reason=tombstone.reason,
+    )
+

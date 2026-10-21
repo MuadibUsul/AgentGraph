@@ -320,8 +320,10 @@ async def test_two_party_deletion_grace_restore_and_purge(client, admin_headers)
     assert restored.json()["status"] == "active"
     assert (await client.get("/v1/documents", headers=workspace["headers"])).status_code == 200
 
-    for headers, path in ((admin_headers, f"/v1/admin/tenants/{tid}/delete"),):
-        assert (await client.post(path, headers=headers, json={"confirm": alias})).status_code == 200
+    again = await client.post(
+        f"/v1/admin/tenants/{tid}/delete", headers=admin_headers, json={"confirm": alias}
+    )
+    assert again.status_code == 200
     assert (
         await client.post("/v1/human/tenant/delete", headers=owner, json={"confirm": alias})
     ).status_code == 200

@@ -17,7 +17,7 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app import versioning
+from app import versioning, warnings_context
 from app.errors import ApiError, error_body
 from app.services import idempotency
 
@@ -162,9 +162,41 @@ class ProtocolMiddleware:
         version = declared or versioning.BASELINE_VERSION
         token = versioning.set_version(version)
 
+        collected = warnings_context.begin_collection()
+        merge = not scope.get("path", "").startswith("/mcp")
+        held_start: Message | None = None
+        held_body: list[bytes] = []
+
         async def send_with_version(message: Message) -> None:
+            nonlocal held_start
             if message["type"] == "http.response.start":
                 MutableHeaders(scope=message)[versioning.VERSION_HEADER] = version
+                content_type = Headers(raw=message.get("headers", [])).get("content-type", "")
+                if merge and collected and content_type.startswith("application/json"):
+                    held_start = message
+                    return
+                await send(message)
+                return
+            if held_start is not None and message["type"] == "http.response.body":
+                held_body.append(message.get("body", b""))
+                if message.get("more_body"):
+                    return
+                body = b"".join(held_body)
+                try:
+                    body = json.dumps(
+                        warnings_context.merge_warnings(json.loads(body or b"null"), collected),
+                        ensure_ascii=False,
+                        default=str,
+                    ).encode("utf-8")
+                except ValueError:
+                    pass
+                start = held_start
+                held_start = None
+                headers = MutableHeaders(scope=start)
+                headers["content-length"] = str(len(body))
+                await send(start)
+                await send({"type": "http.response.body", "body": body, "more_body": False})
+                return
             await send(message)
 
         try:
