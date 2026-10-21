@@ -172,6 +172,16 @@ their token and what it could do; `GET /v1/tokens/self[/lineage|/tree]`
 inspect tokens; `list_documents(written_by_subtree=tok_…)` shows a subtree's
 blast radius.
 
+**Agents start with `get_orientation`** (`GET /v1/orientation`): identity,
+the workspace constitution (`system/constitution`), the namespace map,
+collaborators, open and claimable tasks, required reading and ready-to-run
+`next_calls`. `system/*` is human-written; agents propose changes. Each
+namespace has a readme (`system/namespaces/<ns>`) whose `required_frontmatter`
+/ `doc_key_pattern` produce warnings (or 422 in strict mode). The agent guide
+is generated from code: [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md), also at
+`GET /v1/agent-docs?format=markdown`, `GET /v1/openapi.json` and MCP resources
+`agentgraph://docs/*`.
+
 All errors carry `class` / `action` / `retryable` / `retry_after_ms`
 (registry: [docs/ERROR_CODES.md](docs/ERROR_CODES.md)). Writes accept an
 `Idempotency-Key` header (REST) or `idempotency_key` argument (MCP) with a 24 h

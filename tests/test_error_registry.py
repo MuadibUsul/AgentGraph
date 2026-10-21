@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.error_registry import ERROR_CLASSES, REGISTRY, classify, spec_for
+from app.error_registry import ERROR_CLASSES, REGISTRY, WARNING_CODES, classify, spec_for
 from app.errors import ApiError, RateLimited
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,6 +16,7 @@ _RAISE = re.compile(
     re.S,
 )
 _DICT_CODE = re.compile(r"\"code\":\s*\"([A-Za-z_]+)\"")
+_WARNING = re.compile(r"add_warning\(\s*\"([a-z_]+)\"", re.S)
 # Not error codes: resource names passed to helper constructors.
 _IGNORED = {"context_slot"}
 
@@ -32,8 +33,19 @@ def _codes_in_source() -> set[str]:
 
 
 def test_every_raised_code_is_registered():
-    missing = sorted(code for code in _codes_in_source() if code not in REGISTRY)
+    missing = sorted(
+        code for code in _codes_in_source() if code not in REGISTRY and code not in WARNING_CODES
+    )
     assert not missing, f"register these error codes in app/error_registry.py: {missing}"
+
+
+def test_every_warning_code_is_registered():
+    found: set[str] = set()
+    for path in (ROOT / "app").rglob("*.py"):
+        found.update(_WARNING.findall(path.read_text(encoding="utf-8")))
+    missing = sorted(found - set(WARNING_CODES))
+    assert not missing, f"register these warning codes in WARNING_CODES: {missing}"
+    assert not set(WARNING_CODES) & set(REGISTRY)
 
 
 def test_registry_entries_use_known_classes():

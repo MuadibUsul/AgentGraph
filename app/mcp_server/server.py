@@ -19,7 +19,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app import services, warnings_context
+from app import agent_guide, services, warnings_context
 from app.auth import (
     PERMISSIONS,
     AuthKind,
@@ -57,6 +57,7 @@ from app.schemas import (
 from app.services import addresses as address_service
 from app.services import idempotency
 from app.services import lineage as lineage_service
+from app.services import orientation as orientation_service
 from app.services.common import set_event_platform
 from app.services.lineage import stamp_for
 from app.stamp_context import set_current_stamp
@@ -96,6 +97,7 @@ IDEMPOTENT_TOOLS = frozenset(
         "register_namespace",
         "rename_document",
         "register_parts",
+        "ack_constitution",
     }
 )
 _CONTENT_BLOCK = TypeAdapter(types.ContentBlock)
@@ -311,6 +313,8 @@ mcp = AgentGraphFastMCP(
     name="AgentGraph",
     instructions=(
         "A human-in-the-loop shared blackboard for multi-agent teams. "
+        "FIRST CALL get_orientation: it returns your identity, the constitution, "
+        "namespaces, your tasks and next_calls. "
         "Use workspace_sync for the L0 map, create_task to create work, "
         "agent_claim_and_read to claim a task and read only L1 briefs, "
         "agent_patch_shared_state for JSON Patch updates to leases, "
@@ -509,6 +513,42 @@ def _api_error(exc: ApiError) -> ToolError:
 
 
 # ------------------------------------------------------------------- tools
+
+
+@mcp.tool(name="get_orientation")
+async def get_orientation(
+    sections: list[str] | None = None,
+    max_bytes: Annotated[int, Field(ge=4_096, le=131_072)] = 32_768,
+) -> dict[str, Any]:
+    """Call this first after connecting.
+
+    Returns who you are (role, token, scopes), the workspace constitution,
+    the namespace map with your access, collaborators, your open tasks,
+    claimable tasks, required reading (constitution first), an event cursor,
+    the conventions and limits, and next_calls: ready-to-run calls that follow
+    the rules. Over max_bytes, optional detail is truncated (marked truncated).
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await orientation_service.build(
+                session, principal, sections=sections, max_bytes=max_bytes
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="ack_constitution")
+async def ack_constitution(version: int) -> dict[str, Any]:
+    """Record that you read this constitution version (get_orientation.ack_required)."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await orientation_service.ack_constitution(session, principal, version)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
 
 
 @mcp.tool(name="workspace_sync")
@@ -1651,7 +1691,9 @@ async def restore_document(
 
 @mcp.tool(name="get_api_docs")
 async def get_api_docs(
-    section: Literal["overview", "retry", "errors", "versions"] = "overview",
+    section: Literal[
+        "guide", "errors", "limits", "retry", "events", "tokens", "versions", "all", "overview"
+    ] = "overview",
 ) -> dict[str, Any]:
     """Return the REST/MCP connection guide and core request schemas.
 
@@ -1660,6 +1702,11 @@ async def get_api_docs(
     backoff algorithm, "errors" the full error-code registry (code -> class ->
     action), "versions" the supported API versions.
     """
+    guide = agent_guide.sections()
+    if section == "all":
+        return _compact({**guide, "versions": protocol_docs("versions")["versions"]})
+    if section in ("guide", "limits", "events", "tokens"):
+        return _compact({section: guide[section]})
     if section != "overview":
         return _compact(protocol_docs(section))
     return _compact(
@@ -1681,7 +1728,11 @@ async def get_api_docs(
                 "archive_document / restore_document instead of deletion",
                 "workspace_sync(since=next_cursor) for incremental changes",
             ],
-            "batch_limits": {"upsert_many": 25, "dereference_many": 25},
+            "batch_limits": {
+                "upsert_many": agent_guide.limits()["batch_upsert_max"],
+                "dereference_many": agent_guide.limits()["batch_dereference_max"],
+            },
+            "limits": agent_guide.limits(),
             "schemas": {
                 "DocumentUpsertRequest": DocumentBatchUpsertItem.model_json_schema(),
                 "DocumentQueryRequest": DocumentQueryRequest.model_json_schema(),
@@ -1725,6 +1776,44 @@ def _describe_review_targets() -> None:
 
 
 _describe_review_targets()
+
+@mcp.resource(
+    "agentgraph://docs/agent-guide",
+    name="agent-guide",
+    description="Agent guide (same as GET /v1/agent-docs?format=markdown)",
+    mime_type="text/markdown",
+)
+def agent_guide_resource() -> str:
+    return agent_guide.render()
+
+
+@mcp.resource(
+    "agentgraph://docs/openapi",
+    name="openapi",
+    description="Read-only OpenAPI document without admin endpoints",
+    mime_type="application/json",
+)
+def openapi_resource() -> str:
+    from app.main import app as fastapi_app
+
+    openapi = fastapi_app.openapi()
+    paths = {
+        path: operation
+        for path, operation in openapi.get("paths", {}).items()
+        if path.startswith("/v1") and not path.startswith("/v1/admin")
+    }
+    return json.dumps({**openapi, "paths": paths}, default=str)
+
+
+@mcp.resource(
+    "agentgraph://docs/errors",
+    name="errors",
+    description="Error-code registry: code -> class -> action",
+    mime_type="application/json",
+)
+def errors_resource() -> str:
+    return json.dumps(protocol_docs("errors"), default=str)
+
 
 _http_app: ASGIApp | None = None
 

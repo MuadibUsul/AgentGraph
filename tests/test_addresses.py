@@ -227,12 +227,21 @@ async def test_address_grammar_is_versioned(client, workspace):
     )
     assert legacy.status_code == 200, legacy.text
     assert any(w["code"] == "legacy_alias" for w in legacy.json()["warnings"])
+    # The system namespace belongs to the platform (AG-OB-02): automation
+    # keys and agents get 403 and should propose changes instead.
     reserved = await client.put(
         "/v1/documents/sys/x",
         headers=workspace["headers"],
         json={"content": "x", "expected_version": 0, "namespace": "system"},
     )
-    assert reserved.status_code == 422
+    assert reserved.status_code == 403
+    assert reserved.json()["error"]["code"] == "system_namespace_protected"
+    other_reserved = await client.put(
+        "/v1/documents/hand/x",
+        headers=workspace["headers"],
+        json={"content": "x", "expected_version": 0, "namespace": "handoff"},
+    )
+    assert other_reserved.status_code == 422
 
 
 @pytest.mark.integration

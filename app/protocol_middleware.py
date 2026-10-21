@@ -308,6 +308,11 @@ class ProtocolMiddleware:
         except ValueError:
             await idempotency.abort(principal, tool, key)
         else:
+            # Store what the client sees, warnings included, so replays match.
+            stored = warnings_context.merge_warnings(stored, warnings_context.current())
+            body_bytes = json.dumps(stored, ensure_ascii=False, default=str).encode("utf-8")
+            if start_message is not None:
+                MutableHeaders(scope=start_message)["content-length"] = str(len(body_bytes))
             try:
                 await idempotency.complete(principal, tool, key, status_code, stored)
             except Exception:  # noqa: BLE001 - never fail a finished write on bookkeeping

@@ -323,6 +323,21 @@ REGISTRY: dict[str, ErrorSpec] = {
 }
 
 
+# Soft-constraint warnings (PRD §6 warnings[]): never errors, never rejections.
+WARNING_CODES: dict[str, str] = {
+    "alias_redirected": "Read through a renamed alias; use the current alias or id.",
+    "legacy_alias": "Address predates the grammar; accepted, but 2026-11 rejects new ones.",
+    "dangling_ref": "A $ref or part does not resolve; stored as written.",
+    "namespace_auto_registered": "Namespace registered implicitly; 2026-11 requires it first.",
+    "namespace_undocumented": "The namespace readme is still a generated stub.",
+    "frontmatter_missing": "Fields the namespace readme requires are missing.",
+    "doc_key_pattern_mismatch": "doc_key does not match the namespace pattern.",
+    "not_registered": "The collaborator directory is not live; identity is inferred.",
+    "constitution_draft": "The constitution is still the generated template.",
+    "token_expiring": "The calling token expires within a day.",
+}
+
+
 def _fallback(status: int) -> ErrorSpec:
     if status in (429, 503):
         return _spec(status, RETRY_AFTER, "Wait for Retry-After.")

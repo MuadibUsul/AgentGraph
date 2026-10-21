@@ -81,6 +81,7 @@ from app.schemas import (
     TombstoneOut,
 )
 from app.services import addresses as address_service
+from app.services import onboarding
 from app.services.common import (
     append_event,
     document_out,
@@ -188,7 +189,9 @@ async def _ensure_document_quota(
     limit, _ = settings.tier_limits(workspace.tier)
     used = await session.scalar(
         select(func.count(SharedDocument.id)).where(
-            SharedDocument.workspace_id == workspace.id
+            SharedDocument.workspace_id == workspace.id,
+            # Platform-owned conventions never consume the customer's quota.
+            SharedDocument.namespace != onboarding.SYSTEM_NAMESPACE,
         )
     )
     if (used or 0) >= limit:
@@ -539,6 +542,7 @@ async def _set_document_archived(
     )
     ensure_namespace(principal, document.namespace, write=True)
     action = "archive" if archived else "restore"
+    onboarding.ensure_system_writable(principal, document.namespace, document.doc_key)
     if not _can_manage_document(principal, document):
         raise Forbidden(
             f"only the creator or a workspace commander can {action} this document"
@@ -718,11 +722,17 @@ async def upsert_document(
             raise VersionConflict("shared_document", None)
         if is_canonical(doc_key):
             raise NotFound("shared_document", f"document '{doc_key}' not found")
-        legacy = address_service.check_new_document_address(namespace, doc_key)
+        onboarding.ensure_system_writable(principal, namespace, doc_key)
+        legacy = address_service.check_new_document_address(
+            namespace, doc_key, allow_system=principal.is_human
+        )
         await address_service.ensure_alias_available(
             session, principal.workspace.id, "document", doc_key
         )
         await address_service.ensure_namespace_registered(session, principal, namespace)
+        await onboarding.check_conventions(
+            session, principal, namespace, doc_key, frontmatter_in
+        )
         policy = await enforce_policy(
             session,
             principal,
@@ -849,8 +859,11 @@ async def upsert_document(
     )
     namespace = request.namespace or existing.namespace
     ensure_namespace(principal, namespace, write=True)
+    onboarding.ensure_system_writable(principal, existing.namespace, doc_key)
+    onboarding.ensure_system_writable(principal, namespace, doc_key)
     if namespace != existing.namespace:
         await address_service.ensure_namespace_registered(session, principal, namespace)
+    await onboarding.check_conventions(session, principal, namespace, doc_key, frontmatter_in)
 
     document = await _get_document(
         session, principal.workspace.id, doc_key, for_update=True
@@ -1001,6 +1014,7 @@ async def patch_document_section(
         session, principal.workspace.id, doc_key, for_update=True
     )
     ensure_namespace(principal, document.namespace, write=True)
+    onboarding.ensure_system_writable(principal, document.namespace, document.doc_key)
     ensure_not_human_locked(
         principal, "shared_document", document.locked_by_human, document.human_note
     )
@@ -1703,6 +1717,7 @@ async def verify_document(
         session, principal.workspace.id, doc_key, for_update=True
     )
     ensure_namespace(principal, document.namespace, write=True)
+    onboarding.ensure_system_writable(principal, document.namespace, document.doc_key)
     ensure_not_human_locked(
         principal, "shared_document", document.locked_by_human, document.human_note
     )
@@ -1796,6 +1811,7 @@ async def set_document_status(
         session, principal.workspace.id, doc_key, for_update=True
     )
     ensure_namespace(principal, document.namespace, write=True)
+    onboarding.ensure_system_writable(principal, document.namespace, document.doc_key)
     ensure_not_human_locked(
         principal, "shared_document", document.locked_by_human, document.human_note
     )
@@ -2153,6 +2169,8 @@ async def rename_document(
     if request.expected_version is not None and document.version != request.expected_version:
         raise VersionConflict("shared_document", _latest(document))
     new_alias = request.new_alias.strip()
+    onboarding.ensure_system_writable(principal, document.namespace, document.doc_key)
+    onboarding.ensure_system_writable(principal, document.namespace, new_alias)
     violation = doc_key_violation(new_alias)
     if violation is not None:
         raise address_service.invalid_address(violation)

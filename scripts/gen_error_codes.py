@@ -12,7 +12,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.error_registry import ERROR_CLASSES, RETRY_POLICY, registry_table  # noqa: E402
+from app.error_registry import (  # noqa: E402
+    ERROR_CLASSES,
+    RETRY_POLICY,
+    WARNING_CODES,
+    registry_table,
+)
 
 TARGET = ROOT / "docs" / "ERROR_CODES.md"
 
@@ -53,6 +58,16 @@ def render() -> str:
             f"| `{row['code']}` | {row['http']} | `{row['class']}` | `{row['action']}` "
             f"| {row['rule']} |"
         )
+    lines += [
+        "",
+        "## Warnings",
+        "",
+        "Soft constraints reported in `warnings[]`; the request still succeeds.",
+        "",
+        "| code | meaning |",
+        "|---|---|",
+    ]
+    lines += [f"| `{code}` | {meaning} |" for code, meaning in WARNING_CODES.items()]
     return "\n".join(lines) + "\n"
 
 

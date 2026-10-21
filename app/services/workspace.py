@@ -456,6 +456,10 @@ async def create_workspace(
         tier=tier,
     )
     session.add(workspace)
+    await session.flush()
+    from app.services.onboarding import ensure_constitution
+
+    await ensure_constitution(session, workspace.id)
     await session.commit()
     return WorkspaceCreatedResponse(
         workspace=workspace_info(workspace), api_key=raw_key

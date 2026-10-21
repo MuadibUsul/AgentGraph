@@ -214,12 +214,16 @@ async def ensure_alias_available(
         )
 
 
-def check_new_document_address(namespace: str, doc_key: str) -> bool:
+def check_new_document_address(
+    namespace: str, doc_key: str, *, allow_system: bool = False
+) -> bool:
     """Validate a new document address. Returns True when it is a legacy alias.
 
     Strict from API version 2026-11; the baseline accepts and flags it.
     """
-    violation = addresses.namespace_violation(namespace) or addresses.doc_key_violation(doc_key)
+    violation = addresses.namespace_violation(
+        namespace, allow_reserved=allow_system and namespace == "system"
+    ) or addresses.doc_key_violation(doc_key)
     if violation is None:
         return False
     if violation.rule == "reserved_namespace":
@@ -294,6 +298,11 @@ async def ensure_namespace_registered(
     await session.flush()
     if implicit:
         return
+    from app.services.onboarding import ensure_namespace_readme
+
+    await ensure_namespace_readme(
+        session, principal.workspace.id, namespace, registered_by=principal.agent_signature
+    )
     add_warning(
         "namespace_auto_registered",
         f"namespace '{namespace}' was registered automatically; API version "
@@ -333,24 +342,43 @@ async def register_namespace(
         created_by=principal.agent_signature,
     )
     session.add(record)
+    await session.flush()
+    from app.services.onboarding import ensure_namespace_readme, readme_key
+
+    await ensure_namespace_readme(
+        session, principal.workspace.id, namespace, registered_by=principal.agent_signature
+    )
     await session.commit()
-    return {**namespace_out(record), "created": True}
+    return {**namespace_out(record), "created": True, "readme_doc_key": readme_key(namespace)}
 
 
 async def list_namespaces(session: AsyncSession, principal: Principal) -> dict[str, Any]:
-    rows = (
-        await session.execute(
-            select(NamespaceRecord)
-            .where(NamespaceRecord.workspace_id == principal.workspace.id)
-            .order_by(NamespaceRecord.namespace)
-        )
-    ).scalars().all()
-    if not principal.is_commander and "*" not in principal.allowed_namespaces:
-        rows = [row for row in rows if row.namespace in principal.allowed_namespaces]
-    return {
-        "items": [namespace_out(row) for row in rows],
-        "reserved": sorted(addresses.RESERVED_NAMESPACES),
+    from app.services.onboarding import namespace_overview
+
+    entries = await namespace_overview(session, principal)
+    rows = {
+        row.namespace: row
+        for row in (
+            await session.execute(
+                select(NamespaceRecord).where(
+                    NamespaceRecord.workspace_id == principal.workspace.id
+                )
+            )
+        ).scalars()
     }
+    items = []
+    for entry in entries:
+        if entry["my_access"] == "none":
+            continue
+        record = rows[entry["namespace"]]
+        items.append(
+            {
+                **namespace_out(record),
+                **entry,
+                "readme_doc_key": (entry.get("readme") or {}).get("doc_key"),
+            }
+        )
+    return {"items": items, "reserved": sorted(addresses.RESERVED_NAMESPACES)}
 
 
 # -------------------------------------------------------------- references

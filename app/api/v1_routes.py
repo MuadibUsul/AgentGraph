@@ -6,9 +6,10 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import services
+from app import agent_guide, services
 from app.auth import Principal, get_principal, require_permission
 from app.database import get_db
 from app.error_registry import protocol_docs
@@ -16,6 +17,7 @@ from app.errors import ApiError
 from app.models import TaskStatus
 from app.schemas import (
     AuditListResponse,
+    ConstitutionAckRequest,
     DereferenceBatchRequest,
     DereferenceBatchResponse,
     DereferenceRequest,
@@ -78,6 +80,7 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import lineage as lineage_service
+from app.services import orientation as orientation_service
 
 router = APIRouter(prefix="/v1", tags=["AgentGraph v3"])
 
@@ -95,6 +98,31 @@ def _statuses(value: str | None) -> list[str] | None:
             f"unknown task status: {', '.join(invalid)}",
         )
     return items or None
+
+
+@router.get(
+    "/orientation",
+    summary="First call: identity, constitution, namespaces, tasks and next calls",
+)
+async def orientation(
+    sections: str | None = Query(default=None, description="Comma-separated section names"),
+    max_bytes: int = Query(default=orientation_service.DEFAULT_MAX_BYTES),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    wanted = [item.strip() for item in sections.split(",") if item.strip()] if sections else None
+    return await orientation_service.build(
+        session, principal, sections=wanted, max_bytes=max_bytes
+    )
+
+
+@router.post("/orientation/ack", summary="Record that you read this constitution version")
+async def ack_constitution(
+    body: ConstitutionAckRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await orientation_service.ack_constitution(session, principal, body.version)
 
 
 @router.get("/whoami", response_model=WhoAmIResponse, summary="Principal identity")
@@ -129,15 +157,14 @@ async def workspace_map(
 )
 async def agent_docs(
     request: Request,
+    format: str = Query(default="json", pattern="^(json|markdown)$"),
     principal: Principal = Depends(get_principal),
-) -> dict:
+):
     """Read-only API/MCP documentation available to every workspace token."""
+    if format == "markdown":
+        return PlainTextResponse(agent_guide.render(), media_type="text/markdown")
     openapi = request.app.openapi()
-    paths = {
-        path: operation
-        for path, operation in openapi.get("paths", {}).items()
-        if path.startswith("/v1") and not path.startswith("/v1/admin")
-    }
+    paths = _agent_paths(openapi)
     base = str(request.base_url).rstrip("/")
     return {
         "name": "AgentGraph",
@@ -173,6 +200,9 @@ async def agent_docs(
             "version_conflict": "The 409 details include current_version, current_hash and latest.",
             "batch_limits": {"upsert": 25, "dereference": 25},
         },
+        "guide": agent_guide.render(),
+        "limits": agent_guide.limits(),
+        "trust_defaults": agent_guide.trust_defaults(),
         "openapi": {
             "openapi": openapi.get("openapi"),
             "info": openapi.get("info"),
@@ -180,6 +210,26 @@ async def agent_docs(
             "paths": paths,
         },
     }
+
+
+def _agent_paths(openapi: dict) -> dict:
+    return {
+        path: operation
+        for path, operation in openapi.get("paths", {}).items()
+        if path.startswith("/v1") and not path.startswith("/v1/admin")
+    }
+
+
+@router.get(
+    "/openapi.json",
+    summary="Read-only OpenAPI document for agents (admin endpoints removed)",
+)
+async def agent_openapi(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    openapi = request.app.openapi()
+    return {**openapi, "paths": _agent_paths(openapi)}
 
 
 # ------------------------------------------------------------------ tasks

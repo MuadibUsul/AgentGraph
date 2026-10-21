@@ -21,6 +21,10 @@ def begin_collection() -> list[dict[str, Any]]:
     return collected
 
 
+def current() -> list[dict[str, Any]]:
+    return _warnings.get() or []
+
+
 def add_warning(code: str, message: str, **details: Any) -> None:
     collected = _warnings.get()
     if collected is None:

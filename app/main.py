@@ -63,6 +63,14 @@ async def lifespan(app: FastAPI):
             )
     if settings.auto_init_db:
         await apply_schema()
+        # One-time, idempotent: constitution + namespace readme stubs (AG-OB-02).
+        from app.database import async_session_factory
+        from app.services.onboarding import backfill_all_workspaces
+
+        async with async_session_factory() as session:
+            scaffolded = await backfill_all_workspaces(session)
+        if scaffolded:
+            logger.info("scaffolded conventions for %s workspace(s)", scaffolded)
     await event_bus.start()
     reaper_task = asyncio.create_task(
         lease_reaper_loop(), name="agentgraph-lease-reaper"
@@ -316,7 +324,10 @@ async def root(request: Request) -> Any:
         "mcp": "/mcp/" if settings.mcp_enabled else None,
         "dashboard": "/dashboard/" if dashboard_dir.is_dir() else None,
         "agent_docs": "/v1/agent-docs",
+        "first_call": "get_orientation",
         "primitives": [
+            "get_orientation",
+            "ack_constitution",
             "workspace_sync",
             "create_task",
             "review_task",

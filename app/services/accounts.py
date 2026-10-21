@@ -291,6 +291,9 @@ async def _provision_account(
         await session.rollback()
         raise ApiError(409, "human_user_exists", "this email already has an account") from None
     await sync_membership(session, user)
+    from app.services.onboarding import ensure_constitution
+
+    await ensure_constitution(session, workspace.id)
     return user, workspace
 
 

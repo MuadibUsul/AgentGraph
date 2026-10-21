@@ -32,6 +32,12 @@ _NAMESPACE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
 RawText = Annotated[str, StringConstraints(strip_whitespace=False)]
 
 
+# Batch limits are referenced by the generated agent guide (PRD AG-OB-03).
+BATCH_UPSERT_MAX = 25
+BATCH_DEREFERENCE_MAX = 25
+QUERY_LIMIT_MAX = 50
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -431,7 +437,7 @@ class DocumentQueryRequest(StrictModel):
     query: str | None = Field(default=None, max_length=10_000)
     filters: dict[str, Any] = Field(default_factory=dict)
     namespace: Namespace | None = Field(default=None, pattern=_NAMESPACE_PATTERN + "$")
-    limit: int = Field(default=10, ge=1, le=50)
+    limit: int = Field(default=10, ge=1, le=QUERY_LIMIT_MAX)
     include_unverified: bool = False
     include_own_unverified: bool = Field(
         default=True, description="Include your own unverified drafts (default true)"
@@ -805,6 +811,10 @@ class DocumentRenameRequest(StrictModel):
     session_batch_id: uuid.UUID | None = None
 
 
+class ConstitutionAckRequest(StrictModel):
+    version: int = Field(ge=1)
+
+
 class RegisterPartsRequest(StrictModel):
     part_refs: list[str] = Field(min_length=1, max_length=100)
     session_batch_id: uuid.UUID | None = None
@@ -840,7 +850,7 @@ class DocumentBatchUpsertItem(DocumentUpsertRequest):
 
 
 class DocumentBatchUpsertRequest(StrictModel):
-    items: list[DocumentBatchUpsertItem] = Field(min_length=1, max_length=25)
+    items: list[DocumentBatchUpsertItem] = Field(min_length=1, max_length=BATCH_UPSERT_MAX)
 
     @model_validator(mode="after")
     def _payload_cap(self) -> DocumentBatchUpsertRequest:
@@ -944,7 +954,7 @@ class DocumentQueryResponse(BaseModel):
 
 
 class DereferenceBatchRequest(StrictModel):
-    uris: list[str] = Field(min_length=1, max_length=25)
+    uris: list[str] = Field(min_length=1, max_length=BATCH_DEREFERENCE_MAX)
     include_unverified: bool = False
     include_tainted: bool = False
 
