@@ -150,7 +150,10 @@ async def _record_version(
 
 
 def _embedding_text(text: str) -> str:
-    return text
+    # Jina's maximum is 8194 tokens; a whole 100 KB Chinese document can exceed
+    # that. Document writes use chunk embeddings instead; this is only for the
+    # short query fallback.
+    return text[:6_000]
 
 
 async def _embed(content: str) -> list[float]:
@@ -651,8 +654,6 @@ async def upsert_document(
         await enforce_embedding_budget(
             session, principal.workspace.id, len(content.encode("utf-8"))
         )
-        vector = await _embed(content)
-        provider = get_embedding_provider()
         document = SharedDocument(
             workspace_id=principal.workspace.id,
             doc_key=doc_key,
@@ -664,8 +665,8 @@ async def upsert_document(
             trust_level="TRUSTED" if principal.is_human else "UNTRUSTED",
             verified_version=None,
             verified_hash=None,
-            embedding=vector,
-            embedding_model=provider.model,
+            embedding=None,
+            embedding_model=None,
             namespace=namespace,
             version=1,
             locked_by_human=False,
@@ -812,8 +813,6 @@ async def upsert_document(
     await enforce_embedding_budget(
         session, principal.workspace.id, len(content.encode("utf-8"))
     )
-    document.embedding = await _embed(content)
-    document.embedding_model = get_embedding_provider().model
     document.namespace = namespace
     document.policy_flags = {"policy": policy.name} if policy else {}
     document.version += 1
@@ -956,8 +955,6 @@ async def patch_document_section(
     await enforce_embedding_budget(
         session, principal.workspace.id, len(document.content.encode("utf-8"))
     )
-    document.embedding = await _embed(document.content)
-    document.embedding_model = get_embedding_provider().model
     document.version += 1
     document.updated_by = agent
     document.updated_at = utcnow()
@@ -1227,8 +1224,7 @@ async def human_update_document(
         await enforce_embedding_budget(
             session, workspace.id, len(normalized_content.encode("utf-8"))
         )
-        document.embedding = await _embed(normalized_content)
-        document.embedding_model = get_embedding_provider().model
+        document.embedding_model = None
     if request.frontmatter is not None:
         document.frontmatter = request.frontmatter
     if request.unlock:
@@ -1662,8 +1658,7 @@ async def normalize_document_html(
     await enforce_embedding_budget(
         session, workspace.id, len(content.encode("utf-8"))
     )
-    document.embedding = await _embed(content)
-    document.embedding_model = get_embedding_provider().model
+    document.embedding_model = None
     document.version += 1
     document.updated_by = actor
     document.updated_at = utcnow()
