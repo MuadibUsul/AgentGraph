@@ -241,7 +241,9 @@ export default function ConsolePage() {
 
   useEffect(() => {
     refreshRef.current = (quiet = true) => {
-      if (selectedId) void loadWorkspace(selectedId, quiet);
+      if (!selectedId) return;
+      if (quiet) void refreshLive(selectedId);
+      else void loadWorkspace(selectedId, false);
     };
   });
 
@@ -281,8 +283,9 @@ export default function ConsolePage() {
     let refresh: number | undefined;
 
     const scheduleRefresh = () => {
+      if (document.visibilityState !== "visible") return;
       window.clearTimeout(refresh);
-      refresh = window.setTimeout(() => refreshRef.current(true), 450);
+      refresh = window.setTimeout(() => refreshRef.current(true), 1200);
     };
 
     async function connectStream() {
@@ -363,7 +366,7 @@ export default function ConsolePage() {
     const response = await fetch(`${normalizeBase(apiBase)}${effectivePath}`, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) {
       let message = `HTTP ${response.status}`;
@@ -561,94 +564,195 @@ export default function ConsolePage() {
 
   async function loadWorkspace(id: string, quiet: boolean) {
     if (!quiet) setLoading(true);
-    try {
-      const [
-        nextStats,
-        nextTasks,
-        nextSlots,
-        nextDocs,
-        nextAgents,
-        nextAudit,
-        nextTimeline,
-        nextProposals,
-        nextPolicies,
-        nextBudget,
-        nextUsage,
-        nextWebhooks,
-        nextActions,
-        nextHumanUsers,
-      ] = await Promise.all([
-          api<Stats>(`/v1/admin/workspaces/${id}/stats`),
-          api<{ items: TaskSummary[] }>(
-            `/v1/admin/workspaces/${id}/tasks?limit=500`,
-          ),
-          api<{ items: Slot[] }>(`/v1/admin/workspaces/${id}/slots?limit=200`),
-          api<DocumentPage>(
-            `/v1/admin/workspaces/${id}/documents?${documentQuery(100, null)}`,
-          ),
-          api<{ items: AgentToken[] }>(
-            `/v1/admin/workspaces/${id}/agent-tokens`,
-          ),
-          api<AuditPayload>(
-            `/v1/admin/workspaces/${id}/audit?limit=100`,
-          ),
-          api<{ items: TimelineItem[] }>(
-            `/v1/admin/workspaces/${id}/timeline?limit=100&hours=168`,
-          ),
-          api<{ items: Proposal[] }>(
-            `/v1/admin/workspaces/${id}/proposals?limit=100`,
-          ),
-          api<{ items: PathPolicy[] }>(
-            `/v1/admin/workspaces/${id}/policies`,
-          ),
-          api<Budget>(`/v1/admin/workspaces/${id}/budget`),
-          api<Usage>(`/v1/admin/workspaces/${id}/usage`),
-          api<{ items: WebhookRule[] }>(
-            `/v1/admin/workspaces/${id}/webhooks`,
-          ),
-          api<{ items: ExternalAction[] }>(
-            `/v1/admin/workspaces/${id}/external-actions`,
-          ),
-          api<{ items: HumanUser[] }>(
-            `/v1/admin/workspaces/${id}/human-users`,
-          ),
-        ]);
-      setStats(nextStats);
-      setTasks(nextTasks.items);
-      setSlots(nextSlots.items);
-      setDocuments(nextDocs.items);
-      setDocTotal(nextDocs.total ?? nextDocs.items.length);
-      setDocCursor(nextDocs.next_cursor ?? null);
-      setAgents(nextAgents.items);
-      setAudit(nextAudit);
-      setTimeline(nextTimeline.items);
-      setProposals(nextProposals.items);
-      setPolicies(nextPolicies.items);
-      setBudget(nextBudget);
-      setUsage(nextUsage);
-      setWebhooks(nextWebhooks.items);
-      setActions(nextActions.items);
-      setHumanUsers(nextHumanUsers.items);
-      setWorkspaces((current) =>
-        current.map((workspace) =>
-          workspace.id === id
-            ? {
-                ...workspace,
-                documents: nextStats.documents,
-                slots: nextStats.slots,
-                tasks: nextStats.tasks,
-                timeline_events: nextStats.timeline_events,
-                last_activity_at: nextStats.last_activity_at,
-              }
-            : workspace,
-        ),
-      );
-      if (!quiet) setError(null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t("Unable to load workspace."));
-    } finally {
-      if (!quiet) setLoading(false);
+    const emergency = window.setTimeout(() => setLoading(false), 8000);
+    const failures: string[] = [];
+
+    async function loadOne<T>(
+      label: string,
+      promise: Promise<T>,
+      apply: (value: T) => void,
+    ) {
+      try {
+        apply(await promise);
+      } catch (caught) {
+        failures.push(
+          `${label}: ${caught instanceof Error ? caught.message : "request failed"}`,
+        );
+        if (label === "stats") setLoading(false);
+      }
     }
+
+    await Promise.all([
+      loadOne(
+        "stats",
+        api<Stats>(`/v1/admin/workspaces/${id}/stats`),
+        (nextStats) => {
+          setStats(nextStats);
+          setLoading(false);
+          setWorkspaces((current) =>
+            current.map((workspace) =>
+              workspace.id === id
+                ? {
+                    ...workspace,
+                    documents: nextStats.documents,
+                    slots: nextStats.slots,
+                    tasks: nextStats.tasks,
+                    timeline_events: nextStats.timeline_events,
+                    last_activity_at: nextStats.last_activity_at,
+                  }
+                : workspace,
+            ),
+          );
+        },
+      ),
+      loadOne(
+        "tasks",
+        api<{ items: TaskSummary[] }>(
+          `/v1/admin/workspaces/${id}/tasks?limit=500`,
+        ),
+        (value) => setTasks(value.items),
+      ),
+      loadOne(
+        "slots",
+        api<{ items: Slot[] }>(`/v1/admin/workspaces/${id}/slots?limit=200`),
+        (value) => setSlots(value.items),
+      ),
+      loadOne(
+        "documents",
+        api<DocumentPage>(
+          `/v1/admin/workspaces/${id}/documents?${documentQuery(100, null)}`,
+        ),
+        (value) => {
+          setDocuments(value.items);
+          setDocTotal(value.total ?? value.items.length);
+          setDocCursor(value.next_cursor ?? null);
+        },
+      ),
+      loadOne(
+        "agent-tokens",
+        api<{ items: AgentToken[] }>(
+          `/v1/admin/workspaces/${id}/agent-tokens`,
+        ),
+        (value) => setAgents(value.items),
+      ),
+      loadOne(
+        "audit",
+        api<AuditPayload>(`/v1/admin/workspaces/${id}/audit?limit=20`),
+        (value) => setAudit(value),
+      ),
+      loadOne(
+        "timeline",
+        api<{ items: TimelineItem[] }>(
+          `/v1/admin/workspaces/${id}/timeline?limit=100&hours=168`,
+        ),
+        (value) => setTimeline(value.items),
+      ),
+      loadOne(
+        "proposals",
+        api<{ items: Proposal[] }>(
+          `/v1/admin/workspaces/${id}/proposals?limit=100`,
+        ),
+        (value) => setProposals(value.items),
+      ),
+      loadOne(
+        "policies",
+        api<{ items: PathPolicy[] }>(
+          `/v1/admin/workspaces/${id}/policies`,
+        ),
+        (value) => setPolicies(value.items),
+      ),
+      loadOne(
+        "budget",
+        api<Budget>(`/v1/admin/workspaces/${id}/budget`),
+        (value) => setBudget(value),
+      ),
+      loadOne(
+        "usage",
+        api<Usage>(`/v1/admin/workspaces/${id}/usage`),
+        (value) => setUsage(value),
+      ),
+      loadOne(
+        "webhooks",
+        api<{ items: WebhookRule[] }>(
+          `/v1/admin/workspaces/${id}/webhooks`,
+        ),
+        (value) => setWebhooks(value.items),
+      ),
+      loadOne(
+        "actions",
+        api<{ items: ExternalAction[] }>(
+          `/v1/admin/workspaces/${id}/external-actions`,
+        ),
+        (value) => setActions(value.items),
+      ),
+      loadOne(
+        "human-users",
+        api<{ items: HumanUser[] }>(
+          `/v1/admin/workspaces/${id}/human-users`,
+        ),
+        (value) => setHumanUsers(value.items),
+      ),
+    ]);
+    window.clearTimeout(emergency);
+    setLoading(false);
+    if (!quiet || failures.length) {
+      setError(failures[0] ?? null);
+    }
+  }
+
+  async function refreshLive(id: string) {
+    const jobs: Promise<unknown>[] = [
+      api<Stats>(`/v1/admin/workspaces/${id}/stats`).then((nextStats) => {
+        setStats(nextStats);
+        setLoading(false);
+        setWorkspaces((current) =>
+          current.map((workspace) =>
+            workspace.id === id
+              ? {
+                  ...workspace,
+                  documents: nextStats.documents,
+                  slots: nextStats.slots,
+                  tasks: nextStats.tasks,
+                  timeline_events: nextStats.timeline_events,
+                  last_activity_at: nextStats.last_activity_at,
+                }
+              : workspace,
+          ),
+        );
+      }),
+      api<{ items: TaskSummary[] }>(
+        `/v1/admin/workspaces/${id}/tasks?limit=500`,
+      ).then((value) => setTasks(value.items)),
+      api<{ items: Slot[] }>(
+        `/v1/admin/workspaces/${id}/slots?limit=200`,
+      ).then((value) => setSlots(value.items)),
+    ];
+    if (tab === "blackboard") {
+      jobs.push(
+        api<{ items: TimelineItem[] }>(
+          `/v1/admin/workspaces/${id}/timeline?limit=100&hours=168`,
+        ).then((value) => setTimeline(value.items)),
+      );
+    }
+    if (tab === "documents") {
+      jobs.push(
+        api<DocumentPage>(
+          `/v1/admin/workspaces/${id}/documents?${documentQuery(100, null)}`,
+        ).then((value) => {
+          setDocuments(value.items);
+          setDocTotal(value.total ?? value.items.length);
+          setDocCursor(value.next_cursor ?? null);
+        }),
+      );
+    }
+    if (tab === "audit") {
+      jobs.push(
+        api<AuditPayload>(
+          `/v1/admin/workspaces/${id}/audit?limit=20`,
+        ).then((value) => setAudit(value)),
+      );
+    }
+    await Promise.allSettled(jobs);
   }
 
   function documentQuery(

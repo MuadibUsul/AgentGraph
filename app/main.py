@@ -150,6 +150,17 @@ async def security_headers(request: Request, call_next):
         response.headers.setdefault(
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
+    path = request.url.path
+    if path.startswith("/dashboard/_next/static/"):
+        response.headers.setdefault(
+            "Cache-Control", "public, max-age=31536000, immutable"
+        )
+    elif path.startswith("/dashboard/") or path == "/dashboard":
+        response.headers.setdefault(
+            "Cache-Control", "no-store, max-age=0, must-revalidate"
+        )
+    elif path.startswith("/v1/") or path.startswith("/mcp"):
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
