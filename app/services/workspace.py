@@ -385,6 +385,19 @@ SELECT
         )
     ).mappings().one()
     doc_limit, slot_limit = settings.tier_limits(workspace.tier)
+    namespace_rows = (
+        await session.execute(
+            select(SharedDocument.namespace, func.count(SharedDocument.id))
+            .where(
+                SharedDocument.workspace_id == workspace.id,
+                SharedDocument.archived_at.is_(None),
+            )
+            .group_by(SharedDocument.namespace)
+        )
+    ).all()
+    document_namespaces = {
+        namespace: int(count) for namespace, count in namespace_rows
+    }
     documents = int(counts["documents"])
     slots = int(counts["slots"])
     return WorkspaceStatsResponse(
@@ -417,6 +430,7 @@ SELECT
         webhook_rules=int(counts["webhook_rules"]),
         tainted_documents=int(counts["tainted_documents"]),
         tokens_used_30d=int(counts["tokens_used_30d"]),
+        document_namespaces=document_namespaces,
     )
 
 

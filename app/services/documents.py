@@ -350,42 +350,90 @@ async def list_documents(
     include_archived: bool = False,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    verification_status: str | None = None,
+    tainted: bool | None = None,
+    updated_after: datetime | None = None,
+    updated_before: datetime | None = None,
+    sort: str = "updated_desc",
 ) -> DocumentListResponse:
     require_permission(principal, "doc:read")
-    query = select(SharedDocument).where(
-        SharedDocument.workspace_id == principal.workspace.id
-    )
+    if limit > settings.max_page_size:
+        raise ApiError(
+            422,
+            "limit_too_large",
+            f"limit must be <= {settings.max_page_size}",
+            details={"limit": settings.max_page_size},
+        )
+    if sort not in ("updated_desc", "updated_asc"):
+        raise ApiError(
+            422,
+            "invalid_sort",
+            "sort must be updated_desc or updated_asc",
+            details={"allowed": ["updated_desc", "updated_asc"]},
+        )
+    conditions: list[Any] = [SharedDocument.workspace_id == principal.workspace.id]
     if namespace:
         ensure_namespace(principal, namespace)
-        query = query.where(SharedDocument.namespace == namespace)
+        conditions.append(SharedDocument.namespace == namespace)
     else:
         allowed = _allowed_namespaces(principal)
         if allowed is not None:
-            query = query.where(SharedDocument.namespace.in_(allowed))
+            conditions.append(SharedDocument.namespace.in_(allowed))
     if filters:
-        for condition in _frontmatter_conditions(filters):
-            query = query.where(condition)
+        conditions.extend(_frontmatter_conditions(filters))
     if not include_archived:
-        query = query.where(SharedDocument.archived_at.is_(None))
-    for condition in _visibility_conditions(
-        principal,
-        include_unverified=include_unverified,
-        include_tainted=include_tainted,
-    ):
-        query = query.where(condition)
-    page_size = min(limit, settings.max_page_size)
+        conditions.append(SharedDocument.archived_at.is_(None))
+    conditions.extend(
+        _visibility_conditions(
+            principal,
+            include_unverified=include_unverified,
+            include_tainted=include_tainted,
+        )
+    )
+    if verification_status:
+        status = verification_status.upper()
+        if status not in {"DRAFT", "PENDING_REVIEW", "VERIFIED", "DEPRECATED"}:
+            raise ApiError(
+                422,
+                "invalid_verification_status",
+                "unknown verification_status",
+                details={"field": "verification_status"},
+            )
+        conditions.append(SharedDocument.verification_status == status)
+    if tainted is not None:
+        conditions.append(SharedDocument.tainted.is_(tainted))
+    if updated_after is not None:
+        conditions.append(SharedDocument.updated_at >= updated_after)
+    if updated_before is not None:
+        conditions.append(SharedDocument.updated_at <= updated_before)
+    total = int(
+        await session.scalar(
+            select(func.count(SharedDocument.id)).where(*conditions)
+        )
+        or 0
+    )
+    query = select(SharedDocument).where(*conditions)
+    page_size = limit
     if cursor:
         cursor_time, cursor_id = _decode_cursor(cursor)
-        query = query.where(
+        comparator = (
             tuple_(SharedDocument.updated_at, SharedDocument.id)
+            > tuple_(cursor_time, cursor_id)
+            if sort == "updated_asc"
+            else tuple_(SharedDocument.updated_at, SharedDocument.id)
             < tuple_(cursor_time, cursor_id)
         )
-    rows = (
-        await session.execute(
-            query.order_by(
-                SharedDocument.updated_at.desc(), SharedDocument.id.desc()
-            ).limit(page_size + 1)
+        query = query.where(comparator)
+    if sort == "updated_asc":
+        query = query.order_by(
+            SharedDocument.updated_at.asc(), SharedDocument.id.asc()
         )
+    else:
+        query = query.order_by(
+            SharedDocument.updated_at.desc(), SharedDocument.id.desc()
+        )
+    rows = (
+        await session.execute(query.limit(page_size + 1))
     ).scalars().all()
     next_cursor = None
     if len(rows) > page_size:
@@ -399,6 +447,7 @@ async def list_documents(
         next_cursor=next_cursor,
         namespace=namespace,
         count=len(rows),
+        total=total,
     )
 
 

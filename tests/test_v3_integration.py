@@ -790,6 +790,13 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                     assert '"http_status": 404' in missing.content[0].text
                     assert '"code": "not_found"' in missing.content[0].text
                     assert missing.structuredContent["code"] == "not_found"
+                    unknown_tool = await session.call_tool("whoami", {})
+                    assert unknown_tool.isError is True
+                    unknown_payload = json.loads(unknown_tool.content[0].text)
+                    assert unknown_payload["code"] == "unknown_tool"
+                    assert unknown_payload["http_status"] == 404
+                    assert "unknown tool" in unknown_payload["message"]
+
                     invalid_args = await session.call_tool(
                         "create_task",
                         {"title": "invalid role", "assigned_role": "NOT_A_ROLE"},

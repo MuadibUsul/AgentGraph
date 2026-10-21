@@ -101,6 +101,53 @@ async def test_exhaustive_cursor_listing_and_archive(client, workspace):
         assert pages < 10
     assert sorted(seen) == sorted(keys)
     assert len(seen) == len(set(seen))
+    assert page.json()["total"] == len(keys)
+    assert page.json()["count"] <= 3
+
+    oversized = await client.get(
+        "/v1/documents",
+        headers=workspace["headers"],
+        params={"namespace": namespace, "limit": 501},
+    )
+    assert oversized.status_code == 422, oversized.text
+    offset = await client.get(
+        "/v1/documents",
+        headers=workspace["headers"],
+        params={"namespace": namespace, "offset": 0},
+    )
+    assert offset.status_code == 422, offset.text
+    assert offset.json()["error"]["code"] == "offset_not_supported"
+
+    status_filter = await client.get(
+        "/v1/documents",
+        headers=workspace["headers"],
+        params={
+            "namespace": namespace,
+            "verification_status": "DRAFT",
+            "limit": 100,
+        },
+    )
+    assert status_filter.status_code == 200, status_filter.text
+    assert status_filter.json()["total"] == len(keys)
+
+    sorted_page = await client.get(
+        "/v1/documents",
+        headers=workspace["headers"],
+        params={
+            "namespace": namespace,
+            "sort": "updated_asc",
+            "limit": 100,
+        },
+    )
+    assert sorted_page.status_code == 200, sorted_page.text
+    assert sorted_page.json()["items"][0]["doc_key"] == keys[0]
+
+    invalid_status = await client.get(
+        "/v1/documents",
+        headers=workspace["headers"],
+        params={"namespace": namespace, "verification_status": "BOGUS"},
+    )
+    assert invalid_status.status_code == 422, invalid_status.text
 
     invalid = await client.get(
         "/v1/documents",

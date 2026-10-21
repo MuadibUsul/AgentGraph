@@ -23,12 +23,14 @@ export function Blackboard({
   slots,
   tasks,
   timeline,
+  namespaceCounts,
   onOpenSlot,
   onOpenTask,
 }: {
   slots: Slot[];
   tasks: TaskSummary[];
   timeline: TimelineItem[];
+  namespaceCounts: Record<string, number>;
   onOpenSlot: (slot: Slot) => void;
   onOpenTask: (task: TaskSummary) => void;
 }) {
@@ -47,6 +49,29 @@ export function Blackboard({
 
   return (
     <div className="tab-stack">
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2>{t("Document namespaces")}</h2>
+            <p>{t("Live counts by namespace, including archived-free documents.")}</p>
+          </div>
+          <span className="count-chip">
+            {formatNumber(
+              Object.values(namespaceCounts).reduce((sum, value) => sum + value, 0),
+            )}
+          </span>
+        </div>
+        <div className="namespace-chips">
+          {Object.entries(namespaceCounts)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([namespace, count]) => (
+              <span key={namespace} className="namespace-chip">
+                {namespace} <strong>{formatNumber(count)}</strong>
+              </span>
+            ))}
+        </div>
+      </section>
+
       <section className={`card approval-card ${approvals.length ? "has-approvals" : ""}`}>
         <div className="card-head">
           <div>

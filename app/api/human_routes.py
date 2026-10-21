@@ -295,11 +295,16 @@ async def undo_batch(
 async def audit(
     limit: int = Query(default=50, ge=1, le=500),
     batch_id: uuid.UUID | None = Query(default=None),
+    cursor: str | None = Query(default=None),
     principal: Principal = Depends(get_human_principal),
     session: AsyncSession = Depends(get_db),
 ) -> AuditListResponse:
     return await services.list_audit(
-        session, principal.workspace, limit=limit, batch_id=batch_id
+        session,
+        principal.workspace,
+        limit=limit,
+        batch_id=batch_id,
+        cursor=cursor,
     )
 
 

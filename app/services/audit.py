@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.embeddings import get_embedding_provider
-from app.errors import Forbidden, NotFound, UndoConflict
+from app.errors import ApiError, Forbidden, NotFound, UndoConflict
 from app.models import (
     CollabTask,
     ContextSlot,
@@ -95,6 +96,26 @@ def _dt(value: Any) -> datetime | None:
         return None
 
 
+def _encode_batch_cursor(last_at: Any, batch_id: uuid.UUID) -> str:
+    raw = json.dumps(
+        {"last_at": last_at.isoformat(), "id": str(batch_id)},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_batch_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    try:
+        payload = json.loads(
+            base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        )
+        return datetime.fromisoformat(payload["last_at"]), uuid.UUID(payload["id"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ApiError(
+            400, "invalid_cursor", "audit cursor is invalid"
+        ) from exc
+
+
 async def list_audit(
     session: AsyncSession,
     workspace: Workspace,
@@ -102,6 +123,7 @@ async def list_audit(
     limit: int = 50,
     batch_id: uuid.UUID | None = None,
     allowed_namespaces: list[str] | None = None,
+    cursor: str | None = None,
 ) -> AuditListResponse:
     if (
         allowed_namespaces is not None
@@ -122,12 +144,39 @@ async def list_audit(
         )
         .where(StateAuditDiff.workspace_id == workspace.id)
         .group_by(StateAuditDiff.session_batch_id, StateAuditDiff.agent_signature)
-        .order_by(func.max(StateAuditDiff.created_at).desc())
-        .limit(limit)
+        .order_by(
+            func.max(StateAuditDiff.created_at).desc(),
+            StateAuditDiff.session_batch_id.desc(),
+        )
+        .limit(limit + 1)
     )
     if batch_id is not None:
         batch_query = batch_query.where(StateAuditDiff.session_batch_id == batch_id)
+    if cursor:
+        cursor_time, cursor_id = _decode_batch_cursor(cursor)
+        batch_query = batch_query.having(
+            or_(
+                func.max(StateAuditDiff.created_at) < cursor_time,
+                and_(
+                    func.max(StateAuditDiff.created_at) == cursor_time,
+                    StateAuditDiff.session_batch_id < cursor_id,
+                ),
+            )
+        )
+    count_query = select(
+        func.count(func.distinct(StateAuditDiff.session_batch_id))
+    ).where(StateAuditDiff.workspace_id == workspace.id)
+    if batch_id is not None:
+        count_query = count_query.where(
+            StateAuditDiff.session_batch_id == batch_id
+        )
+    total_batches = int(await session.scalar(count_query) or 0)
     batch_rows = (await session.execute(batch_query)).all()
+    next_cursor = None
+    if len(batch_rows) > limit:
+        last = batch_rows[limit - 1]
+        next_cursor = _encode_batch_cursor(last.last_at, last.session_batch_id)
+        batch_rows = batch_rows[:limit]
     batches = [
         AuditBatchOut(
             session_batch_id=row.session_batch_id,
@@ -166,7 +215,12 @@ async def list_audit(
         )
         for row in diff_rows
     ]
-    return AuditListResponse(batches=batches, diffs=diffs)
+    return AuditListResponse(
+        batches=batches,
+        diffs=diffs,
+        total_batches=total_batches,
+        next_cursor=next_cursor,
+    )
 
 
 def _apply_slot_undo(slot: ContextSlot, before: dict[str, Any], actor: str) -> None:

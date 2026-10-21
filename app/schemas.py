@@ -756,6 +756,7 @@ class DocumentListResponse(BaseModel):
     next_cursor: str | None = None
     namespace: str | None = None
     count: int = 0
+    total: int = 0
 
 
 class DocumentMutationResponse(BaseModel):
@@ -894,6 +895,7 @@ class WorkspaceStatsResponse(BaseModel):
     webhook_rules: int = 0
     tainted_documents: int = 0
     tokens_used_30d: int = 0
+    document_namespaces: dict[str, int] = Field(default_factory=dict)
 
 
 class AdminWorkspaceOut(WorkspaceInfo):
@@ -964,6 +966,8 @@ class AuditBatchOut(BaseModel):
 class AuditListResponse(BaseModel):
     batches: list[AuditBatchOut]
     diffs: list[AuditDiffOut]
+    total_batches: int = 0
+    next_cursor: str | None = None
 
 
 class BatchUndoResponse(BaseModel):

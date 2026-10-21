@@ -42,6 +42,12 @@ function docUrl(workspaceId: string, docKey: string): string {
 export function DocumentsView({
   workspaceId,
   documents,
+  total,
+  namespaceCounts,
+  loadingMore,
+  onLoadMore,
+  filters,
+  onFiltersChange,
   selected,
   request,
   onSelect,
@@ -50,6 +56,26 @@ export function DocumentsView({
 }: {
   workspaceId: string;
   documents: DocumentSummary[];
+  total: number;
+  namespaceCounts: Record<string, number>;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+  filters: {
+    namespace: string;
+    verificationStatus: string;
+    tainted: string;
+    updatedAfter: string;
+    updatedBefore: string;
+    sort: string;
+  };
+  onFiltersChange: (next: {
+    namespace: string;
+    verificationStatus: string;
+    tainted: string;
+    updatedAfter: string;
+    updatedBefore: string;
+    sort: string;
+  }) => void;
   selected: DocumentDetail | null;
   request: ApiRequest;
   onSelect: (docKey: string) => void;
@@ -281,7 +307,12 @@ export function DocumentsView({
         <div className="card-head compact">
           <div>
             <h2>{t("Library")}</h2>
-            <p>{t("{count} documents · namespace tree", { count: documents.length })}</p>
+            <p>
+              {t("Loaded {loaded} / {total} documents", {
+                loaded: documents.length,
+                total,
+              })}
+            </p>
           </div>
           <button
             type="button"
@@ -292,6 +323,69 @@ export function DocumentsView({
             <IconPlus size={15} />
           </button>
         </div>
+        <div className="doc-filters">
+          <input
+            value={filters.namespace}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, namespace: event.target.value })
+            }
+            placeholder={t("Namespace")}
+            aria-label={t("Namespace")}
+          />
+          <select
+            value={filters.verificationStatus}
+            onChange={(event) =>
+              onFiltersChange({
+                ...filters,
+                verificationStatus: event.target.value,
+              })
+            }
+            aria-label={t("Verification status")}
+          >
+            <option value="">{t("All statuses")}</option>
+            <option value="DRAFT">DRAFT</option>
+            <option value="PENDING_REVIEW">PENDING_REVIEW</option>
+            <option value="VERIFIED">VERIFIED</option>
+            <option value="DEPRECATED">DEPRECATED</option>
+          </select>
+          <select
+            value={filters.tainted}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, tainted: event.target.value })
+            }
+            aria-label={t("Taint state")}
+          >
+            <option value="">{t("Any taint")}</option>
+            <option value="false">{t("Clean")}</option>
+            <option value="true">{t("Tainted")}</option>
+          </select>
+          <select
+            value={filters.sort}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, sort: event.target.value })
+            }
+            aria-label={t("Sort order")}
+          >
+            <option value="updated_desc">{t("Newest first")}</option>
+            <option value="updated_asc">{t("Oldest first")}</option>
+          </select>
+          <input
+            type="date"
+            value={filters.updatedAfter}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, updatedAfter: event.target.value })
+            }
+            aria-label={t("Updated after")}
+          />
+          <input
+            type="date"
+            value={filters.updatedBefore}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, updatedBefore: event.target.value })
+            }
+            aria-label={t("Updated before")}
+          />
+        </div>
         {documents.length === 0 ? (
           <Empty title={t("No documents")} detail={t("Create one or let an agent hand off an artifact.")} />
         ) : (
@@ -299,7 +393,7 @@ export function DocumentsView({
             <div key={namespace} className="doc-group">
               <div className="doc-group-label">
                 <span>{namespace}</span>
-                <span>{docs.length}</span>
+                <span>{namespaceCounts[namespace] ?? docs.length}</span>
               </div>
               {docs.map((doc) => (
                 <button
@@ -326,6 +420,24 @@ export function DocumentsView({
             </div>
           ))
         )}
+        <div className="list-footer">
+          <span className="muted">
+            {t("Loaded {loaded} / {total}", {
+              loaded: documents.length,
+              total,
+            })}
+          </span>
+          {documents.length < total && (
+            <button
+              type="button"
+              className="button ghost small"
+              onClick={onLoadMore}
+              disabled={loadingMore}
+            >
+              {loadingMore ? <Spinner /> : null} {t("Load more")}
+            </button>
+          )}
+        </div>
       </aside>
 
       <section className="card doc-editor">

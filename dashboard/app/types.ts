@@ -51,6 +51,7 @@ export interface Stats {
   webhook_rules: number;
   tainted_documents: number;
   tokens_used_30d: number;
+  document_namespaces?: Record<string, number>;
 }
 
 export interface TaskSummary {
@@ -116,6 +117,13 @@ export interface Slot {
   taint_sources: TaintSource[];
   updated_by: string;
   updated_at: string;
+}
+
+export interface DocumentPage {
+  items: DocumentSummary[];
+  next_cursor: string | null;
+  total: number;
+  count: number;
 }
 
 export interface DocumentSummary {
@@ -216,6 +224,8 @@ export interface AuditBatch {
 export interface AuditPayload {
   batches: AuditBatch[];
   diffs: AuditDiff[];
+  total_batches?: number;
+  next_cursor?: string | null;
 }
 
 export interface StreamEvent {

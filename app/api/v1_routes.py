@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -363,12 +364,24 @@ async def list_documents(
     namespace: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     cursor: str | None = Query(default=None),
+    offset: int | None = Query(default=None, ge=0),
     include_archived: bool = Query(default=False),
     include_unverified: bool = Query(default=False),
     include_tainted: bool = Query(default=False),
+    verification_status: str | None = Query(default=None),
+    tainted: bool | None = Query(default=None),
+    updated_after: datetime | None = Query(default=None),
+    updated_before: datetime | None = Query(default=None),
+    sort: str = Query(default="updated_desc"),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentListResponse:
+    if offset is not None:
+        raise ApiError(
+            422,
+            "offset_not_supported",
+            "offset pagination is not supported; pass next_cursor as cursor",
+        )
     return await services.list_documents(
         session,
         principal,
@@ -378,6 +391,11 @@ async def list_documents(
         include_archived=include_archived,
         include_unverified=include_unverified,
         include_tainted=include_tainted,
+        verification_status=verification_status,
+        tainted=tainted,
+        updated_after=updated_after,
+        updated_before=updated_before,
+        sort=sort,
     )
 
 
@@ -906,6 +924,7 @@ async def list_timeline(
 async def audit(
     limit: int = Query(default=50, ge=1, le=500),
     batch_id: uuid.UUID | None = Query(default=None),
+    cursor: str | None = Query(default=None),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> AuditListResponse:
@@ -915,6 +934,7 @@ async def audit(
         principal.workspace,
         limit=limit,
         batch_id=batch_id,
+        cursor=cursor,
         allowed_namespaces=(
             None
             if principal.is_commander or "*" in principal.allowed_namespaces

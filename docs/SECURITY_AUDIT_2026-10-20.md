@@ -354,4 +354,4 @@
 
 **仍公开标注的残余风险：** 邮件验证/忘记密码（需要 SMTP 供应商）、应用数据库账号仍为超级用户、审计/时间线大响应与保留策略、依赖升级（Next/PostCSS 静态导出下不可直接利用）、共享 `web` 网络内的邻居容器。
 
-**验证：** 本地完整测试 `99 passed`；新增安全回归覆盖 namespace、VIEWER taint、workspace key 人类门禁、Agent self-DONE/human_feedback、REVIEWER 预算/Webhook 权限。生产已应用 `schema_migrations 3.4.0`，`/readyz` 正常，REST 八项 smoke、MCP 22 工具/游标 smoke 全部通过；生产响应已带 CSP/HSTS/X-Frame/nosniff/Referrer-Policy。剩余项见上表“部分修复”和“仍公开标注的残余风险”。
+**验证：** 本地完整测试 `100 passed`；新增安全回归覆盖 namespace、VIEWER taint、workspace key 人类门禁、Agent self-DONE/human_feedback、REVIEWER 预算/Webhook 权限。生产已应用 `schema_migrations 3.4.0`，`/readyz` 正常，REST 八项 smoke、MCP 22 工具/游标 smoke 全部通过；生产响应已带 CSP/HSTS/X-Frame/nosniff/Referrer-Policy。剩余项见上表“部分修复”和“仍公开标注的残余风险”。

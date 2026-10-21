@@ -3,7 +3,7 @@
 > 版本：v3.2.1  
 > 定位：**人机共驾的多 Agent 共享工作空间 / 黑板系统（Human-in-the-Loop Shared Blackboard）**  
 > 技术栈：FastAPI + PostgreSQL 16 + pgvector + MCP + Next.js 14  
-> 当前状态：v3.2.1 已完成并部署到 Tlines 服务器；99 项自动化测试通过，生产 HTTPS 控制台、cookbook/benchmark 与设计验收已执行
+> 当前状态：v3.2.1 已完成并部署到 Tlines 服务器；100 项自动化测试通过，生产 HTTPS 控制台、cookbook/benchmark 与设计验收已执行
 
 ---
 
@@ -481,7 +481,7 @@ INSERT/UPDATE 表
 | `upsert_shared_doc` | 文档创建/更新 |
 | `patch_doc_section` | Markdown 段落修改 |
 | `query_workspace` | frontmatter + 语义查询；默认仅 VERIFIED，可传 `include_unverified=true` |
-| `list_documents` | 命名空间全量游标列举（默认排除归档） |
+| `list_documents` | 命名空间全量游标列举：`total`、namespace/状态/污点/更新时间筛选与排序，默认排除归档 |
 | `dereference` | 按需加载 L2 |
 | `dereference_many` | 最多 25 个 URI 批量解析，逐项返回 ok/error |
 | `upsert_many` | 最多 25 个文档、单事务全成功或全回滚 |
@@ -565,7 +565,7 @@ v2 数据库（memory_crystals / causal_edges）
 
 已有 v3.0 库也走同一 hardening 路径；全新库由 init.sql 直接创建 3.1 schema，
 随后幂等 hardening 作为自检。两种情况都已验证：v2 dump 迁移后得到 7 个文档、
-7 个初始版本、3 条链接、2 个槽位；fresh schema 的 99 项测试全部通过。
+7 个初始版本、3 条链接、2 个槽位；fresh schema 的 100 项测试全部通过。
 
 迁移前建议备份：
 
@@ -587,7 +587,7 @@ docker compose exec -T db pg_dump -U agentgraph -d agentgraph \
 
 ```bash
 export TEST_DATABASE_URL="postgresql+asyncpg://agentgraph:agentgraph@localhost:55432/agentgraph"
-pytest -q        # 当前 99 passed
+pytest -q        # 当前 100 passed
 ruff check .
 ```
 
@@ -771,7 +771,7 @@ Agent token 可覆盖 per-minute 与月 token 预算。
 2. v3.1 库：`v3_2_production.sql`（全部 DDL 幂等、角色/策略可重入）→ 记录 `3.2.0`；v3.2.1 再执行 `v3_2_1_mcp_improvements.sql`。
 3. v2 dump：`v2_to_v3_collab.sql` → hardening → v3.2；原有文档哈希/首版本回填。
 
-验证：`99 passed`（fresh pgvector）、生产 HTTPS `/readyz` 返回 3.2.1、公开控制台
+验证：`100 passed`（fresh pgvector）、生产 HTTPS `/readyz` 返回 3.2.1、公开控制台
 Governance 面板实际加载、`scripts/benchmark_retrieval.py` 生成真实 recall/latency 报告。
 
 ## 13. 扩展点与当前边界

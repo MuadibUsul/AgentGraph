@@ -284,8 +284,13 @@ lease expiry (IN_PROGRESS/REVIEWING) → READY
   expression.
 - `list_documents` is the census primitive: it enumerates a namespace
   exhaustively with an opaque `(updated_at, id)` cursor. `next_cursor=null`
-  means the listing is complete. Archived documents are excluded by default and
-  included with `include_archived=true`.
+  means the listing is complete; `total` is the count for the current filters
+  and `count` is the page size. Archived documents are excluded by default and
+  included with `include_archived=true`. Filters cover namespace,
+  `verification_status`, `tainted`, `updated_after`/`updated_before`; sort is
+  `updated_desc` or `updated_asc`. Offset pagination is rejected explicitly;
+  clients must follow `next_cursor`. `limit` above the configured maximum
+  returns 422 instead of being silently truncated.
 - Archive/restore is a soft delete available to the author or a workspace
   commander. Archived documents leave ordinary list/query/map results but stay
   directly dereferenceable for audit; every change writes an audit row and a
@@ -302,6 +307,9 @@ lease expiry (IN_PROGRESS/REVIEWING) → READY
   the document to `TRUSTED`.
 - The console has Verify / Deprecate / History; history lists every immutable
   version and previews its Markdown.
+- Audit batches are cursor-paginated too: `/v1/*/audit` returns
+  `total_batches` and `next_cursor`, and the console loads more without a
+  silent 100/500 cap.
 
 ### Human sovereignty + time travel
 
@@ -367,7 +375,7 @@ The MCP server exposes twenty-two tools over stdio and streamable HTTP:
 | `upsert_shared_doc` | Create/update a document; compact response by default, `include_content=true` for the body |
 | `patch_doc_section` | Replace one Markdown section by heading; compact response by default |
 | `query_workspace` | Frontmatter filters/operators + hybrid search; verified plus the caller's own drafts by default, `include_unverified=true` for all drafts |
-| `list_documents` | Exhaustive namespace census with opaque cursor; `include_archived` and range filters |
+| `list_documents` | Exhaustive namespace census with opaque cursor, `total`, namespace/status/taint/date filters and sort; `include_archived` and range filters |
 | `dereference` | Resolve `doc://<doc_key>` L2 content on demand |
 | `dereference_many` | Resolve up to 25 URIs in one call with per-item success/error results |
 | `upsert_many` | Create/update up to 25 documents in one all-or-nothing transaction |
@@ -722,6 +730,8 @@ Implemented in v3.2:
 - **Failure telemetry** — rejected claims, renew/release, handoff, review and
   escalation attempts are written to the timeline as
   `TASK_<OPERATION>_FAILED` with code, HTTP status, message and details.
+- **MCP errors** — unknown tool names return a structured `unknown_tool`
+  (`http_status: 404`, message `unknown tool: <name>`), not a 500.
 - **MCP transport** — `MCP_JSON_RESPONSE=true` (default) makes streamable HTTP
   return `application/json` instead of an SSE frame, so clients can parse the
   JSON-RPC response directly. Set it to `false` for clients that require SSE.
@@ -756,7 +766,7 @@ Implemented in v3.2:
   active content/unsafe URLs, repairs existing documents via an admin endpoint,
   and renders legacy raw HTML through a sanitized `rehype-raw` pipeline.
 
-Verification: `99 passed` against a fresh pgvector database, production smoke
+Verification: `100 passed` against a fresh pgvector database, production smoke
 test, public HTTPS dashboard, and a real retrieval benchmark
 (`docs/benchmarks/latest.md`).
 

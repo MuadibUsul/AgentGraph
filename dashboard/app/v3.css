@@ -4376,3 +4376,34 @@ body::before {
   background: var(--ds-status-success);
   box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.08);
 }
+
+.list-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--ds-border, var(--border));
+}
+
+.doc-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ds-border, var(--border));
+}
+.doc-filters input,
+.doc-filters select {
+  min-width: 0;
+  padding: 5px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--ds-border, var(--border));
+  background: var(--ds-surface, transparent);
+  color: inherit;
+  font-size: 11px;
+}
+.doc-filters input:first-child {
+  grid-column: 1 / -1;
+}

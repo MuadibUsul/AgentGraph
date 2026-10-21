@@ -6,6 +6,7 @@ import json
 import logging
 import uuid
 from contextvars import ContextVar
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from mcp import types
@@ -61,6 +62,14 @@ def _error_envelope(exc: ToolError) -> dict[str, Any]:
     shape in text and ``structuredContent``.
     """
     cause = exc.__cause__
+    raw_text = str(cause) if isinstance(cause, ToolError) else str(exc)
+    if raw_text.startswith("Unknown tool:"):
+        tool_name = raw_text.split(":", 1)[1].strip()
+        return {
+            "code": "unknown_tool",
+            "http_status": 404,
+            "message": f"unknown tool: {tool_name}",
+        }
     if isinstance(cause, ValidationError):
         return {
             "code": "validation_error",
@@ -1064,6 +1073,11 @@ async def list_documents(
     include_unverified: bool = False,
     include_tainted: bool = False,
     filters: dict[str, Any] | None = None,
+    verification_status: str | None = None,
+    tainted: bool | None = None,
+    updated_after: datetime | None = None,
+    updated_before: datetime | None = None,
+    sort: str = "updated_desc",
 ) -> dict[str, Any]:
     """Exhaustively enumerate documents in a namespace with an opaque cursor.
 
@@ -1085,6 +1099,11 @@ async def list_documents(
                 include_archived=include_archived,
                 include_unverified=include_unverified,
                 include_tainted=include_tainted,
+                verification_status=verification_status,
+                tainted=tainted,
+                updated_after=updated_after,
+                updated_before=updated_before,
+                sort=sort,
             )
         except ApiError as exc:
             raise _api_error(exc) from exc

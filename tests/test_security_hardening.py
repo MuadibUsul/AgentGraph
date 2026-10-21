@@ -240,3 +240,36 @@ async def test_reviewer_cannot_manage_budget_or_webhooks(
         json={"name": "nope", "url": "https://example.com/hook"},
     )
     assert webhook.status_code == 403, webhook.text
+
+
+async def test_audit_cursor_is_complete(client, admin_headers, workspace):
+    wid = workspace["workspace"]["id"]
+    for index in range(3):
+        created = await client.put(
+            f"/v1/documents/audit-{uuid.uuid4().hex[:6]}-{index}",
+            headers=workspace["headers"],
+            json={"content": f"# audit {index}", "frontmatter": {}, "expected_version": 0},
+        )
+        assert created.status_code == 200, created.text
+    seen: list[str] = []
+    cursor = None
+    total = None
+    while True:
+        params = {"limit": 1}
+        if cursor:
+            params["cursor"] = cursor
+        page = await client.get(
+            f"/v1/admin/workspaces/{wid}/audit",
+            headers=admin_headers,
+            params=params,
+        )
+        assert page.status_code == 200, page.text
+        payload = page.json()
+        total = payload["total_batches"]
+        seen.extend(batch["session_batch_id"] for batch in payload["batches"])
+        cursor = payload.get("next_cursor")
+        if cursor is None:
+            break
+    assert total is not None and total >= 3
+    assert len(seen) == len(set(seen))
+    assert len(seen) == total

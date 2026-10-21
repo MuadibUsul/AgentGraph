@@ -39,6 +39,7 @@ import type {
   AuthSession,
   Budget,
   DocumentDetail,
+  DocumentPage,
   DocumentSummary,
   ExternalAction,
   HumanUser,
@@ -133,6 +134,17 @@ export default function ConsolePage() {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [docTotal, setDocTotal] = useState(0);
+  const [docCursor, setDocCursor] = useState<string | null>(null);
+  const [docLoadingMore, setDocLoadingMore] = useState(false);
+  const [docFilters, setDocFilters] = useState({
+    namespace: "",
+    verificationStatus: "",
+    tainted: "",
+    updatedAfter: "",
+    updatedBefore: "",
+    sort: "updated_desc",
+  });
   const [agents, setAgents] = useState<AgentToken[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [policies, setPolicies] = useState<PathPolicy[]>([]);
@@ -571,8 +583,8 @@ export default function ConsolePage() {
             `/v1/admin/workspaces/${id}/tasks?limit=500`,
           ),
           api<{ items: Slot[] }>(`/v1/admin/workspaces/${id}/slots?limit=200`),
-          api<{ items: DocumentSummary[] }>(
-            `/v1/admin/workspaces/${id}/documents?limit=300`,
+          api<DocumentPage>(
+            `/v1/admin/workspaces/${id}/documents?${documentQuery(100, null)}`,
           ),
           api<{ items: AgentToken[] }>(
             `/v1/admin/workspaces/${id}/agent-tokens`,
@@ -605,6 +617,8 @@ export default function ConsolePage() {
       setTasks(nextTasks.items);
       setSlots(nextSlots.items);
       setDocuments(nextDocs.items);
+      setDocTotal(nextDocs.total ?? nextDocs.items.length);
+      setDocCursor(nextDocs.next_cursor ?? null);
       setAgents(nextAgents.items);
       setAudit(nextAudit);
       setTimeline(nextTimeline.items);
@@ -634,6 +648,68 @@ export default function ConsolePage() {
       setError(caught instanceof Error ? caught.message : t("Unable to load workspace."));
     } finally {
       if (!quiet) setLoading(false);
+    }
+  }
+
+  function documentQuery(
+    limit: number,
+    cursor: string | null,
+    filters = docFilters,
+  ): string {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (filters.namespace.trim()) {
+      params.set("namespace", filters.namespace.trim());
+    }
+    if (filters.verificationStatus) {
+      params.set("verification_status", filters.verificationStatus);
+    }
+    if (filters.tainted) params.set("tainted", filters.tainted);
+    if (filters.updatedAfter) {
+      params.set("updated_after", `${filters.updatedAfter}T00:00:00Z`);
+    }
+    if (filters.updatedBefore) {
+      params.set("updated_before", `${filters.updatedBefore}T23:59:59Z`);
+    }
+    params.set("sort", filters.sort);
+    if (cursor) params.set("cursor", cursor);
+    return params.toString();
+  }
+
+  async function applyDocumentFilters(next: typeof docFilters) {
+    setDocFilters(next);
+    if (!selectedId) return;
+    setDocLoadingMore(true);
+    try {
+      const page = await api<DocumentPage>(
+        `/v1/admin/workspaces/${selectedId}/documents?${documentQuery(100, null, next)}`,
+      );
+      setDocuments(page.items);
+      setDocTotal(page.total ?? page.items.length);
+      setDocCursor(page.next_cursor ?? null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("Unable to load documents."));
+    } finally {
+      setDocLoadingMore(false);
+    }
+  }
+
+  async function loadMoreDocuments() {
+    if (!selectedId || !docCursor || docLoadingMore) return;
+    setDocLoadingMore(true);
+    try {
+      const page = await api<DocumentPage>(
+        `/v1/admin/workspaces/${selectedId}/documents?${documentQuery(100, docCursor)}`,
+      );
+      setDocuments((current) => {
+        const seen = new Set(current.map((item) => item.id));
+        return [...current, ...page.items.filter((item) => !seen.has(item.id))];
+      });
+      setDocCursor(page.next_cursor ?? null);
+      setDocTotal(page.total ?? docTotal);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("Unable to load more documents."));
+    } finally {
+      setDocLoadingMore(false);
     }
   }
 
@@ -898,7 +974,7 @@ export default function ConsolePage() {
   const tabs: Array<{ id: Tab; label: string; count?: number; alert?: number; icon: JSX.Element }> = [
     { id: "blackboard", label: t("Blackboard"), count: slots.length, icon: <IconBoard /> },
     { id: "tasks", label: t("Tasks"), count: tasks.length, alert: approvals.length, icon: <IconTasks /> },
-    { id: "documents", label: t("Documents"), count: documents.length, icon: <IconDocuments /> },
+    { id: "documents", label: t("Documents"), count: docTotal, icon: <IconDocuments /> },
     { id: "agents", label: t("Agents"), count: agents.length, icon: <IconAgents /> },
     {
       id: "governance",
@@ -907,7 +983,7 @@ export default function ConsolePage() {
       alert: proposals.filter((item) => item.status === "PENDING").length,
       icon: <IconLayers />,
     },
-    { id: "audit", label: t("Audit"), count: audit.batches.length, icon: <IconAudit /> },
+    { id: "audit", label: t("Audit"), count: audit.total_batches ?? audit.batches.length, icon: <IconAudit /> },
   ];
 
   if (!mounted) {
@@ -1233,6 +1309,7 @@ export default function ConsolePage() {
                       slots={slots}
                       tasks={tasks}
                       timeline={timeline}
+                      namespaceCounts={stats?.document_namespaces ?? {}}
                       onOpenSlot={openSlot}
                       onOpenTask={openTask}
                     />
@@ -1248,17 +1325,29 @@ export default function ConsolePage() {
                     <DocumentsView
                       workspaceId={selectedWorkspace.id}
                       documents={documents}
+                      total={docTotal}
+                      namespaceCounts={stats?.document_namespaces ?? {}}
+                      loadingMore={docLoadingMore}
+                      onLoadMore={() => void loadMoreDocuments()}
+                      filters={docFilters}
+                      onFiltersChange={(next) => void applyDocumentFilters(next)}
                       selected={selectedDoc}
                       request={api}
                       onSelect={openDocument}
                       onUpdated={(doc) => {
                         setSelectedDoc(doc);
                         setSelectedDocKey(doc.doc_key);
-                        setDocuments((current) =>
-                          current.some((item) => item.doc_key === doc.doc_key)
-                            ? current.map((item) => (item.doc_key === doc.doc_key ? doc : item))
-                            : [{ ...doc }, ...current],
-                        );
+                        setDocuments((current) => {
+                          const exists = current.some(
+                            (item) => item.doc_key === doc.doc_key,
+                          );
+                          if (!exists) setDocTotal((total) => total + 1);
+                          return exists
+                            ? current.map((item) =>
+                                item.doc_key === doc.doc_key ? doc : item,
+                              )
+                            : [{ ...doc }, ...current];
+                        });
                       }}
                       notify={setNotice}
                     />

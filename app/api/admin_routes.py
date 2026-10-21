@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -328,14 +329,39 @@ async def list_documents(
     workspace_id: uuid.UUID,
     namespace: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=500),
+    cursor: str | None = Query(default=None),
+    offset: int | None = Query(default=None, ge=0),
+    include_archived: bool = Query(default=False),
+    include_unverified: bool = Query(default=True),
+    include_tainted: bool = Query(default=True),
+    verification_status: str | None = Query(default=None),
+    tainted: bool | None = Query(default=None),
+    updated_after: datetime | None = Query(default=None),
+    updated_before: datetime | None = Query(default=None),
+    sort: str = Query(default="updated_desc"),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentListResponse:
+    if offset is not None:
+        raise ApiError(
+            422,
+            "offset_not_supported",
+            "offset pagination is not supported; pass next_cursor as cursor",
+        )
     workspace = await services.get_workspace(session, workspace_id)
     return await services.list_documents(
         session,
         principal_for_admin(workspace),
         namespace=namespace,
         limit=limit,
+        cursor=cursor,
+        include_archived=include_archived,
+        include_unverified=include_unverified,
+        include_tainted=include_tainted,
+        verification_status=verification_status,
+        tainted=tainted,
+        updated_after=updated_after,
+        updated_before=updated_before,
+        sort=sort,
     )
 
 
@@ -554,11 +580,12 @@ async def audit(
     workspace_id: uuid.UUID,
     limit: int = Query(default=50, ge=1, le=500),
     batch_id: uuid.UUID | None = Query(default=None),
+    cursor: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db),
 ) -> AuditListResponse:
     workspace = await services.get_workspace(session, workspace_id)
     return await services.list_audit(
-        session, workspace, limit=limit, batch_id=batch_id
+        session, workspace, limit=limit, batch_id=batch_id, cursor=cursor
     )
 
 

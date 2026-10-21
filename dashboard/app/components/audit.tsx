@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useI18n } from "../i18n";
 import type { ApiRequest, AuditPayload } from "../types";
@@ -24,6 +24,43 @@ export function AuditView({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [conflictBatch, setConflictBatch] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<AuditPayload | null>(null);
+
+  useEffect(() => {
+    setExpanded(null);
+  }, [audit]);
+
+  const view = expanded ?? audit;
+  const totalBatches = view.total_batches ?? view.batches.length;
+
+  async function loadMore() {
+    if (!view.next_cursor) return;
+    setBusy("audit");
+    setError(null);
+    try {
+      const next = await request<AuditPayload>(
+        `/v1/admin/workspaces/${workspaceId}/audit?limit=100&cursor=${encodeURIComponent(view.next_cursor)}`,
+      );
+      const seen = new Set(view.batches.map((batch) => batch.session_batch_id));
+      const diffSeen = new Set(view.diffs.map((diff) => diff.id));
+      setExpanded({
+        batches: [
+          ...view.batches,
+          ...next.batches.filter((batch) => !seen.has(batch.session_batch_id)),
+        ],
+        diffs: [
+          ...view.diffs,
+          ...next.diffs.filter((diff) => !diffSeen.has(diff.id)),
+        ],
+        total_batches: next.total_batches ?? totalBatches,
+        next_cursor: next.next_cursor ?? null,
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("Unable to load audit history."));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function undo(batchId: string, force = false) {
     if (
@@ -77,14 +114,14 @@ export function AuditView({
           </button>
         </div>
         {error && <div className="inline-error">{error}</div>}
-        {audit.batches.length === 0 ? (
+        {view.batches.length === 0 ? (
           <Empty
             title={t("No audit batches")}
             detail={t("Agent writes will appear here grouped by session_batch_id.")}
           />
         ) : (
           <div className="batch-grid">
-            {audit.batches.map((batch) => (
+            {view.batches.map((batch) => (
               <div key={batch.session_batch_id} className="batch-card">
                 <div className="batch-top">
                   <span className="batch-agent" title={batch.agent_signature}>{batch.agent_signature}</span>
@@ -125,6 +162,24 @@ export function AuditView({
             ))}
           </div>
         )}
+        <div className="list-footer">
+          <span className="muted">
+            {t("Loaded {loaded} / {total}", {
+              loaded: formatNumber(view.batches.length),
+              total: formatNumber(totalBatches),
+            })}
+          </span>
+          {view.next_cursor && view.batches.length < totalBatches && (
+            <button
+              type="button"
+              className="button ghost small"
+              onClick={() => void loadMore()}
+              disabled={busy === "audit"}
+            >
+              {busy === "audit" ? <Spinner /> : null} {t("Load more")}
+            </button>
+          )}
+        </div>
       </section>
 
       <section className="card">
@@ -133,13 +188,13 @@ export function AuditView({
             <h2>{t("Recent diffs")}</h2>
             <p>{t("Newest first. Each entry carries the full before-image used for rollback.")}</p>
           </div>
-          <span className="count-chip">{audit.diffs.length}</span>
+          <span className="count-chip">{view.diffs.length}</span>
         </div>
-        {audit.diffs.length === 0 ? (
+        {view.diffs.length === 0 ? (
           <Empty title={t("No diffs")} />
         ) : (
           <div className="diff-list">
-            {audit.diffs.slice(0, 40).map((diff) => (
+            {view.diffs.slice(0, 40).map((diff) => (
               <details key={diff.id} className="diff-row">
                 <summary>
                   <span className="mono">{diff.operation}</span>
