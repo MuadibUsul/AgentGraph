@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.error_registry import classify
+
 
 class ApiError(Exception):
     """An expected, client-facing failure."""
@@ -25,10 +27,29 @@ class ApiError(Exception):
         self.headers = headers or {}
 
     def body(self) -> dict[str, Any]:
-        error: dict[str, Any] = {"code": self.code, "message": self.message}
-        if self.details is not None:
-            error["details"] = self.details
-        return {"error": error}
+        return error_body(
+            self.code,
+            self.message,
+            self.status_code,
+            details=self.details,
+            headers=self.headers,
+        )
+
+
+def error_body(
+    code: str,
+    message: str,
+    status_code: int,
+    *,
+    details: Any | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Build the error envelope with the protocol classification fields."""
+    error: dict[str, Any] = {"code": code, "message": message}
+    error.update(classify(code, status_code, headers=headers, details=details))
+    if details is not None:
+        error["details"] = details
+    return {"error": error}
 
 
 class QuotaExceeded(ApiError):

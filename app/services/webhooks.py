@@ -23,7 +23,7 @@ from app.schemas import (
     WebhookRuleOut,
     WebhookRuleUpdateRequest,
 )
-from app.services.common import db_now, domain_event_type, utcnow
+from app.services.common import db_now, domain_event_type, event_identity, utcnow
 from app.services.outbound import new_secret, send_json, validate_target
 
 logger = logging.getLogger("agentgraph.webhooks")
@@ -209,6 +209,7 @@ async def list_deliveries(
 def _event_dict(row: WorkspaceEvent) -> dict[str, Any]:
     return {
         "id": row.id,
+        **event_identity(row.id),
         "table": row.source_table,
         "action": row.action,
         "workspace_id": str(row.workspace_id),

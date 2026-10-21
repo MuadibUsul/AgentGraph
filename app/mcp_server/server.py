@@ -13,7 +13,7 @@ from mcp import types
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import Field, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
@@ -23,6 +23,7 @@ from app import services
 from app.auth import PERMISSIONS, AuthKind, Principal, resolve_principal
 from app.config import get_settings
 from app.database import async_session_factory
+from app.error_registry import classify, protocol_docs, retry_after_ms
 from app.errors import ApiError
 from app.schemas import (
     DocumentArchiveRequest,
@@ -42,8 +43,10 @@ from app.schemas import (
     TaskHandoffRequest,
     TaskReviewRequest,
 )
+from app.services import idempotency
 from app.services.common import set_event_platform
 from app.tenant import activate_tenant
+from app.versioning import current_version
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -51,7 +54,72 @@ settings = get_settings()
 _request_principal: ContextVar[Principal | None] = ContextVar(
     "agentgraph_mcp_principal", default=None
 )
+_request_credential: ContextVar[str | None] = ContextVar(
+    "agentgraph_mcp_credential", default=None
+)
 _stdio_principal: Principal | None = None
+
+# Write tools that take a generic ``idempotency_key`` (PRD AG-ST-18 point 1).
+# draft_external_action keeps its own action-level idempotency_key.
+IDEMPOTENT_TOOLS = frozenset(
+    {
+        "create_task",
+        "review_task",
+        "request_human_review",
+        "agent_claim_and_read",
+        "agent_patch_shared_state",
+        "agent_handoff_task",
+        "agent_escalate_to_human",
+        "upsert_shared_doc",
+        "upsert_many",
+        "patch_doc_section",
+        "propose_document_change",
+        "vote_on_proposal",
+        "archive_document",
+        "restore_document",
+    }
+)
+_CONTENT_BLOCK = TypeAdapter(types.ContentBlock)
+
+
+def _dump_result(result: Any) -> dict[str, Any]:
+    def blocks(items: Any) -> list[Any]:
+        return [item.model_dump(mode="json", by_alias=True) for item in items]
+
+    if isinstance(result, tuple) and len(result) == 2:
+        return {"kind": "tuple", "content": blocks(result[0]), "structured": result[1]}
+    if isinstance(result, dict):
+        return {"kind": "dict", "structured": result}
+    return {"kind": "content", "content": blocks(result)}
+
+
+def _mark_replayed_text(block: Any) -> Any:
+    if getattr(block, "type", None) == "text":
+        try:
+            payload = json.loads(block.text)
+        except (TypeError, ValueError):
+            return block
+        if isinstance(payload, dict):
+            payload["replayed"] = True
+            return types.TextContent(
+                type="text", text=json.dumps(payload, ensure_ascii=False, default=str)
+            )
+    return block
+
+
+def _load_result(stored: dict[str, Any]) -> Any:
+    content = [
+        _mark_replayed_text(_CONTENT_BLOCK.validate_python(item))
+        for item in stored.get("content") or []
+    ]
+    structured = stored.get("structured")
+    if isinstance(structured, dict):
+        structured = {**structured, "replayed": True}
+    if stored.get("kind") == "tuple":
+        return content, structured
+    if stored.get("kind") == "dict":
+        return structured
+    return content
 
 def _error_envelope(exc: ToolError) -> dict[str, Any]:
     """Turn FastMCP/pydantic/tool errors into one JSON envelope.
@@ -116,9 +184,21 @@ class AgentGraphFastMCP(FastMCP):
         self, name: str, arguments: dict[str, Any]
     ) -> types.CallToolResult | Any:
         try:
-            return await super().call_tool(name, arguments)
+            key = None
+            if name in IDEMPOTENT_TOOLS and isinstance(arguments, dict):
+                arguments = dict(arguments)
+                key = arguments.pop("idempotency_key", None)
+            if key is None:
+                return await super().call_tool(name, arguments)
+            return await self._call_idempotent(name, arguments, key)
         except ToolError as exc:
             envelope = _error_envelope(exc)
+            for key, value in classify(
+                envelope["code"],
+                int(envelope.get("http_status") or 400),
+                details=envelope.get("details"),
+            ).items():
+                envelope.setdefault(key, value)
             return types.CallToolResult(
                 content=[
                     types.TextContent(
@@ -129,6 +209,43 @@ class AgentGraphFastMCP(FastMCP):
                 structuredContent=envelope,
                 isError=True,
             )
+
+    async def _call_idempotent(
+        self, name: str, arguments: dict[str, Any], raw_key: Any
+    ) -> Any:
+        credential = _request_credential.get() or settings.mcp_api_key
+        if not isinstance(raw_key, str) or not credential:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "validation_error",
+                        "http_status": 422,
+                        "message": "idempotency_key must be a string",
+                        "details": {"field": "idempotency_key"},
+                    }
+                )
+            )
+        try:
+            key = idempotency.validate_key(raw_key)
+            principal = idempotency.credential_hash(credential)
+            tool = f"mcp:{name}"
+            body_hash = idempotency.request_hash(tool, current_version(), arguments)
+            replay = await idempotency.begin(principal, tool, key, body_hash)
+        except ApiError as exc:
+            raise ToolError(str(_api_error(exc))) from exc
+        if replay is not None:
+            return _load_result(replay.response or {})
+        try:
+            result = await super().call_tool(name, arguments)
+        except BaseException:
+            await idempotency.abort(principal, tool, key)
+            raise
+        try:
+            await idempotency.complete(principal, tool, key, 200, _dump_result(result))
+        except Exception:  # noqa: BLE001 - bookkeeping must not fail a finished call
+            logger.exception("could not store MCP idempotency record")
+            await idempotency.abort(principal, tool, key)
+        return result
 
 
 mcp = AgentGraphFastMCP(
@@ -209,9 +326,11 @@ class MCPAuthMiddleware:
             await self._unauthorized(scope, receive, send)
             return
         token = _request_principal.set(principal)
+        credential_token = _request_credential.set(raw_key)
         try:
             await self.app(scope, receive, send)
         finally:
+            _request_credential.reset(credential_token)
             _request_principal.reset(token)
 
     @staticmethod
@@ -305,9 +424,14 @@ def _validation_error(exc: ValidationError) -> ToolError:
 
 
 def _api_error(exc: ApiError) -> ToolError:
-    return _tool_error(
-        exc.code, exc.message, exc.status_code, exc.details
-    )
+    details = exc.details
+    delay = retry_after_ms(exc.headers)
+    if delay is not None:
+        # MCP has no headers: carry Retry-After as retry_after_ms (PRD §6).
+        details = {**(details if isinstance(details, dict) else {}), "retry_after_ms": delay}
+        if exc.details is not None and not isinstance(exc.details, dict):
+            details["detail"] = exc.details
+    return _tool_error(exc.code, exc.message, exc.status_code, details)
 
 
 # ------------------------------------------------------------------- tools
@@ -1262,14 +1386,21 @@ async def restore_document(
 
 
 @mcp.tool(name="get_api_docs")
-async def get_api_docs() -> dict[str, Any]:
+async def get_api_docs(
+    section: Literal["overview", "retry", "errors", "versions"] = "overview",
+) -> dict[str, Any]:
     """Return the REST/MCP connection guide and core request schemas.
 
     Agent-readable; no admin token required. The live OpenAPI document is also
-    available at GET /v1/agent-docs.
+    available at GET /v1/agent-docs. section="retry" returns the canonical
+    backoff algorithm, "errors" the full error-code registry (code -> class ->
+    action), "versions" the supported API versions.
     """
+    if section != "overview":
+        return _compact(protocol_docs(section))
     return _compact(
         {
+            "protocol": protocol_docs("summary"),
             "name": "AgentGraph",
             "version": settings.app_version,
             "rest_base": "/v1",
@@ -1295,6 +1426,24 @@ async def get_api_docs() -> dict[str, Any]:
         }
     )
 
+
+def _advertise_idempotency_keys() -> None:
+    for tool_name in IDEMPOTENT_TOOLS:
+        tool = mcp._tool_manager.get_tool(tool_name)
+        if tool is None:
+            continue
+        tool.parameters.setdefault("properties", {})["idempotency_key"] = {
+            "type": "string",
+            "maxLength": idempotency.MAX_KEY_LENGTH,
+            "description": (
+                "Optional. Retries with the same key and arguments within 24 h "
+                "replay the first result (replayed=true) without a second write; "
+                "a different body with the same key is idempotency_key_reused."
+            ),
+        }
+
+
+_advertise_idempotency_keys()
 
 _http_app: ASGIApp | None = None
 

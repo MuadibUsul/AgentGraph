@@ -28,10 +28,11 @@ from app.api.v1_routes import router as v1_router
 from app.config import get_settings
 from app.database import apply_schema, check_database, engine
 from app.engine.embeddings import close_embedding_provider, configured_embedding_model
-from app.errors import ApiError
+from app.errors import ApiError, error_body
 from app.events import event_bus
 from app.mcp_server.server import create_http_app, mcp
 from app.middleware import RequestContextMiddleware
+from app.protocol_middleware import ProtocolMiddleware
 from app.services.external_actions import external_action_loop
 from app.services.reaper import lease_reaper_loop
 from app.services.webhooks import webhook_delivery_loop
@@ -165,13 +166,15 @@ async def security_headers(request: Request, call_next):
 
 
 app.add_middleware(RequestContextMiddleware)
+# Inside CORS so protocol errors (unsupported_api_version) still carry CORS headers.
+app.add_middleware(ProtocolMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID", "AgentGraph-Version", "Idempotent-Replayed", "Retry-After"],
 )
 
 app.include_router(v1_router)
@@ -216,13 +219,9 @@ async def validation_error_handler(
     ]
     return JSONResponse(
         status_code=422,
-        content={
-            "error": {
-                "code": "validation_error",
-                "message": "request validation failed",
-                "details": details,
-            }
-        },
+        content=error_body(
+            "validation_error", "request validation failed", 422, details=details
+        ),
     )
 
 
@@ -232,10 +231,11 @@ async def http_error_handler(
 ) -> JSONResponse:
     message = str(exc.detail) if exc.detail else "HTTP error"
     code = "not_found" if exc.status_code == 404 else "http_error"
+    headers = getattr(exc, "headers", None) or {}
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": {"code": code, "message": message}},
-        headers=getattr(exc, "headers", None) or {},
+        content=error_body(code, message, exc.status_code, headers=headers),
+        headers=headers,
     )
 
 
@@ -246,12 +246,9 @@ async def database_error_handler(
     logger.exception("database error")
     return JSONResponse(
         status_code=503,
-        content={
-            "error": {
-                "code": "database_unavailable",
-                "message": "database operation failed",
-            }
-        },
+        content=error_body(
+            "database_unavailable", "database operation failed", 503
+        ),
     )
 
 
@@ -260,9 +257,7 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
     logger.exception("unhandled error")
     return JSONResponse(
         status_code=500,
-        content={
-            "error": {"code": "internal_error", "message": "internal server error"}
-        },
+        content=error_body("internal_error", "internal server error", 500),
     )
 
 

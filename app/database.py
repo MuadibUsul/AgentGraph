@@ -188,6 +188,14 @@ async def _ensure_vector_dimension(conn: asyncpg.Connection) -> None:
         )
 
 
+_MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "sql" / "migrations"
+# Applied in order after the 3.4 baseline; append new migrations here.
+_INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
+    ("3.5.0", _MIGRATIONS_DIR / "v3_5_artifact_binding.sql"),
+    ("3.6.0", _MIGRATIONS_DIR / "v3_6_failure_protocol.sql"),
+]
+
+
 async def apply_schema() -> None:
     """Apply the canonical schema, run pending migrations, and backfill data.
 
@@ -204,7 +212,6 @@ async def apply_schema() -> None:
     improvements_path = root / "sql" / "migrations" / "v3_2_1_mcp_improvements.sql"
     feedback_path = root / "sql" / "migrations" / "v3_3_agent_feedback.sql"
     security_path = root / "sql" / "migrations" / "v3_4_security_hardening.sql"
-    artifact_path = root / "sql" / "migrations" / "v3_5_artifact_binding.sql"
     if not schema_path.exists():
         raise RuntimeError(f"schema file not found: {schema_path}")
     if not hardening_path.exists():
@@ -217,8 +224,9 @@ async def apply_schema() -> None:
         raise RuntimeError(f"migration file not found: {feedback_path}")
     if not security_path.exists():
         raise RuntimeError(f"migration file not found: {security_path}")
-    if not artifact_path.exists():
-        raise RuntimeError(f"migration file not found: {artifact_path}")
+    for _, path in _INCREMENTAL_MIGRATIONS:
+        if not path.exists():
+            raise RuntimeError(f"migration file not found: {path}")
 
     conn = await asyncpg.connect(asyncpg_dsn(), timeout=settings.db_pool_timeout)
     try:
@@ -316,17 +324,22 @@ async def apply_schema() -> None:
                 "INSERT INTO schema_migrations(version) VALUES ('3.4.0') "
                 "ON CONFLICT (version) DO NOTHING"
             )
-        artifact_applied = await conn.fetchval(
-            "SELECT 1 FROM schema_migrations WHERE version = '3.5.0'"
-        )
-        if not artifact_applied:
-            logger.info("applying v3.5 artifact binding migration")
-            await conn.execute(artifact_path.read_text(encoding="utf-8"))
-            await conn.execute(
-                "INSERT INTO schema_migrations(version) VALUES ('3.5.0') "
-                "ON CONFLICT (version) DO NOTHING"
+        for version, path in _INCREMENTAL_MIGRATIONS:
+            applied = await conn.fetchval(
+                "SELECT 1 FROM schema_migrations WHERE version = $1", version
             )
-        logger.info("database schema is up to date (v3.5.0)")
+            if applied:
+                continue
+            logger.info("applying %s migration (%s)", version, path.name)
+            await conn.execute(path.read_text(encoding="utf-8"))
+            await conn.execute(
+                "INSERT INTO schema_migrations(version) VALUES ($1) "
+                "ON CONFLICT (version) DO NOTHING",
+                version,
+            )
+        logger.info(
+            "database schema is up to date (v%s)", _INCREMENTAL_MIGRATIONS[-1][0]
+        )
     finally:
         await conn.close()
 

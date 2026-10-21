@@ -145,6 +145,12 @@ class Settings(BaseSettings):
     max_brief_bytes: int = 32_768
     max_artifact_chars: int = 200_000
 
+    # ------------------------------------------- failure-semantics protocol
+    # PRD AG-ST-18: 24 h idempotency window; an in-progress record older than
+    # the stale limit is treated as abandoned (crashed worker) and reclaimed.
+    idempotency_window_hours: int = Field(default=24, ge=1, le=168)
+    idempotency_stale_seconds: int = Field(default=300, ge=10, le=3_600)
+
     # -------------------------------------------------------------- realtime
     sse_heartbeat_seconds: int = Field(default=15, ge=5, le=120)
     sse_max_connections: int = Field(default=200, ge=1, le=10_000)

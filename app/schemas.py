@@ -1019,8 +1019,19 @@ class DocumentVersionListResponse(BaseModel):
 
 
 class ErrorBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     code: str
     message: str
+    error_class: str | None = Field(
+        default=None,
+        alias="class",
+        description="retry_after | retry_backoff | refresh_and_retry | fix_request | "
+        "reauth | abandon | escalate_human (see docs/ERROR_CODES.md)",
+    )
+    action: str | None = None
+    retryable: bool | None = None
+    retry_after_ms: int | None = None
     details: Any | None = None
 
 

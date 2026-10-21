@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.database import async_session_factory
 from app.models import WorkspaceEvent
 from app.services.common import db_now
+from app.services.idempotency import purge_expired as purge_expired_idempotency
 from app.services.slots import reap_expired_slot_leases
 from app.services.tasks import reap_expired_task_leases
 
@@ -34,6 +35,7 @@ async def lease_reaper_loop() -> None:
                     )
                 )
                 await session.commit()
+                await purge_expired_idempotency()
                 if tasks or slots:
                     logger.info(
                         "lease reaper reclaimed %s task(s) and %s slot(s)",

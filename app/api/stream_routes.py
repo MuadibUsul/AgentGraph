@@ -27,7 +27,7 @@ from app.database import async_session_factory
 from app.errors import ApiError
 from app.events import event_bus
 from app.models import WorkspaceEvent
-from app.services.common import domain_event_type
+from app.services.common import domain_event_type, event_identity
 from app.services.usage import enforce_rate_limit
 from app.services.workspace import get_workspace
 from app.tenant import set_session_tenant
@@ -202,6 +202,7 @@ async def _replay(
 
 
 def _frame(event: dict[str, Any]) -> str:
+    event = {**event, **event_identity(event["id"])}
     return (
         f"id: {event['id']}\n"
         "event: workspace\n"

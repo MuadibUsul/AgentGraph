@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import services
 from app.auth import Principal, get_principal, require_permission
 from app.database import get_db
+from app.error_registry import protocol_docs
 from app.errors import ApiError
 from app.models import TaskStatus
 from app.schemas import (
@@ -157,7 +158,9 @@ async def agent_docs(
             "Poll incrementally with GET /v1/workspace/map?since=<next_cursor>.",
         ],
         "conventions": {
-            "errors": {"error": {"code": "string", "message": "string", "details": "optional"}},
+            "errors": protocol_docs("summary")["error_shape"],
+            "protocol": protocol_docs("summary"),
+            "error_codes": protocol_docs("errors")["codes"],
             "pagination": (
                 "Pass next_cursor back as cursor; "
                 "next_cursor=null means the listing is complete."

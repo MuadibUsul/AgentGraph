@@ -452,3 +452,13 @@ def domain_event_type(table: str | None, action: str | None, payload: Any = None
         ((table or ""), (action or "").upper()),
         f"{table or 'unknown'}.{(action or 'unknown').upper()}",
     )
+
+
+def event_identity(event_id: int) -> dict[str, Any]:
+    """Protocol identity of an outbox event (PRD AG-ST-18 point 2).
+
+    ``event_id`` is globally unique and ``seq`` never reused, so consumers of
+    at-least-once delivery deduplicate by ``event_id`` and resume by ``seq``.
+    """
+    return {"event_id": f"evt_{int(event_id)}", "seq": int(event_id)}
+
