@@ -96,6 +96,7 @@ async def create_link(
     session: AsyncSession, principal: Principal, request: LinkCreateRequest
 ) -> WorkspaceLink:
     require_permission(principal, "link:write")
+    namespaces: list[str] = []
     for node in (request.source_id, request.target_id):
         namespace = await _node_namespace(
             session, principal.workspace.id, node
@@ -107,6 +108,7 @@ async def create_link(
                 "in this workspace",
             )
         ensure_namespace(principal, namespace, write=True)
+        namespaces.append(namespace)
     if request.relation_type == LinkType.DEPENDS_ON and await _would_create_dependency_cycle(
         session,
         principal.workspace.id,
@@ -147,6 +149,8 @@ async def create_link(
             "target_id": str(request.target_id),
             "relation_type": request.relation_type.value,
         },
+        # Cross-namespace links are visible only to commander/"*" timelines.
+        namespace=namespaces[0] if namespaces[0] == namespaces[1] else "*",
     )
     await session.commit()
     return link

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import re
 import uuid
@@ -1123,23 +1124,35 @@ async def create_artifact(
     artifact_text: str,
     risk_flag: bool,
     batch_id: uuid.UUID,
+    principal: Principal | None = None,
 ) -> tuple[SharedDocument, str]:
     await _ensure_document_quota(session, workspace)
     suffix = uuid.uuid4().hex[:10]
     doc_key = f"artifact/{task.task_key}/{suffix}"
     artifact_text, _ = normalize_notion_content(artifact_text)
+    frontmatter = {
+        "type": "artifact",
+        "task_key": task.task_key,
+        "status": "FINAL",
+        "risk_flag": risk_flag,
+    }
+    if principal is not None:
+        await enforce_policy(
+            session,
+            principal,
+            resource_type="document",
+            key=doc_key,
+            action="create",
+            payload=frontmatter,
+            content_bytes=len(artifact_text.encode("utf-8")),
+        )
     document = SharedDocument(
         workspace_id=workspace.id,
         doc_key=doc_key,
         title=f"Artifact: {task.title}"[:256],
         content=artifact_text,
         content_hash=content_hash(artifact_text),
-        frontmatter={
-            "type": "artifact",
-            "task_key": task.task_key,
-            "status": "FINAL",
-            "risk_flag": risk_flag,
-        },
+        frontmatter=frontmatter,
         verification_status="DRAFT",
         trust_level="UNTRUSTED",
         verified_version=None,
@@ -1286,6 +1299,33 @@ async def human_update_document(
     )
 
 
+async def bind_task_artifact(
+    session: AsyncSession,
+    principal: Principal,
+    task: CollabTask,
+    doc_key: str,
+) -> tuple[int, str]:
+    """Validate a handed-off ``doc://`` artifact and return its (version, hash).
+
+    The artifact must exist in the task's namespace and be readable by the
+    handing-off principal; review approval later verifies only this exact
+    version, so edits made after the handoff are never verified implicitly.
+    """
+    require_permission(principal, "doc:read")
+    document = await _get_document(session, principal.workspace.id, doc_key)
+    ensure_namespace(principal, document.namespace)
+    if document.namespace != task.namespace:
+        raise Forbidden(
+            "artifact_uri must reference a document in the task's namespace "
+            f"('{task.namespace}')"
+        )
+    if document.archived_at is not None:
+        raise ApiError(
+            409, "artifact_archived", "artifact_uri references an archived document"
+        )
+    return document.version, document.content_hash or content_hash(document.content)
+
+
 async def verify_artifact_for_review(
     session: AsyncSession,
     principal: Principal,
@@ -1295,13 +1335,20 @@ async def verify_artifact_for_review(
     batch: uuid.UUID,
     task_key: str,
     note: str | None = None,
+    expected_version: int | None = None,
+    expected_hash: str | None = None,
+    require_binding: bool = True,
 ) -> bool:
     """Mark a reviewed task artifact VERIFIED without committing the transaction.
 
     Tainted artifacts stay untrusted and require an explicit human verification.
-    The review itself must not fail if the artifact no longer exists.
+    The review itself must not fail if the artifact no longer exists. Unless
+    ``require_binding`` is disabled (admin repair), only the version and hash
+    pinned at handoff are verified; a changed artifact stays unverified.
     """
     if not can(principal, "doc:verify"):
+        return False
+    if require_binding and (expected_version is None or expected_hash is None):
         return False
     try:
         document = await _get_document(
@@ -1312,6 +1359,12 @@ async def verify_artifact_for_review(
     ensure_namespace(principal, document.namespace, write=True)
     if document.tainted:
         return False
+    if require_binding:
+        current_hash = document.content_hash or content_hash(document.content)
+        if document.version != expected_version or not hmac.compare_digest(
+            current_hash, expected_hash or ""
+        ):
+            return False
     before = document_snapshot(document)
     digest = document.content_hash or content_hash(document.content)
     document.content_hash = digest
@@ -1381,6 +1434,9 @@ async def verify_document(
         session, principal.workspace.id, doc_key, for_update=True
     )
     ensure_namespace(principal, document.namespace, write=True)
+    ensure_not_human_locked(
+        principal, "shared_document", document.locked_by_human, document.human_note
+    )
     if document.version != request.expected_version:
         raise VersionConflict("shared_document", _latest(document))
     before = document_snapshot(document)
@@ -1471,6 +1527,9 @@ async def set_document_status(
         session, principal.workspace.id, doc_key, for_update=True
     )
     ensure_namespace(principal, document.namespace, write=True)
+    ensure_not_human_locked(
+        principal, "shared_document", document.locked_by_human, document.human_note
+    )
     if document.version != request.expected_version:
         raise VersionConflict("shared_document", _latest(document))
     before = document_snapshot(document)
@@ -1789,6 +1848,7 @@ async def backfill_verified_artifacts(
                 batch=uuid.uuid4(),
                 task_key=task_key,
                 note="admin backfill of approved task artifact",
+                require_binding=False,
             )
             if ok:
                 verified.add(doc_key)

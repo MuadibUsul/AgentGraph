@@ -68,10 +68,12 @@ async def enforce_rate_limit(session: AsyncSession, principal: Principal) -> Non
     """
     if not settings.rate_limit_enabled:
         return
+    # Humans are bucketed per account, not per session: opening more
+    # sessions must not multiply the request budget.
     actor_key = (
-        str(principal.token_id)
-        if principal.token_id
-        else str(principal.user_id) if principal.user_id else "workspace"
+        str(principal.user_id)
+        if principal.user_id
+        else str(principal.token_id) if principal.token_id else "workspace"
     )
     identity = f"{principal.workspace.id}:{principal.auth_kind.value}:{actor_key}"
     bucket = (
@@ -83,7 +85,7 @@ async def enforce_rate_limit(session: AsyncSession, principal: Principal) -> Non
         set_session_tenant(counter_session, principal.workspace.id)
         budget = await get_budget(counter_session, principal.workspace.id)
         limit = budget.max_requests_per_minute
-        if principal.token_id is not None:
+        if principal.token_id is not None and principal.user_id is None:
             token = await counter_session.get(AgentToken, principal.token_id)
             if token is not None and token.per_minute_limit:
                 limit = min(limit, token.per_minute_limit)

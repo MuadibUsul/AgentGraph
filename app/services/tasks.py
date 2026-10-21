@@ -68,7 +68,11 @@ from app.services.common import (
     task_summary,
     utcnow,
 )
-from app.services.documents import create_artifact, verify_artifact_for_review
+from app.services.documents import (
+    bind_task_artifact,
+    create_artifact,
+    verify_artifact_for_review,
+)
 from app.services.links import add_link
 from app.services.policies import enforce_policy
 from app.services.taint import refresh_task_taint
@@ -723,15 +727,27 @@ async def handoff_task(
             "ambiguous_artifact",
             "provide artifact_text or artifact_uri, not both",
         )
+    artifact_version: int | None = None
+    artifact_hash: str | None = None
     if request.artifact_text:
-        _, artifact_uri = await create_artifact(
+        # Handoff artifacts are new documents: the same create permission and
+        # path policy as a direct document write apply.
+        require_permission(principal, "doc:create")
+        artifact_doc, artifact_uri = await create_artifact(
             session,
             workspace=principal.workspace,
+            principal=principal,
             task=task,
             agent=agent,
             artifact_text=request.artifact_text,
             risk_flag=bool(brief.get("risk_flag")) if brief else False,
             batch_id=batch,
+        )
+        artifact_version = artifact_doc.version
+        artifact_hash = artifact_doc.content_hash
+    elif artifact_uri:
+        artifact_version, artifact_hash = await bind_task_artifact(
+            session, principal, task, artifact_uri.removeprefix("doc://")
         )
 
     if request.next_status == "REVIEWING" and (
@@ -761,6 +777,9 @@ async def handoff_task(
     task.status = TaskStatus(request.next_status)
     task.handoff_brief = brief
     task.artifact_uri = artifact_uri
+    task.artifact_version = artifact_version
+    task.artifact_hash = artifact_hash
+    task.handed_off_by = agent
     task.output_artifact = request.output_artifact
     task.human_feedback = request.human_feedback if principal.is_human else None
     _clear_lease(task)
@@ -853,6 +872,16 @@ async def review_task(
             raise Forbidden(
                 "a human account is required to resolve a task awaiting human review"
             )
+    if (
+        request.decision == "approve"
+        and not principal.is_human
+        and task.handed_off_by in (agent, principal.agent_signature)
+    ):
+        # Rejecting one's own work is harmless; approving it is self-certification.
+        raise Forbidden(
+            "an agent cannot approve a task it handed off; another reviewer "
+            "or a human must decide"
+        )
     _check_version(task, request.expected_version)
     _check_lease(task, agent)
     before = task_snapshot(task)
@@ -885,6 +914,8 @@ async def review_task(
                     batch=batch,
                     task_key=task.task_key,
                     note=request.feedback,
+                    expected_version=task.artifact_version,
+                    expected_hash=task.artifact_hash,
                 )
             except ApiError:
                 artifact_verified = False

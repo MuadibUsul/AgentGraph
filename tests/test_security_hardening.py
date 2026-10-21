@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 
+import httpx
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -273,3 +275,226 @@ async def test_audit_cursor_is_complete(client, admin_headers, workspace):
     assert total is not None and total >= 3
     assert len(seen) == len(set(seen))
     assert len(seen) == total
+
+
+# ------------------------------------------------- 2026-10-21 audit follow-up
+
+BRIEF = {
+    "summary": "ready",
+    "key_metrics": {},
+    "unverified_hypotheses": [],
+    "risk_flag": False,
+}
+
+
+async def _agent_with_id(client, admin_headers, workspace, role, namespaces):
+    response = await client.post(
+        f"/v1/admin/workspaces/{workspace['workspace']['id']}/agent-tokens",
+        headers=admin_headers,
+        json={
+            "agent_signature": f"{role.lower()}_{uuid.uuid4().hex[:8]}",
+            "role_scope": role,
+            "allowed_namespaces": namespaces,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    return {"Authorization": f"Bearer {body['api_key']}"}, body["token"]["id"]
+
+
+async def _put_doc(client, headers, doc_key, namespace, content, expected_version=0):
+    response = await client.put(
+        f"/v1/documents/{doc_key}",
+        headers=headers,
+        json={
+            "content": content,
+            "namespace": namespace,
+            "expected_version": expected_version,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["document"]
+
+
+async def _claimed_task(client, workspace, agent, role, namespace="default"):
+    key = f"SEC-{uuid.uuid4().hex[:6].upper()}"
+    created = await client.post(
+        "/v1/tasks",
+        headers=workspace["headers"],
+        json={
+            "task_key": key,
+            "title": "security follow-up",
+            "assigned_role": role,
+            "namespace": namespace,
+        },
+    )
+    assert created.status_code == 201, created.text
+    claimed = await client.post(f"/v1/tasks/{key}/claim", headers=agent, json={})
+    assert claimed.status_code == 200, claimed.text
+    return key
+
+
+async def test_handoff_artifact_must_stay_in_task_namespace(
+    client, admin_headers, workspace
+):
+    other = await make_agent(client, admin_headers, workspace, "EXECUTOR", ["teamB"])
+    foreign = await _put_doc(
+        client, other, f"teamb/{uuid.uuid4().hex[:6]}", "teamB", "other team draft"
+    )
+    agent = await make_agent(client, admin_headers, workspace, "EXECUTOR", ["teamA"])
+    key = await _claimed_task(client, workspace, agent, "EXECUTOR", "teamA")
+    handed = await client.post(
+        f"/v1/tasks/{key}/handoff",
+        headers=agent,
+        json={
+            "next_status": "REVIEWING",
+            "brief": BRIEF,
+            "artifact_uri": f"doc://{foreign['doc_key']}",
+        },
+    )
+    assert handed.status_code == 403, handed.text
+    current = await client.get(
+        f"/v1/documents/{foreign['doc_key']}", headers=workspace["headers"]
+    )
+    assert current.json()["verification_status"] == "DRAFT"
+
+
+async def test_review_verifies_only_the_handed_off_artifact_version(
+    client, admin_headers, workspace
+):
+    agent = await make_agent(client, admin_headers, workspace, "EXECUTOR", ["*"])
+    document = await _put_doc(
+        client, agent, f"art/{uuid.uuid4().hex[:6]}", "default", "benign v1"
+    )
+    key = await _claimed_task(client, workspace, agent, "EXECUTOR")
+    handed = await client.post(
+        f"/v1/tasks/{key}/handoff",
+        headers=agent,
+        json={
+            "next_status": "REVIEWING",
+            "brief": BRIEF,
+            "artifact_uri": f"doc://{document['doc_key']}",
+        },
+    )
+    assert handed.status_code == 200, handed.text
+    await _put_doc(
+        client, agent, document["doc_key"], "default", "changed after handoff", 1
+    )
+    owner = await make_human(client, admin_headers, workspace, "OWNER")
+    reviewed = await client.post(
+        f"/v1/human/tasks/{key}/review",
+        headers=owner,
+        json={"decision": "approve", "expected_version": handed.json()["task"]["version"]},
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    current = await client.get(
+        f"/v1/documents/{document['doc_key']}", headers=workspace["headers"]
+    )
+    assert current.json()["verification_status"] == "DRAFT"
+    assert current.json()["verified_version"] is None
+
+
+async def test_agent_cannot_review_its_own_handoff(client, admin_headers, workspace):
+    auditor = await make_agent(client, admin_headers, workspace, "AUDITOR", ["*"])
+    other_auditor = await make_agent(client, admin_headers, workspace, "AUDITOR", ["*"])
+    key = await _claimed_task(client, workspace, auditor, "AUDITOR")
+    # AUDITOR lacks doc:create, so it cannot mint artifacts through handoff.
+    minted = await client.post(
+        f"/v1/tasks/{key}/handoff",
+        headers=auditor,
+        json={"next_status": "REVIEWING", "brief": BRIEF, "artifact_text": "self-made"},
+    )
+    assert minted.status_code == 403, minted.text
+    handed = await client.post(
+        f"/v1/tasks/{key}/handoff",
+        headers=auditor,
+        json={"next_status": "REVIEWING", "brief": BRIEF},
+    )
+    assert handed.status_code == 200, handed.text
+    version = handed.json()["task"]["version"]
+    own = await client.post(
+        f"/v1/tasks/{key}/review",
+        headers=auditor,
+        json={"decision": "approve", "expected_version": version},
+    )
+    assert own.status_code == 403, own.text
+    peer = await client.post(
+        f"/v1/tasks/{key}/review",
+        headers=other_auditor,
+        json={"decision": "approve", "expected_version": version},
+    )
+    assert peer.status_code == 200, peer.text
+
+
+async def test_agent_status_changes_respect_human_lock(client, admin_headers, workspace):
+    owner = await make_human(client, admin_headers, workspace, "OWNER")
+    doc_key = f"locked/{uuid.uuid4().hex[:6]}"
+    document = await _put_doc(client, owner, doc_key, "default", "human truth")
+    locked = await client.put(
+        f"/v1/human/documents/{doc_key}",
+        headers=owner,
+        json={
+            "expected_version": document["version"],
+            "content": "human truth",
+            "lock": True,
+            "human_note": "do not touch",
+        },
+    )
+    assert locked.status_code == 200, locked.text
+    version = locked.json()["document"]["version"]
+    executor = await make_agent(client, admin_headers, workspace, "EXECUTOR", ["*"])
+    auditor = await make_agent(client, admin_headers, workspace, "AUDITOR", ["*"])
+    for headers, action in (
+        (executor, "submit-review"),
+        (auditor, "deprecate"),
+        (auditor, "verify"),
+    ):
+        response = await client.post(
+            f"/v1/documents/{doc_key}/{action}",
+            headers=headers,
+            json={"expected_version": version},
+        )
+        assert response.status_code == 403, (action, response.text)
+        assert response.json()["error"]["code"] == "HUMAN_SOVEREIGNTY_LOCKED"
+
+
+async def test_stream_closes_after_token_revocation(
+    client, admin_headers, workspace, api_base_url
+):
+    agent, token_id = await _agent_with_id(
+        client, admin_headers, workspace, "EXECUTOR", ["*"]
+    )
+    frames: list[str] = []
+    connected = asyncio.Event()
+
+    async def read_stream() -> None:
+        async with httpx.AsyncClient(base_url=api_base_url, timeout=None) as http:
+            async with http.stream("GET", "/v1/stream", headers=agent) as response:
+                assert response.status_code == 200
+                async for line in response.aiter_lines():
+                    if line.startswith("event: connected"):
+                        connected.set()
+                    if line.startswith(("event: closed", "data:")):
+                        frames.append(line)
+
+    reader = asyncio.create_task(read_stream())
+    await asyncio.wait_for(connected.wait(), 10)
+    revoked = await client.patch(
+        f"/v1/admin/workspaces/{workspace['workspace']['id']}/agent-tokens/{token_id}",
+        headers=admin_headers,
+        json={"is_active": False},
+    )
+    assert revoked.status_code == 200, revoked.text
+    await asyncio.wait_for(reader, 20)
+    assert any("credential_revoked" in frame for frame in frames), frames
+
+
+async def test_stats_hide_other_namespaces(client, admin_headers, workspace):
+    other = await make_agent(client, admin_headers, workspace, "EXECUTOR", ["hidden-ns"])
+    await _put_doc(client, other, f"h/{uuid.uuid4().hex[:6]}", "hidden-ns", "x")
+    scout = await make_agent(client, admin_headers, workspace, "SCOUT", ["raw_inbox"])
+    stats = await client.get("/v1/stats", headers=scout)
+    assert stats.status_code == 200, stats.text
+    assert "hidden-ns" not in stats.json()["document_namespaces"]
+    full = await client.get("/v1/stats", headers=workspace["headers"])
+    assert "hidden-ns" in full.json()["document_namespaces"]

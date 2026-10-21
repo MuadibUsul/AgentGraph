@@ -204,6 +204,7 @@ async def apply_schema() -> None:
     improvements_path = root / "sql" / "migrations" / "v3_2_1_mcp_improvements.sql"
     feedback_path = root / "sql" / "migrations" / "v3_3_agent_feedback.sql"
     security_path = root / "sql" / "migrations" / "v3_4_security_hardening.sql"
+    artifact_path = root / "sql" / "migrations" / "v3_5_artifact_binding.sql"
     if not schema_path.exists():
         raise RuntimeError(f"schema file not found: {schema_path}")
     if not hardening_path.exists():
@@ -216,6 +217,8 @@ async def apply_schema() -> None:
         raise RuntimeError(f"migration file not found: {feedback_path}")
     if not security_path.exists():
         raise RuntimeError(f"migration file not found: {security_path}")
+    if not artifact_path.exists():
+        raise RuntimeError(f"migration file not found: {artifact_path}")
 
     conn = await asyncpg.connect(asyncpg_dsn(), timeout=settings.db_pool_timeout)
     try:
@@ -313,7 +316,17 @@ async def apply_schema() -> None:
                 "INSERT INTO schema_migrations(version) VALUES ('3.4.0') "
                 "ON CONFLICT (version) DO NOTHING"
             )
-        logger.info("database schema is up to date (v3.4.0)")
+        artifact_applied = await conn.fetchval(
+            "SELECT 1 FROM schema_migrations WHERE version = '3.5.0'"
+        )
+        if not artifact_applied:
+            logger.info("applying v3.5 artifact binding migration")
+            await conn.execute(artifact_path.read_text(encoding="utf-8"))
+            await conn.execute(
+                "INSERT INTO schema_migrations(version) VALUES ('3.5.0') "
+                "ON CONFLICT (version) DO NOTHING"
+            )
+        logger.info("database schema is up to date (v3.5.0)")
     finally:
         await conn.close()
 

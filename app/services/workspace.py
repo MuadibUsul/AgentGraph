@@ -335,7 +335,10 @@ async def workspace_map(
 
 
 async def workspace_stats(
-    session: AsyncSession, workspace: Workspace
+    session: AsyncSession,
+    workspace: Workspace,
+    *,
+    allowed_namespaces: list[str] | None = None,
 ) -> WorkspaceStatsResponse:
     counts = (
         await session.execute(
@@ -397,7 +400,10 @@ SELECT
         )
     ).all()
     document_namespaces = {
-        namespace: int(count) for namespace, count in namespace_rows
+        namespace: int(count)
+        for namespace, count in namespace_rows
+        # Namespace-scoped tokens must not learn other namespaces' names.
+        if allowed_namespaces is None or namespace in allowed_namespaces
     }
     documents = int(counts["documents"])
     slots = int(counts["slots"])

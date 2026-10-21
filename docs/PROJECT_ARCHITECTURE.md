@@ -162,7 +162,8 @@ E:\Codes\AgentGraph\
 │       ├── v3_2_production.sql           # v3.2 生产扩展（提案/策略/污点/账号/RLS/检索/出站）
 │       ├── v3_2_1_mcp_improvements.sql   # MCP 评审/反馈
 │       ├── v3_3_agent_feedback.sql       # 软归档
-│       └── v3_4_security_hardening.sql   # 安全加固（提案 namespace/Google sub/审计主体/RLS）
+│       ├── v3_4_security_hardening.sql   # 安全加固（提案 namespace/Google sub/审计主体/RLS）
+│       └── v3_5_artifact_binding.sql     # 任务产出物版本/哈希绑定与交接人记录
 │
 ├── dashboard/
 │   ├── package.json                      # Next.js 14.2 / React 18 / react-markdown

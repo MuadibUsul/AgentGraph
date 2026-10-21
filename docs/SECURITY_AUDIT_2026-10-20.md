@@ -355,3 +355,26 @@
 **仍公开标注的残余风险：** 邮件验证/忘记密码（需要 SMTP 供应商）、应用数据库账号仍为超级用户、审计/时间线大响应与保留策略、依赖升级（Next/PostCSS 静态导出下不可直接利用）、共享 `web` 网络内的邻居容器。
 
 **验证：** 本地完整测试 `100 passed`；新增安全回归覆盖 namespace、VIEWER taint、workspace key 人类门禁、Agent self-DONE/human_feedback、REVIEWER 预算/Webhook 权限。生产已应用 `schema_migrations 3.4.0`，`/readyz` 正常，REST 八项 smoke、MCP 22 工具/游标 smoke 全部通过；生产响应已带 CSP/HSTS/X-Frame/nosniff/Referrer-Policy。剩余项见上表“部分修复”和“仍公开标注的残余风险”。
+
+---
+
+## 8. 第三轮复查（2026-10-21）
+
+在第二轮修复基础上做攻击者视角复查，新发现 6 项并在一次性 pgvector 环境中复现，均已修复；
+迁移 `sql/migrations/v3_5_artifact_binding.sql`（`schema_migrations 3.5.0`），回归测试在
+`tests/test_security_hardening.py` 末尾。
+
+| 编号 | 严重度 | 问题 | 修复 |
+|---|---|---|---|
+| R1 | High | 交接 `artifact_uri` 不校验：受限 Agent 可指向其他 namespace 的文档，人类批准任务时该文档被自动 VERIFIED | 交接时校验文档存在、未归档、与任务同 namespace 且交接方可读，否则 403 |
+| R2 | High | 批准时认证的是文档当前版本：交接后改写内容，人类批准的是改写后的版本（TOCTOU） | 交接时记录 `artifact_version`/`artifact_hash`；批准时版本或哈希不一致则不自动认证；旧任务无绑定时不自动认证 |
+| R3 | Medium-High | 同一 AUDITOR 可认领、交接（`artifact_text` 绕过 `doc:create` 与路径策略）、再批准自己的任务，产出物 VERIFIED/TRUSTED | 记录 `handed_off_by`，非人类不能批准自己交接的任务（驳回仍允许）；`artifact_text` 需要 `doc:create` 并执行 `enforce_policy` |
+| R4 | Medium | `submit-review`/`deprecate`/`verify` 不检查 `locked_by_human`，Agent 可改人类锁定文档的状态 | 三条路径统一调用 `ensure_not_human_locked` |
+| R5 | Medium | SSE 只在连接时认证，吊销/过期/禁用后仍持续推送 | 每 `SSE_REVALIDATE_SECONDS`（默认 30s）重新解析凭证，失效即发送 `event: closed` 并断开；角色/namespace 变更即时生效；`SSE_MAX_LIFETIME_SECONDS`（默认 1h）上限，客户端用 `Last-Event-ID` 续传 |
+| R6 | Low | `/v1/stats` 向受限 token 暴露全部 namespace 名称与文档数 | 受限 token 仅返回允许的 namespace |
+
+同轮低危修复：`LINK_CREATED`/`PROPOSAL_VOTED`/`PROPOSAL_REJECTED` 时间线事件写入真实 namespace（跨 namespace 链接记为 `*`，仅全局视图可见）；人类限流按账号而非会话分桶；Markdown 图片拦截 `//host` 与 `/\host` 协议相对地址。
+
+**残余：** 吊销后的 SSE 断开有最多 `SSE_REVALIDATE_SECONDS` 的窗口；workspace commander key 仍可自定义 actor 名称（属于自动化凭证设计）；第 7 节残余风险不变。
+
+**验证：** 本地完整测试 `105 passed`（另 1 项 `test_browser_root_redirects_to_console` 需要已构建的 `dashboard/out`，与本轮无关）；原始复现探针在修复后全部失败（即漏洞不可再利用）。

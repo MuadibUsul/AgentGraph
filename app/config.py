@@ -149,6 +149,8 @@ class Settings(BaseSettings):
     sse_heartbeat_seconds: int = Field(default=15, ge=5, le=120)
     sse_max_connections: int = Field(default=200, ge=1, le=10_000)
     sse_max_connections_per_principal: int = Field(default=5, ge=1, le=100)
+    sse_revalidate_seconds: int = Field(default=30, ge=5, le=600)
+    sse_max_lifetime_seconds: int = Field(default=3_600, ge=60, le=86_400)
     embedding_bytes_per_minute: int = Field(default=5_000_000, ge=100_000)
     sse_replay_limit: int = Field(default=500, ge=1, le=5_000)
     event_retention_days: int = Field(default=7, ge=1, le=365)

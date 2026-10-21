@@ -552,6 +552,8 @@ Copy [`.env.example`](.env.example) to `.env`. Important settings:
 | `DEFAULT_MAX_RETRIES` | `3` | Ping-pong threshold for new tasks |
 | `SSE_HEARTBEAT_SECONDS` | `15` | SSE keep-alive interval |
 | `SSE_REPLAY_LIMIT` | `500` | Max missed events replayed per reconnect |
+| `SSE_REVALIDATE_SECONDS` | `30` | Re-check a stream's credential; revoked/expired keys are disconnected |
+| `SSE_MAX_LIFETIME_SECONDS` | `3600` | Max stream duration; clients reconnect with `Last-Event-ID` |
 | `EVENT_RETENTION_DAYS` | `7` | Outbox / replay retention window |
 | `MAX_SEARCH_TOP_K` | `50` | Semantic query cap |
 | `FREE_MAX_DOCUMENTS` / `FREE_MAX_SLOTS` | `5000` / `20` | Free tier caps |

@@ -61,9 +61,9 @@ _DOC_FIELDS = (
 _TASK_FIELDS = (
     "title", "description", "status", "priority", "assigned_role", "namespace",
     "claimed_by", "lease_owner", "lease_expires_at", "input_context",
-    "output_artifact", "handoff_brief", "artifact_uri", "human_feedback",
-    "reject_history", "ping_pong_count", "max_retries", "lease_epoch",
-    "tainted", "taint_sources",
+    "output_artifact", "handoff_brief", "artifact_uri", "artifact_version",
+    "artifact_hash", "handed_off_by", "human_feedback", "reject_history",
+    "ping_pong_count", "max_retries", "lease_epoch", "tainted", "taint_sources",
 )
 
 
@@ -293,6 +293,12 @@ def _apply_task_undo(task: CollabTask, before: dict[str, Any]) -> None:
     task.output_artifact = before.get("output_artifact", task.output_artifact) or {}
     task.handoff_brief = before.get("handoff_brief", task.handoff_brief)
     task.artifact_uri = before.get("artifact_uri", task.artifact_uri)
+    if "artifact_uri" in before:
+        # Snapshots older than v3.5 carry no binding; clear it so a restored
+        # artifact URI can never be auto-verified against a stale pin.
+        task.artifact_version = before.get("artifact_version")
+        task.artifact_hash = before.get("artifact_hash")
+        task.handed_off_by = before.get("handed_off_by")
     task.human_feedback = before.get("human_feedback", task.human_feedback)
     task.reject_history = before.get("reject_history", task.reject_history) or []
     task.ping_pong_count = before.get("ping_pong_count", task.ping_pong_count)

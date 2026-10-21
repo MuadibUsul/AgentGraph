@@ -953,4 +953,12 @@ async def stats(
     session: AsyncSession = Depends(get_db),
 ) -> WorkspaceStatsResponse:
     require_permission(principal, "workspace:read")
-    return await services.workspace_stats(session, principal.workspace)
+    return await services.workspace_stats(
+        session,
+        principal.workspace,
+        allowed_namespaces=(
+            None
+            if principal.is_commander or "*" in principal.allowed_namespaces
+            else principal.allowed_namespaces
+        ),
+    )
