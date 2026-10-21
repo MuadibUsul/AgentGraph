@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
@@ -252,7 +252,12 @@ if settings.docs_enabled and settings.docs_require_auth:
 
 
 @app.get("/", include_in_schema=False)
-async def root() -> dict[str, Any]:
+async def root(request: Request) -> Any:
+    if (
+        dashboard_dir.is_dir()
+        and "text/html" in request.headers.get("accept", "").lower()
+    ):
+        return RedirectResponse(url="/dashboard/", status_code=307)
     return {
         "name": settings.app_name,
         "version": settings.app_version,
@@ -261,20 +266,30 @@ async def root() -> dict[str, Any]:
         "rest": "/v1",
         "mcp": "/mcp/" if settings.mcp_enabled else None,
         "dashboard": "/dashboard/" if dashboard_dir.is_dir() else None,
+        "agent_docs": "/v1/agent-docs",
         "primitives": [
             "workspace_sync",
+            "create_task",
+            "review_task",
+            "request_human_review",
             "agent_claim_and_read",
             "agent_patch_shared_state",
             "agent_handoff_task",
             "agent_escalate_to_human",
             "upsert_shared_doc",
+            "upsert_many",
             "patch_doc_section",
             "query_workspace",
+            "list_documents",
             "dereference",
+            "dereference_many",
+            "archive_document",
+            "restore_document",
             "propose_document_change",
             "vote_on_proposal",
             "list_document_proposals",
             "draft_external_action",
+            "get_api_docs",
         ],
     }
 

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import re
 import uuid
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import Numeric, case, func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +30,7 @@ from app.engine.embeddings import get_embedding_provider
 from app.engine.merge import three_way_document
 from app.engine.notion import normalize_notion_content
 from app.errors import (
+    ApiError,
     Forbidden,
     NotFound,
     QuotaExceeded,
@@ -36,7 +40,13 @@ from app.errors import (
 )
 from app.models import CollabTask, DocumentVersion, SharedDocument, TaskStatus, Workspace
 from app.schemas import (
+    DereferenceBatchItem,
+    DereferenceBatchResponse,
     DereferenceResponse,
+    DocumentArchiveRequest,
+    DocumentBatchUpsertRequest,
+    DocumentBatchUpsertResponse,
+    DocumentBatchUpsertResult,
     DocumentHumanUpdateRequest,
     DocumentListResponse,
     DocumentMutationResponse,
@@ -202,6 +212,89 @@ def _title_for(
     return (first_line[:256] or doc_key)[:256]
 
 
+def _encode_cursor(updated_at: datetime, record_id: uuid.UUID) -> str:
+    raw = json.dumps(
+        {"updated_at": updated_at.isoformat(), "id": str(record_id)},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    try:
+        payload = json.loads(
+            base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        )
+        return datetime.fromisoformat(payload["updated_at"]), uuid.UUID(payload["id"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ApiError(400, "invalid_cursor", "document cursor is invalid") from exc
+
+
+_FILTER_OPERATORS = {"eq", "gte", "lte", "gt", "lt", "exists"}
+
+
+def _frontmatter_conditions(filters: dict[str, Any]) -> list[Any]:
+    conditions: list[Any] = []
+    for key, value in filters.items():
+        if not isinstance(value, dict):
+            conditions.append(SharedDocument.frontmatter.contains({key: value}))
+            continue
+        unknown = sorted(set(value) - _FILTER_OPERATORS)
+        if unknown:
+            raise ApiError(
+                422,
+                "invalid_filter_operator",
+                f"unsupported frontmatter filter operator for {key}: {', '.join(unknown)}",
+                details={
+                    "field": f"filters.{key}",
+                    "allowed": sorted(_FILTER_OPERATORS),
+                },
+            )
+        if "exists" in value:
+            if not isinstance(value["exists"], bool):
+                raise ApiError(
+                    422,
+                    "invalid_filter_value",
+                    f"frontmatter filter {key}.exists must be a boolean",
+                    details={"field": f"filters.{key}.exists"},
+                )
+            present = SharedDocument.frontmatter.has_key(key)
+            conditions.append(present if value["exists"] else ~present)
+        if "eq" in value:
+            conditions.append(
+                SharedDocument.frontmatter.contains({key: value["eq"]})
+            )
+        for operator in ("gte", "lte", "gt", "lt"):
+            if operator not in value:
+                continue
+            expected = value[operator]
+            if isinstance(expected, bool) or not isinstance(expected, (int, float, str)):
+                raise ApiError(
+                    422,
+                    "invalid_filter_value",
+                    f"frontmatter filter {key}.{operator} must be a scalar",
+                    details={"field": f"filters.{key}.{operator}"},
+                )
+            expression = SharedDocument.frontmatter[key].astext
+            if isinstance(expected, (int, float)):
+                expression = case(
+                    (
+                        func.jsonb_typeof(SharedDocument.frontmatter[key])
+                        == "number",
+                        expression.cast(Numeric),
+                    ),
+                    else_=None,
+                )
+            column = {
+                "gte": expression >= expected,
+                "lte": expression <= expected,
+                "gt": expression > expected,
+                "lt": expression < expected,
+            }[operator]
+            conditions.append(column)
+    return conditions
+
+
 async def list_documents(
     session: AsyncSession,
     principal: Principal,
@@ -209,6 +302,8 @@ async def list_documents(
     namespace: str | None = None,
     filters: dict[str, Any] | None = None,
     limit: int = 100,
+    cursor: str | None = None,
+    include_archived: bool = False,
 ) -> DocumentListResponse:
     require_permission(principal, "doc:read")
     query = select(SharedDocument).where(
@@ -222,14 +317,162 @@ async def list_documents(
         if allowed is not None:
             query = query.where(SharedDocument.namespace.in_(allowed))
     if filters:
-        query = query.where(SharedDocument.frontmatter.contains(filters))
+        for condition in _frontmatter_conditions(filters):
+            query = query.where(condition)
+    if not include_archived:
+        query = query.where(SharedDocument.archived_at.is_(None))
+    page_size = min(limit, settings.max_page_size)
+    if cursor:
+        cursor_time, cursor_id = _decode_cursor(cursor)
+        query = query.where(
+            tuple_(SharedDocument.updated_at, SharedDocument.id)
+            < tuple_(cursor_time, cursor_id)
+        )
     rows = (
         await session.execute(
-            query.order_by(SharedDocument.updated_at.desc())
-            .limit(min(limit, settings.max_page_size))
+            query.order_by(
+                SharedDocument.updated_at.desc(), SharedDocument.id.desc()
+            ).limit(page_size + 1)
         )
     ).scalars().all()
-    return DocumentListResponse(items=[document_summary(row) for row in rows])
+    next_cursor = None
+    if len(rows) > page_size:
+        last = rows[page_size - 1]
+        next_cursor = _encode_cursor(last.updated_at, last.id)
+        rows = rows[:page_size]
+    return DocumentListResponse(
+        items=[document_summary(row) for row in rows],
+        next_cursor=next_cursor,
+        namespace=namespace,
+        count=len(rows),
+    )
+
+
+def _can_manage_document(principal: Principal, document: SharedDocument) -> bool:
+    return principal.is_commander or document.created_by == principal.agent_signature
+
+
+async def _set_document_archived(
+    session: AsyncSession,
+    principal: Principal,
+    doc_key: str,
+    request: DocumentArchiveRequest,
+    *,
+    archived: bool,
+) -> DocumentMutationResponse:
+    require_permission(principal, "doc:write")
+    document = await _get_document(
+        session, principal.workspace.id, doc_key, for_update=True
+    )
+    ensure_namespace(principal, document.namespace, write=True)
+    action = "archive" if archived else "restore"
+    if not _can_manage_document(principal, document):
+        raise Forbidden(
+            f"only the creator or a workspace commander can {action} this document"
+        )
+    if request.expected_version is not None and document.version != request.expected_version:
+        raise VersionConflict("shared_document", _latest(document))
+    batch = uuid.uuid4()
+    changed = (document.archived_at is None) == archived
+    if changed:
+        before = document_snapshot(document)
+        document.archived_at = utcnow() if archived else None
+        document.archived_by = principal.agent_signature if archived else None
+        document.archive_reason = request.reason if archived else None
+        document.updated_by = principal.agent_signature
+        document.updated_at = utcnow()
+        await session.flush()
+        await record_audit(
+            session,
+            workspace_id=principal.workspace.id,
+            session_batch_id=batch,
+            agent_signature=principal.agent_signature,
+            target_table="shared_documents",
+            target_record_id=document.id,
+            operation="UPDATE",
+            before=before,
+            after=document_snapshot(document),
+        )
+        await append_event(
+            session,
+            workspace_id=principal.workspace.id,
+            agent=principal.agent_signature,
+            event_type="DOC_ARCHIVED" if archived else "DOC_RESTORED",
+            payload={"doc_key": doc_key, "reason": request.reason},
+            namespace=document.namespace,
+        )
+        await session.commit()
+    return DocumentMutationResponse(document=document_out(document), session_batch_id=batch)
+
+
+async def archive_document(
+    session: AsyncSession,
+    principal: Principal,
+    doc_key: str,
+    request: DocumentArchiveRequest,
+) -> DocumentMutationResponse:
+    return await _set_document_archived(
+        session, principal, doc_key, request, archived=True
+    )
+
+
+async def restore_document(
+    session: AsyncSession,
+    principal: Principal,
+    doc_key: str,
+    request: DocumentArchiveRequest,
+) -> DocumentMutationResponse:
+    return await _set_document_archived(
+        session, principal, doc_key, request, archived=False
+    )
+
+
+async def batch_upsert_documents(
+    session: AsyncSession,
+    principal: Principal,
+    request: DocumentBatchUpsertRequest,
+) -> DocumentBatchUpsertResponse:
+    results: list[DocumentBatchUpsertResult] = []
+    for index, item in enumerate(request.items):
+        try:
+            result = await upsert_document(
+                session, principal, item.doc_key, item, commit=False
+            )
+        except ApiError as exc:
+            await session.rollback()
+            details = {"index": index, "doc_key": item.doc_key}
+            if isinstance(exc.details, dict):
+                details.update(exc.details)
+            raise ApiError(
+                exc.status_code,
+                exc.code,
+                f"batch item {index} ({item.doc_key}): {exc.message}",
+                details=details,
+            ) from exc
+        results.append(
+            DocumentBatchUpsertResult(
+                ok=True,
+                document=result.document,
+                session_batch_id=result.session_batch_id,
+            )
+        )
+    await session.commit()
+    return DocumentBatchUpsertResponse(items=results)
+
+
+async def batch_dereference(
+    session: AsyncSession,
+    principal: Principal,
+    uris: list[str],
+) -> DereferenceBatchResponse:
+    items: list[DereferenceBatchItem] = []
+    for uri in uris:
+        try:
+            result = await dereference(session, principal, uri)
+            items.append(DereferenceBatchItem(uri=uri, ok=True, document=result.document))
+        except ApiError as exc:
+            items.append(DereferenceBatchItem(uri=uri, ok=False, error=exc.body()["error"]))
+    return DereferenceBatchResponse(items=items)
 
 
 async def get_document(
@@ -249,6 +492,7 @@ async def upsert_document(
     *,
     actor: str | None = None,
     batch_id: uuid.UUID | None = None,
+    commit: bool = True,
 ) -> DocumentMutationResponse:
     agent = actor or effective_agent(principal, request.agent)
     batch = batch_id or request.session_batch_id or uuid.uuid4()
@@ -357,7 +601,8 @@ async def upsert_document(
             },
             namespace=namespace,
         )
-        await session.commit()
+        if commit:
+            await session.commit()
         return DocumentMutationResponse(
             document=document_out(document), session_batch_id=batch
         )
@@ -480,7 +725,8 @@ async def upsert_document(
         },
         namespace=namespace,
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     return DocumentMutationResponse(
         document=document_out(document), session_batch_id=batch
     )
@@ -637,12 +883,17 @@ async def query_documents(
         allowed = _allowed_namespaces(principal)
         if allowed is not None:
             conditions.append(SharedDocument.namespace.in_(allowed))
-    if request.filters:
-        conditions.append(SharedDocument.frontmatter.contains(request.filters))
+    for condition in _frontmatter_conditions(request.filters):
+        conditions.append(condition)
     if not request.include_unverified:
-        conditions.append(SharedDocument.verification_status == "VERIFIED")
+        conditions.append(
+            (SharedDocument.verification_status == "VERIFIED")
+            | (SharedDocument.created_by == principal.agent_signature)
+        )
     if not request.include_tainted:
         conditions.append(SharedDocument.tainted.is_(False))
+    if not request.include_archived:
+        conditions.append(SharedDocument.archived_at.is_(None))
     limit = min(request.limit, settings.max_search_top_k)
 
     if not request.query:

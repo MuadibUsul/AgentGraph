@@ -407,6 +407,7 @@ class DocumentQueryRequest(StrictModel):
     limit: int = Field(default=10, ge=1, le=50)
     include_unverified: bool = False
     include_tainted: bool = False
+    include_archived: bool = False
     mode: Literal["auto", "semantic", "keyword", "hybrid"] = "hybrid"
 
     @model_validator(mode="after")
@@ -692,6 +693,30 @@ class SlotMutationResponse(BaseModel):
     session_batch_id: uuid.UUID
 
 
+class DocumentArchiveRequest(StrictModel):
+    reason: str | None = Field(default=None, max_length=4_000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class DocumentBatchUpsertItem(DocumentUpsertRequest):
+    doc_key: str = Field(
+        pattern=_KEY_PATTERN + "$", min_length=1, max_length=256
+    )
+
+
+class DocumentBatchUpsertRequest(StrictModel):
+    items: list[DocumentBatchUpsertItem] = Field(min_length=1, max_length=25)
+
+    @model_validator(mode="after")
+    def _payload_cap(self) -> DocumentBatchUpsertRequest:
+        content_bytes = sum(
+            len(item.content.encode("utf-8")) for item in self.items
+        )
+        if content_bytes > 5_000_000:
+            raise ValueError("batch content exceeds the 5,000,000 byte cap")
+        return self
+
+
 class DocumentSummary(BaseModel):
     id: uuid.UUID
     doc_key: str
@@ -710,6 +735,9 @@ class DocumentSummary(BaseModel):
     tainted: bool = False
     taint_sources: list[Any] = Field(default_factory=list)
     score: float | None = None
+    archived_at: datetime | None = None
+    archived_by: str | None = None
+    archive_reason: str | None = None
     updated_by: str
     updated_at: datetime
 
@@ -723,11 +751,24 @@ class DocumentOut(DocumentSummary):
 
 class DocumentListResponse(BaseModel):
     items: list[DocumentSummary]
+    next_cursor: str | None = None
+    namespace: str | None = None
+    count: int = 0
 
 
 class DocumentMutationResponse(BaseModel):
     document: DocumentOut
     session_batch_id: uuid.UUID
+
+
+class DocumentBatchUpsertResult(BaseModel):
+    ok: bool = True
+    document: DocumentOut
+    session_batch_id: uuid.UUID
+
+
+class DocumentBatchUpsertResponse(BaseModel):
+    items: list[DocumentBatchUpsertResult]
 
 
 class DocumentNormalizeResponse(BaseModel):
@@ -738,6 +779,22 @@ class DocumentNormalizeResponse(BaseModel):
 class DocumentQueryResponse(BaseModel):
     items: list[DocumentSummary]
     total: int
+    next_cursor: str | None = None
+
+
+class DereferenceBatchRequest(StrictModel):
+    uris: list[str] = Field(min_length=1, max_length=25)
+
+
+class DereferenceBatchItem(BaseModel):
+    uri: str
+    ok: bool
+    document: DocumentOut | None = None
+    error: dict[str, Any] | None = None
+
+
+class DereferenceBatchResponse(BaseModel):
+    items: list[DereferenceBatchItem]
 
 
 class DereferenceResponse(BaseModel):
@@ -798,6 +855,11 @@ class WorkspaceMapResponse(BaseModel):
     documents: list[DocumentSummary]
     outputs: list[WorkspaceOutput] = Field(default_factory=list)
     artifact_uri_scheme: str = "doc://<doc_key>"
+    namespace_counts: dict[str, dict[str, int]] = Field(default_factory=dict)
+    incremental: bool = False
+    since: str | None = None
+    next_cursor: str | None = None
+    timeline: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class QuotaUsage(BaseModel):

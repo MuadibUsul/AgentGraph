@@ -24,6 +24,9 @@ from app.config import get_settings
 from app.database import async_session_factory
 from app.errors import ApiError
 from app.schemas import (
+    DocumentArchiveRequest,
+    DocumentBatchUpsertItem,
+    DocumentBatchUpsertRequest,
     DocumentQueryRequest,
     DocumentSectionPatchRequest,
     DocumentUpsertRequest,
@@ -303,6 +306,7 @@ async def workspace_sync(
     task_statuses: list[str] | None = None,
     namespace: str | None = None,
     compact: bool = False,
+    since: str | None = None,
 ) -> dict[str, Any]:
     """Load the L0 blackboard map without raw document/state payloads.
 
@@ -311,11 +315,16 @@ async def workspace_sync(
     versions with human-lock flags, the document tree and the current role's
     permissions. Use focus_keys to narrow to specific task/doc/slot keys before
     loading L1/L2. Set compact=true for a lower-token L0 view.
+
+    Pass since=<next_cursor from a previous call> for incremental sync:
+    tasks/documents/slots and timeline contain only changes after the cursor,
+    and namespace_counts gives per-namespace totals. A null/omitted since does
+    a full map. The response always includes next_cursor for the next call.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
-            board = await services.workspace_map(session, principal)
+            board = await services.workspace_map(session, principal, since=since)
         except ApiError as exc:
             raise _api_error(exc) from exc
     payload = board.model_dump(mode="json")
@@ -841,13 +850,19 @@ async def query_workspace(
     limit: int = 10,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    include_archived: bool = False,
     mode: str = "hybrid",
 ) -> dict[str, Any]:
     """Structured + semantic document discovery.
 
-    filters use JSONB containment on frontmatter, e.g. {"status":"DRAFT"}.
-    query adds vector similarity ranking. Returns summaries only; call
-    dereference(uri) or read the document for L2 content.
+    By default this returns VERIFIED documents plus the caller's own DRAFTs,
+    so a writer can retrieve what it just created; other agents' unverified
+    drafts stay hidden. Set include_unverified=true to search all drafts.
+
+    filters support scalar equality and {eq, gte, lte, gt, lt, exists}
+    operators, e.g. {"status":"DRAFT", "due_at":{"gte":"2026-11-01"},
+    "owner":{"exists":true}}. Archived documents are excluded unless
+    include_archived=true. query adds hybrid ranking; returns summaries only.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -859,6 +874,7 @@ async def query_workspace(
                 limit=limit,
                 include_unverified=include_unverified,
                 include_tainted=include_tainted,
+                include_archived=include_archived,
                 mode=mode,
             )
             result = await services.query_documents(session, principal, body)
@@ -1008,6 +1024,214 @@ async def draft_external_action(
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="list_documents")
+async def list_documents(
+    namespace: str | None = None,
+    cursor: str | None = None,
+    limit: int = 100,
+    include_archived: bool = False,
+    filters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Exhaustively enumerate documents in a namespace with an opaque cursor.
+
+    Order is stable by (updated_at, id). Pass the returned next_cursor back as
+    cursor; next_cursor=null means enumeration is complete. Archived documents
+    are excluded unless include_archived=true. filters supports frontmatter
+    equality and {eq, gte, lte, gt, lt, exists} operators.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await services.list_documents(
+                session,
+                principal,
+                namespace=namespace,
+                filters=filters or {},
+                limit=limit,
+                cursor=cursor,
+                include_archived=include_archived,
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="upsert_many")
+async def upsert_many(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Create or update up to 25 documents in one all-or-nothing transaction.
+
+    Each item accepts doc_key, content, title, frontmatter, expected_version,
+    namespace, agent and session_batch_id. If any item fails, the whole batch
+    rolls back and the error details identify the failing index and doc_key.
+    Up to 25 items and 5,000,000 bytes of content per batch; successful items
+    carry ok=true.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            parsed = []
+            for index, item in enumerate(items):
+                payload = dict(item)
+                if principal.is_commander:
+                    payload["agent"] = _actor(principal, payload.get("agent"))
+                try:
+                    parsed.append(DocumentBatchUpsertItem(**payload))
+                except ValidationError as exc:
+                    details = [
+                        {
+                            "loc": [index, *error.get("loc", ())],
+                            "msg": error.get("msg", "invalid value"),
+                            "type": error.get("type", "value_error"),
+                        }
+                        for error in exc.errors()
+                    ]
+                    raise _tool_error(
+                        "validation_error",
+                        f"invalid batch item {index}",
+                        422,
+                        {"index": index, "doc_key": item.get("doc_key"), "errors": details},
+                    ) from exc
+            body = DocumentBatchUpsertRequest(items=parsed)
+            result = await services.batch_upsert_documents(session, principal, body)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    payload = result.model_dump(mode="json")
+    for item in payload["items"]:
+        document = item.get("document", {})
+        item["document"] = {
+            key: document.get(key)
+            for key in (
+                "id", "doc_key", "version", "content_hash",
+                "verification_status", "trust_level", "namespace", "updated_at",
+            )
+        }
+    return _compact(payload)
+
+
+@mcp.tool(name="dereference_many")
+async def dereference_many(uris: list[str]) -> dict[str, Any]:
+    """Resolve up to 25 L2 URIs; each result has ok plus document or error.
+
+    One failed URI does not hide successful items.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await services.batch_dereference(session, principal, uris)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="archive_document")
+async def archive_document(
+    doc_key: str,
+    reason: str | None = None,
+    expected_version: int | None = None,
+) -> dict[str, Any]:
+    """Soft-archive a document (creator or workspace commander only).
+
+    Archived documents disappear from ordinary list/query/map results but can
+    still be dereferenced for audit and listed with include_archived=true.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await services.archive_document(
+                session,
+                principal,
+                doc_key,
+                DocumentArchiveRequest(
+                    reason=reason, expected_version=expected_version
+                ),
+            )
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    payload = result.model_dump(mode="json")
+    document = payload.get("document", {})
+    payload["document"] = {
+        key: document.get(key)
+        for key in (
+            "id", "doc_key", "version", "namespace", "archived_at",
+            "archived_by", "archive_reason", "updated_at",
+        )
+    }
+    return _compact(payload)
+
+
+@mcp.tool(name="restore_document")
+async def restore_document(
+    doc_key: str,
+    reason: str | None = None,
+    expected_version: int | None = None,
+) -> dict[str, Any]:
+    """Restore a previously archived document (creator or commander only)."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await services.restore_document(
+                session,
+                principal,
+                doc_key,
+                DocumentArchiveRequest(
+                    reason=reason, expected_version=expected_version
+                ),
+            )
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    payload = result.model_dump(mode="json")
+    document = payload.get("document", {})
+    payload["document"] = {
+        key: document.get(key)
+        for key in (
+            "id", "doc_key", "version", "namespace", "archived_at",
+            "archived_by", "archive_reason", "updated_at",
+        )
+    }
+    return _compact(payload)
+
+
+@mcp.tool(name="get_api_docs")
+async def get_api_docs() -> dict[str, Any]:
+    """Return the REST/MCP connection guide and core request schemas.
+
+    Agent-readable; no admin token required. The live OpenAPI document is also
+    available at GET /v1/agent-docs.
+    """
+    return _compact(
+        {
+            "name": "AgentGraph",
+            "version": settings.app_version,
+            "rest_base": "/v1",
+            "mcp_endpoint": "/mcp/",
+            "agent_docs_endpoint": "/v1/agent-docs",
+            "authentication": (
+                "Authorization: Bearer <workspace-or-agent-key> for both REST "
+                "and MCP; admin Basic auth is not required."
+            ),
+            "workflow": [
+                "whoami -> workspace_sync -> list_documents/query_workspace",
+                "dereference or dereference_many for L2 content",
+                "upsert_shared_doc / patch_doc_section / upsert_many for writes",
+                "archive_document / restore_document instead of deletion",
+                "workspace_sync(since=next_cursor) for incremental changes",
+            ],
+            "batch_limits": {"upsert_many": 25, "dereference_many": 25},
+            "schemas": {
+                "DocumentUpsertRequest": DocumentBatchUpsertItem.model_json_schema(),
+                "DocumentQueryRequest": DocumentQueryRequest.model_json_schema(),
+                "DocumentArchiveRequest": DocumentArchiveRequest.model_json_schema(),
+            },
+        }
+    )
 
 
 _http_app: ASGIApp | None = None

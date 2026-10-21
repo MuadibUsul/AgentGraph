@@ -3,7 +3,7 @@
 > 版本：v3.2.1  
 > 定位：**人机共驾的多 Agent 共享工作空间 / 黑板系统（Human-in-the-Loop Shared Blackboard）**  
 > 技术栈：FastAPI + PostgreSQL 16 + pgvector + MCP + Next.js 14  
-> 当前状态：v3.2.1 已完成并部署到 Tlines 服务器；87 项自动化测试通过，生产 HTTPS 控制台、cookbook/benchmark 与设计验收已执行
+> 当前状态：v3.2.1 已完成并部署到 Tlines 服务器；94 项自动化测试通过，生产 HTTPS 控制台、cookbook/benchmark 与设计验收已执行
 
 ---
 
@@ -72,7 +72,7 @@ AgentGraph 最初是一个“Agent 原生记忆数据库”。v3.0 将它重构�
 │  ─ heading section patch   ─ session batch undo     ─ SSE filters             │
 │  ─ vector query            ─ timeline events                                  │
 │                                                                              │
-│  MCP Server: stdio + streamable HTTP (16 tools, same service layer)           │
+│  MCP Server: stdio + streamable HTTP (22 tools, same service layer)           │
 └───────────────────────────────────┬──────────────────────────────────────────┘
                                     │ Async SQLAlchemy / asyncpg
 ┌───────────────────────────────────▼──────────────────────────────────────────┐
@@ -152,7 +152,7 @@ E:\Codes\AgentGraph\
 │   └── mcp_server/
 │       ├── __init__.py
 │       ├── __main__.py                   # python -m app.mcp_server（stdio）
-│       └── server.py                     # 16 个 MCP 工具 + HTTP/stdio 认证
+│       └── server.py                     # 22 个 MCP 工具 + HTTP/stdio 认证
 │
 ├── sql/
 │   ├── init.sql                          # 基础 DDL + outbox 触发器（幂等）
@@ -251,7 +251,7 @@ E:\Codes\AgentGraph\
 | `api/v1_routes.py` | Agent/commander REST：whoami、L0 map、tasks、slots、documents（含 verify/deprecate/versions）、query、dereference、links、timeline、audit、stats。 |
 | `api/admin_routes.py` | 人类控制台：workspace、任务审批/升级、槽位人类覆盖、文档创建/编辑/验证/版本、Agent Token、审计与带 force 的批次撤销。 |
 | `api/stream_routes.py` | 可重放 SSE：`Last-Event-ID`/`last_event_id` 从 outbox 补齐断线事件；单进程 bus，不占请求池。 |
-| `mcp_server/server.py` | 16 个 MCP 工具；HTTP 中间件解析 workspace/agent token；stdio 从 `MCP_API_KEY` 读取身份；公共服务层复用 RBAC。 |
+| `mcp_server/server.py` | 22 个 MCP 工具；HTTP 中间件解析 workspace/agent token；stdio 从 `MCP_API_KEY` 读取身份；公共服务层复用 RBAC。 |
 
 ### 4.5 前端
 
@@ -419,7 +419,7 @@ INSERT/UPDATE 表
 
 - **HTTP**：`POST/GET http://<host>:8000/mcp/`，Bearer 为 commander 或 agent token。
 - **stdio**：`python -m app.mcp_server`，需要 `DATABASE_URL` + `MCP_API_KEY`。
-- 16 个工具全部复用 `app/services/`，所以 RBAC、人类锁、审计与 REST 完全一致。
+- 22 个工具全部复用 `app/services/`，所以 RBAC、人类锁、审计与 REST 完全一致。
 
 ---
 
@@ -450,6 +450,11 @@ INSERT/UPDATE 表
 | POST | `/v1/documents/{doc_key}/deprecate` | 弃用 |
 | GET | `/v1/documents/{doc_key}/versions[/{version}]` | 不可变版本历史 |
 | POST | `/v1/query` | frontmatter + 向量查询（默认仅 VERIFIED） |
+| GET | `/v1/agent-docs` | Agent token 可读的 OpenAPI/连接指南 |
+| GET | `/v1/documents?namespace=&cursor=&limit=&include_archived=` | 游标全量列举 |
+| POST | `/v1/documents/batch` | 最多 25 个文档，单事务 |
+| POST | `/v1/dereference-many` | 最多 25 个 URI 批量解析 |
+| POST | `/v1/documents/{doc_key}/archive` / `restore` | 软归档/恢复 |
 | POST | `/v1/dereference` | L2 按需解析 |
 | POST/GET | `/v1/links` | 创建/查询 typed links |
 | POST/GET | `/v1/timeline` | 追加/读取事件 |
@@ -465,7 +470,7 @@ INSERT/UPDATE 表
 
 | 工具 | 作用 |
 |---|---|
-| `workspace_sync` | L0 快照 |
+| `workspace_sync` | L0 快照；`since=<cursor>` 增量同步，含 `namespace_counts` 与 `next_cursor` |
 | `agent_claim_and_read` | 领取任务 + L1 上下文 |
 | `agent_patch_shared_state` | 状态 JSON Patch |
 | `agent_handoff_task` | L1/L2 交接、创建下游 |
@@ -473,7 +478,12 @@ INSERT/UPDATE 表
 | `upsert_shared_doc` | 文档创建/更新 |
 | `patch_doc_section` | Markdown 段落修改 |
 | `query_workspace` | frontmatter + 语义查询；默认仅 VERIFIED，可传 `include_unverified=true` |
+| `list_documents` | 命名空间全量游标列举（默认排除归档） |
 | `dereference` | 按需加载 L2 |
+| `dereference_many` | 最多 25 个 URI 批量解析，逐项返回 ok/error |
+| `upsert_many` | 最多 25 个文档、单事务全成功或全回滚 |
+| `archive_document` / `restore_document` | 软归档/恢复（作者或 COMMANDER），写审计与时间线 |
+| `get_api_docs` | Agent 可读的连接指南与请求 schema |
 
 Handoff 工具可携带 claim 返回的 `lease_epoch`；服务端校验持有者、活动租约与 epoch。
 
@@ -552,7 +562,7 @@ v2 数据库（memory_crystals / causal_edges）
 
 已有 v3.0 库也走同一 hardening 路径；全新库由 init.sql 直接创建 3.1 schema，
 随后幂等 hardening 作为自检。两种情况都已验证：v2 dump 迁移后得到 7 个文档、
-7 个初始版本、3 条链接、2 个槽位；fresh schema 的 87 项测试全部通过。
+7 个初始版本、3 条链接、2 个槽位；fresh schema 的 94 项测试全部通过。
 
 迁移前建议备份：
 
@@ -574,7 +584,7 @@ docker compose exec -T db pg_dump -U agentgraph -d agentgraph \
 
 ```bash
 export TEST_DATABASE_URL="postgresql+asyncpg://agentgraph:agentgraph@localhost:55432/agentgraph"
-pytest -q        # 当前 87 passed
+pytest -q        # 当前 94 passed
 ruff check .
 ```
 
@@ -742,7 +752,7 @@ Agent token 可覆盖 per-minute 与月 token 预算。
 2. v3.1 库：`v3_2_production.sql`（全部 DDL 幂等、角色/策略可重入）→ 记录 `3.2.0`；v3.2.1 再执行 `v3_2_1_mcp_improvements.sql`。
 3. v2 dump：`v2_to_v3_collab.sql` → hardening → v3.2；原有文档哈希/首版本回填。
 
-验证：`87 passed`（fresh pgvector）、生产 HTTPS `/readyz` 返回 3.2.1、公开控制台
+验证：`94 passed`（fresh pgvector）、生产 HTTPS `/readyz` 返回 3.2.1、公开控制台
 Governance 面板实际加载、`scripts/benchmark_retrieval.py` 生成真实 recall/latency 报告。
 
 ## 13. 扩展点与当前边界
@@ -750,7 +760,7 @@ Governance 面板实际加载、`scripts/benchmark_retrieval.py` 生成真实 re
 v3.2 已落地：受审提案与 Arena、三方 rebase、路径策略/JSON Schema、污点传播、
 人类账号与 PostgreSQL RLS、类型化链接外键、分块混合检索、持久化签名 Webhook、
 审批式外部动作与补偿、预算/限流，以及覆盖并发/重放/epoch/提案/rebase/污点/RLS/
-Webhook/外部动作、MCP 对等、失败操作时间线、agent token 轮换与 review_feedback 的 87 项测试。
+Webhook/外部动作、MCP 对等、失败操作时间线、agent token 轮换、review_feedback、游标列举、软归档、批量读写、范围过滤与增量同步的测试。
 
 3.2.1 复测修复：驳回后任务回到 `READY` 并保留 `review_feedback`/`reviewed_by`，
 租约清空；管理员可 `reassign`/`cancel` 历史 SCOUT 任务；MCP 返回值改为真正的
@@ -773,7 +783,9 @@ section patch 会自动去掉重复的标题行。
 Playwright/axe 自动化视觉回归（当前设计验收标记为 NOT TESTED/BLOCKED）；亮色主题
 （按既有深色控制台身份保留，Token 层已为后续亮色准备）。
 
-这些内容已在 README 与 `docs/v3-requirements.md` 中保持诚实边界。
+这些内容已在 README 与 `docs/v3-requirements.md` 中保持诚实边界。下一轮存储层需求
+（穷举列表、agent 可读文档、批量读写、归档、范围过滤、增量同步）见
+`docs/AGENT_FEEDBACK_2026-10-21.md`。
 
 ---
 

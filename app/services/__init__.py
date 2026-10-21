@@ -22,7 +22,10 @@ from app.services.accounts import (
 )
 from app.services.audit import list_audit, undo_batch
 from app.services.documents import (
+    archive_document,
     backfill_verified_artifacts,
+    batch_dereference,
+    batch_upsert_documents,
     create_artifact,
     dereference,
     get_document,
@@ -34,6 +37,7 @@ from app.services.documents import (
     normalize_workspace_html_documents,
     patch_document_section,
     query_documents,
+    restore_document,
     set_document_status,
     set_document_taint,
     upsert_document,
@@ -111,6 +115,10 @@ from app.services.workspace import (
 
 __all__ = [
     "append_event",
+    "archive_document",
+    "batch_dereference",
+    "batch_upsert_documents",
+    "restore_document",
     "backfill_verified_artifacts",
     "cancel_task",
     "claim_task",

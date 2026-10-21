@@ -134,10 +134,16 @@ async def test_document_versions_verification_and_trust(client, admin_headers, w
         json={"filters": {"status": "DRAFT"}, "limit": 10},
     )
     assert default_query.status_code == 200
-    assert all(item["doc_key"] != key for item in default_query.json()["items"])
+    assert any(item["doc_key"] == key for item in default_query.json()["items"])
+    other_default = await client.post(
+        "/v1/query",
+        headers=auditor["headers"],
+        json={"filters": {"status": "DRAFT"}, "limit": 10},
+    )
+    assert all(item["doc_key"] != key for item in other_default.json()["items"])
     broad_query = await client.post(
         "/v1/query",
-        headers=analyst["headers"],
+        headers=auditor["headers"],
         json={
             "filters": {"status": "DRAFT"},
             "limit": 10,
@@ -179,7 +185,15 @@ async def test_document_versions_verification_and_trust(client, admin_headers, w
         headers=analyst["headers"],
         json={"filters": {"status": "DRAFT"}, "limit": 10},
     )
-    assert all(item["doc_key"] != key for item in after_change.json()["items"])
+    assert any(item["doc_key"] == key for item in after_change.json()["items"])
+    after_change_other = await client.post(
+        "/v1/query",
+        headers=auditor["headers"],
+        json={"filters": {"status": "DRAFT"}, "limit": 10},
+    )
+    assert all(
+        item["doc_key"] != key for item in after_change_other.json()["items"]
+    )
 
     versions = await client.get(
         f"/v1/documents/{key}/versions", headers=analyst["headers"]

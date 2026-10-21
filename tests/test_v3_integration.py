@@ -680,6 +680,12 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         "create_task",
                         "review_task",
                         "request_human_review",
+                        "list_documents",
+                        "upsert_many",
+                        "dereference_many",
+                        "archive_document",
+                        "restore_document",
+                        "get_api_docs",
                     }
                     sync = await session.call_tool("workspace_sync", {})
                     assert sync.isError is False
@@ -833,6 +839,105 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                     )
                     assert compact_task["artifact_uri"] == artifact_uri
                     assert compact_task["handoff_summary"] == "MCP handoff"
+                    listed = await session.call_tool(
+                        "list_documents",
+                        {"namespace": "mcpns", "limit": 100},
+                    )
+                    assert listed.isError is False
+                    listed_payload = json.loads(listed.content[0].text)
+                    assert listed_payload["next_cursor"] is None
+                    assert "mcp/ns-doc" in {
+                        item["doc_key"] for item in listed_payload["items"]
+                    }
+                    many = await session.call_tool(
+                        "upsert_many",
+                        {
+                            "items": [
+                                {
+                                    "doc_key": "mcpns/many-a",
+                                    "content": "# many a",
+                                    "namespace": "mcpns",
+                                    "expected_version": 0,
+                                },
+                                {
+                                    "doc_key": "mcpns/many-b",
+                                    "content": "# many b",
+                                    "namespace": "mcpns",
+                                    "expected_version": 0,
+                                },
+                            ]
+                        },
+                    )
+                    assert many.isError is False, many.content[0].text
+                    many_payload = json.loads(many.content[0].text)
+                    assert len(many_payload["items"]) == 2
+                    deref_many = await session.call_tool(
+                        "dereference_many",
+                        {
+                            "uris": [
+                                "doc://mcpns/many-a",
+                                "doc://mcpns/missing",
+                            ]
+                        },
+                    )
+                    assert deref_many.isError is False
+                    deref_payload = json.loads(deref_many.content[0].text)
+                    assert deref_payload["items"][0]["ok"] is True
+                    assert deref_payload["items"][1]["ok"] is False
+                    assert deref_payload["items"][1]["error"]["code"] == "not_found"
+                    archived = await session.call_tool(
+                        "archive_document",
+                        {"doc_key": "mcpns/many-a", "reason": "MCP cleanup"},
+                    )
+                    assert archived.isError is False, archived.content[0].text
+                    assert json.loads(archived.content[0].text)["document"][
+                        "archived_at"
+                    ]
+                    active = await session.call_tool(
+                        "list_documents",
+                        {"namespace": "mcpns", "limit": 100},
+                    )
+                    assert "mcpns/many-a" not in {
+                        item["doc_key"]
+                        for item in json.loads(active.content[0].text)["items"]
+                    }
+                    with_archived = await session.call_tool(
+                        "list_documents",
+                        {
+                            "namespace": "mcpns",
+                            "limit": 100,
+                            "include_archived": True,
+                        },
+                    )
+                    assert "mcpns/many-a" in {
+                        item["doc_key"]
+                        for item in json.loads(with_archived.content[0].text)["items"]
+                    }
+                    restored = await session.call_tool(
+                        "restore_document", {"doc_key": "mcpns/many-a"}
+                    )
+                    assert restored.isError is False
+                    assert (
+                        json.loads(restored.content[0].text)["document"]["archived_at"]
+                        is None
+                    )
+                    incremental = await session.call_tool(
+                        "workspace_sync",
+                        {"since": sync_payload["next_cursor"]},
+                    )
+                    assert incremental.isError is False
+                    incremental_payload = json.loads(incremental.content[0].text)
+                    assert incremental_payload["incremental"] is True
+                    assert "mcpns/many-a" in {
+                        item["doc_key"]
+                        for item in incremental_payload["documents"]
+                    }
+                    assert incremental_payload["next_cursor"]
+                    docs_tool = await session.call_tool("get_api_docs", {})
+                    assert docs_tool.isError is False
+                    docs_payload = json.loads(docs_tool.content[0].text)
+                    assert docs_payload["batch_limits"]["upsert_many"] == 25
+                    assert "DocumentUpsertRequest" in docs_payload["schemas"]
     timeline = await client.get(
         "/v1/timeline",
         headers=commander,

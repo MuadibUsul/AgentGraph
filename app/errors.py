@@ -118,7 +118,12 @@ class VersionConflict(ApiError):
             "version_conflict",
             f"{resource} changed since expected_version; re-read and merge "
             "against the latest version",
-            details={"resource": resource, "latest": latest},
+            details={
+                "resource": resource,
+                "current_version": latest.get("version") if latest else None,
+                "current_hash": latest.get("content_hash") if latest else None,
+                "latest": latest,
+            },
         )
 
 

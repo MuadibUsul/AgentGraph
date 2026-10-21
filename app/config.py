@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     timeline_payload_chars: int = 180
     token_chars_per_token: float = 4.0
     max_workspace_map_items: int = 300
-    max_page_size: int = 100
+    max_page_size: int = 500
 
     # ----------------------------------------------------- proposals / policy
     proposals_enabled: bool = True

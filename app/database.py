@@ -202,6 +202,7 @@ async def apply_schema() -> None:
     hardening_path = root / "sql" / "migrations" / "v3_hardening.sql"
     production_path = root / "sql" / "migrations" / "v3_2_production.sql"
     improvements_path = root / "sql" / "migrations" / "v3_2_1_mcp_improvements.sql"
+    feedback_path = root / "sql" / "migrations" / "v3_3_agent_feedback.sql"
     if not schema_path.exists():
         raise RuntimeError(f"schema file not found: {schema_path}")
     if not hardening_path.exists():
@@ -210,6 +211,8 @@ async def apply_schema() -> None:
         raise RuntimeError(f"migration file not found: {production_path}")
     if not improvements_path.exists():
         raise RuntimeError(f"migration file not found: {improvements_path}")
+    if not feedback_path.exists():
+        raise RuntimeError(f"migration file not found: {feedback_path}")
 
     conn = await asyncpg.connect(asyncpg_dsn(), timeout=settings.db_pool_timeout)
     try:
@@ -287,7 +290,17 @@ async def apply_schema() -> None:
                 "ON CONFLICT (version) DO NOTHING"
             )
         await _ensure_vector_dimension(conn)
-        logger.info("database schema is up to date (v3.2.1)")
+        feedback_applied = await conn.fetchval(
+            "SELECT 1 FROM schema_migrations WHERE version = '3.3.0'"
+        )
+        if not feedback_applied:
+            logger.info("applying v3.3 agent feedback migration")
+            await conn.execute(feedback_path.read_text(encoding="utf-8"))
+            await conn.execute(
+                "INSERT INTO schema_migrations(version) VALUES ('3.3.0') "
+                "ON CONFLICT (version) DO NOTHING"
+            )
+        logger.info("database schema is up to date (v3.3.0)")
     finally:
         await conn.close()
 

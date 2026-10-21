@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import services
@@ -14,8 +14,13 @@ from app.errors import ApiError
 from app.models import TaskStatus
 from app.schemas import (
     AuditListResponse,
+    DereferenceBatchRequest,
+    DereferenceBatchResponse,
     DereferenceRequest,
     DereferenceResponse,
+    DocumentArchiveRequest,
+    DocumentBatchUpsertRequest,
+    DocumentBatchUpsertResponse,
     DocumentListResponse,
     DocumentMutationResponse,
     DocumentOut,
@@ -96,10 +101,68 @@ async def whoami(principal: Principal = Depends(get_principal)) -> WhoAmIRespons
     summary="L0 workspace map: tasks, slot/doc tree, enums (no raw payloads)",
 )
 async def workspace_map(
+    since: str | None = Query(default=None),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> WorkspaceMapResponse:
-    return await services.workspace_map(session, principal)
+    return await services.workspace_map(session, principal, since=since)
+
+
+@router.get(
+    "/agent-docs",
+    summary="Agent-readable API contract, connection guide and OpenAPI schema",
+)
+async def agent_docs(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    """Read-only API/MCP documentation available to every workspace token."""
+    openapi = request.app.openapi()
+    paths = {
+        path: operation
+        for path, operation in openapi.get("paths", {}).items()
+        if path.startswith("/v1") and not path.startswith("/v1/admin")
+    }
+    base = str(request.base_url).rstrip("/")
+    return {
+        "name": "AgentGraph",
+        "version": openapi.get("info", {}).get("version"),
+        "base_url": f"{base}/v1",
+        "mcp_endpoint": f"{base}/mcp/",
+        "authentication": {
+            "rest": "Authorization: Bearer <workspace-or-agent-key>",
+            "mcp": "Authorization: Bearer <workspace-or-agent-key> (streamable HTTP)",
+            "admin": "Admin Basic auth is separate and not required for agent tools.",
+        },
+        "connection_guide": [
+            "Call GET /v1/whoami to confirm workspace, role, namespaces and permissions.",
+            "Call GET /v1/workspace/map for L0 counts and keys; use GET /v1/documents "
+            "to enumerate a namespace completely with cursor pagination.",
+            "Use POST /v1/query for semantic/structured discovery and "
+            "GET /v1/documents/{doc_key} or POST /v1/dereference for L2 content.",
+            "Write documents with PUT /v1/documents/{doc_key} or "
+            "POST /v1/documents/batch (up to 25, all-or-nothing).",
+            "Agent-created documents start as DRAFT/UNTRUSTED; your own drafts are "
+            "visible to you in queries, other agents' unverified drafts are not.",
+            "Use POST /v1/documents/{doc_key}/archive and /restore instead of hard deletion.",
+            "Poll incrementally with GET /v1/workspace/map?since=<next_cursor>.",
+        ],
+        "conventions": {
+            "errors": {"error": {"code": "string", "message": "string", "details": "optional"}},
+            "pagination": (
+                "Pass next_cursor back as cursor; "
+                "next_cursor=null means the listing is complete."
+            ),
+            "version_conflict": "The 409 details include current_version, current_hash and latest.",
+            "batch_limits": {"upsert": 25, "dereference": 25},
+        },
+        "openapi": {
+            "openapi": openapi.get("openapi"),
+            "info": openapi.get("info"),
+            "components": openapi.get("components"),
+            "paths": paths,
+        },
+    }
 
 
 # ------------------------------------------------------------------ tasks
@@ -291,11 +354,18 @@ async def get_slot(
 async def list_documents(
     namespace: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
+    cursor: str | None = Query(default=None),
+    include_archived: bool = Query(default=False),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentListResponse:
     return await services.list_documents(
-        session, principal, namespace=namespace, limit=limit
+        session,
+        principal,
+        namespace=namespace,
+        limit=limit,
+        cursor=cursor,
+        include_archived=include_archived,
     )
 
 
@@ -586,6 +656,60 @@ async def list_workspace_actions(
     return await services.list_actions(
         session, principal.workspace.id, limit=limit
     )
+
+
+@router.post(
+    "/documents/batch",
+    response_model=DocumentBatchUpsertResponse,
+    summary="Atomically create or update up to 25 shared documents",
+)
+async def batch_upsert_documents(
+    body: DocumentBatchUpsertRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> DocumentBatchUpsertResponse:
+    return await services.batch_upsert_documents(session, principal, body)
+
+
+@router.post(
+    "/dereference-many",
+    response_model=DereferenceBatchResponse,
+    summary="Resolve up to 25 L2 artifact URIs in one call",
+)
+async def batch_dereference(
+    body: DereferenceBatchRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> DereferenceBatchResponse:
+    return await services.batch_dereference(session, principal, body.uris)
+
+
+@router.post(
+    "/documents/{doc_key:path}/archive",
+    response_model=DocumentMutationResponse,
+    summary="Soft-archive a shared document (creator or commander)",
+)
+async def archive_document(
+    doc_key: str,
+    body: DocumentArchiveRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> DocumentMutationResponse:
+    return await services.archive_document(session, principal, doc_key, body)
+
+
+@router.post(
+    "/documents/{doc_key:path}/restore",
+    response_model=DocumentMutationResponse,
+    summary="Restore a soft-archived shared document (creator or commander)",
+)
+async def restore_document(
+    doc_key: str,
+    body: DocumentArchiveRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> DocumentMutationResponse:
+    return await services.restore_document(session, principal, doc_key, body)
 
 
 @router.put(

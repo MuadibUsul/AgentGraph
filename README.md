@@ -217,6 +217,9 @@ curl -s -X POST http://localhost:8000/v1/admin/workspaces/<uuid>/batches/<batch_
 
 - **L0** — `workspace_sync` / `GET /v1/workspace/map`: counts, task cards, slot
   keys/versions/human-lock flags, document tree, enums. No raw content.
+  `namespace_counts` gives per-namespace totals. Pass `since=<next_cursor>` to
+  receive only documents, tasks, slots and timeline events changed after that
+  cursor, then store the new `next_cursor`; this replaces full-map polling.
 - **L1** — every handoff to `REVIEWING`, `HANDOFF`, or `DONE` requires:
   `summary`, `key_metrics`, `unverified_hypotheses`, `risk_flag`.
 - **L2** — artifact text is stored as a shared document under
@@ -265,8 +268,29 @@ lease expiry (IN_PROGRESS/REVIEWING) → READY
   `DEPRECATED`. Verification binds to the exact current version and content
   hash in `verified_version` / `verified_hash`; any later content change resets
   it to `DRAFT` and invalidates the verification.
-- `query_workspace` returns only `VERIFIED` documents by default; pass
-  `include_unverified=true` to search drafts. `dereference` remains explicit.
+- `query_workspace` returns `VERIFIED` documents **plus the caller's own
+  DRAFTs** by default, so an agent can retrieve what it just wrote; other
+  agents' unverified drafts stay hidden. Pass `include_unverified=true` to
+  search every draft. `dereference` remains explicit.
+- Frontmatter filters support scalar equality and the operators `eq`, `gte`,
+  `lte`, `gt`, `lt` and `exists`. Invalid operators return a structured 422
+  with `details.field`. Object equality uses the explicit
+  `{"field": {"eq": {...}}}` form; a bare object is treated as an operator
+  expression.
+- `list_documents` is the census primitive: it enumerates a namespace
+  exhaustively with an opaque `(updated_at, id)` cursor. `next_cursor=null`
+  means the listing is complete. Archived documents are excluded by default and
+  included with `include_archived=true`.
+- Archive/restore is a soft delete available to the author or a workspace
+  commander. Archived documents leave ordinary list/query/map results but stay
+  directly dereferenceable for audit; every change writes an audit row and a
+  `DOC_ARCHIVED` / `DOC_RESTORED` timeline event.
+- Batch primitives are bounded at 25 items: `upsert_many` runs as one
+  all-or-nothing transaction, while `dereference_many` returns per-item
+  `ok`/`error` results so one missing URI does not hide successful reads.
+- `GET /v1/agent-docs` and the `get_api_docs` MCP tool expose the connection
+  guide and a filtered OpenAPI contract to any workspace or agent token, with
+  admin paths removed and no admin Basic auth required.
 - `trust_level` marks provenance. SCOUT-created documents are `UNTRUSTED`, and
   the agent-facing Markdown view wraps their body in
   `[[UNTRUSTED_SOURCE]] … [[/UNTRUSTED_SOURCE]]`; human verification promotes
@@ -324,11 +348,11 @@ active view. Filters include `tables`, `status`, `assigned_role`, and
 
 ## MCP Tools
 
-The MCP server exposes sixteen tools over stdio and streamable HTTP:
+The MCP server exposes twenty-two tools over stdio and streamable HTTP:
 
 | Tool | Purpose |
 |---|---|
-| `workspace_sync` | L0 map: tasks, slot keys/versions, document tree, enums, role permissions; `compact=true` for a smaller response |
+| `workspace_sync` | L0 map: tasks, slot keys/versions, document tree, enums, role permissions, per-namespace counts; `since=<cursor>` for incremental sync and `compact=true` for a smaller response |
 | `create_task` | Create a task for EXECUTOR/ANALYST/AUDITOR, including `depends_on`; SCOUT tasks are rejected |
 | `agent_claim_and_read` | Claim a task with a lease; return upstream L1 briefs, referenced slots/docs |
 | `agent_patch_shared_state` | RFC 6902 JSON Patch on a state slot; human-lock enforced |
@@ -337,8 +361,14 @@ The MCP server exposes sixteen tools over stdio and streamable HTTP:
 | `review_task` | Approve/reject a task; agent feedback is stored as `review_feedback` |
 | `upsert_shared_doc` | Create/update a document; compact response by default, `include_content=true` for the body |
 | `patch_doc_section` | Replace one Markdown section by heading; compact response by default |
-| `query_workspace` | JSONB filters + hybrid search; verified-only by default, `include_unverified=true` for drafts |
+| `query_workspace` | Frontmatter filters/operators + hybrid search; verified plus the caller's own drafts by default, `include_unverified=true` for all drafts |
+| `list_documents` | Exhaustive namespace census with opaque cursor; `include_archived` and range filters |
 | `dereference` | Resolve `doc://<doc_key>` L2 content on demand |
+| `dereference_many` | Resolve up to 25 URIs in one call with per-item success/error results |
+| `upsert_many` | Create/update up to 25 documents in one all-or-nothing transaction |
+| `archive_document` | Soft-archive a document (author or commander) with audit + timeline |
+| `restore_document` | Restore a soft-archived document |
+| `get_api_docs` | Agent-readable connection guide and request schemas; no admin token |
 | `propose_document_change` | Submit a human-reviewed proposal; proposals are never agent-applied |
 | `vote_on_proposal` | Score a pending Proposal Arena entry |
 | `list_document_proposals` | List pending/applied proposals with vote scores |
@@ -409,7 +439,7 @@ multi-stage Docker build and FastAPI serves it at `/dashboard/`.
 |---|---|
 | `workspaces` | Tenant + commander key hash |
 | `agent_tokens` | Hashed scoped agent keys, role, namespaces, active flag |
-| `shared_documents` | `doc_key`, Markdown, frontmatter, namespace, version, `content_hash`, `verification_status`, `trust_level`, verified version/hash, human lock, embedding + model |
+| `shared_documents` | `doc_key`, Markdown, frontmatter, namespace, version, `content_hash`, `verification_status`, `trust_level`, verified version/hash, human lock, embedding + model, soft-archive fields (`archived_at`, `archived_by`, `archive_reason`) |
 | `context_slots` | JSONB live state, schema hint, version, `lease_epoch`, agent lease, human lock + note |
 | `collab_tasks` | Status, priority, role, claim/lease + `lease_epoch`, L1 brief, L2 URI, reject history, circuit breaker |
 | `workspace_links` | Typed links between tasks/docs/slots (`depends_on`, `references`, …) |
@@ -564,7 +594,7 @@ app/
     admin_routes.py        human console API
     stream_routes.py       replayable SSE (agent + admin)
   events.py                one LISTEN connection → per-subscriber queues
-  mcp_server/server.py     sixteen MCP tools, stdio + HTTP auth
+  mcp_server/server.py     twenty-two MCP tools, stdio + HTTP auth
 sql/
   init.sql                 canonical base schema + outbox triggers
   migrations/v3_2_production.sql  proposals/policy/taint/accounts/hybrid/webhooks/RLS
@@ -695,7 +725,7 @@ Implemented in v3.2:
   active content/unsafe URLs, repairs existing documents via an admin endpoint,
   and renders legacy raw HTML through a sanitized `rehype-raw` pipeline.
 
-Verification: `87 passed` against a fresh pgvector database, production smoke
+Verification: `94 passed` against a fresh pgvector database, production smoke
 test, public HTTPS dashboard, and a real retrieval benchmark
 (`docs/benchmarks/latest.md`).
 
@@ -720,8 +750,9 @@ Remaining honest boundaries:
   ready but no light theme is shipped.
 
 See also: [design audit and acceptance](docs/design-system/ACCEPTANCE_REPORT.md),
-[project architecture](docs/PROJECT_ARCHITECTURE.md), and
-[retrieval benchmark](docs/benchmarks/latest.md).
+[project architecture](docs/PROJECT_ARCHITECTURE.md),
+[retrieval benchmark](docs/benchmarks/latest.md), and the
+[2026-10-21 agent feedback / v3.3 backlog](docs/AGENT_FEEDBACK_2026-10-21.md).
 
 ---
 

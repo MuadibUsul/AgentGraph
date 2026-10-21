@@ -176,6 +176,11 @@ class SharedDocument(Base):
     )
     verified_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     verified_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    archived_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    archive_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(get_settings().embedding_dimensions), nullable=True
     )

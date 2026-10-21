@@ -168,6 +168,9 @@ def document_summary(document: SharedDocument) -> DocumentSummary:
         human_note=document.human_note,
         tainted=document.tainted,
         taint_sources=document.taint_sources or [],
+        archived_at=document.archived_at,
+        archived_by=document.archived_by,
+        archive_reason=document.archive_reason,
         updated_by=document.updated_by,
         updated_at=document.updated_at,
     )
@@ -275,6 +278,9 @@ def document_snapshot(document: SharedDocument) -> dict[str, Any]:
         "tainted": document.tainted,
         "taint_sources": document.taint_sources or [],
         "policy_flags": document.policy_flags or {},
+        "archived_at": iso(document.archived_at) if document.archived_at else None,
+        "archived_by": document.archived_by,
+        "archive_reason": document.archive_reason,
         "updated_by": document.updated_by,
         "updated_at": iso(document.updated_at),
     }

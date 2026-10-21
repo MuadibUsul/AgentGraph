@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -28,6 +31,7 @@ from app.models import (
     ContextSlot,
     SharedDocument,
     TaskStatus,
+    TimelineStream,
     Workspace,
 )
 from app.schemas import (
@@ -49,6 +53,7 @@ from app.services.common import (
     document_summary,
     slot_summary,
     task_summary,
+    utcnow,
     workspace_info,
 )
 
@@ -71,24 +76,70 @@ async def whoami(principal: Principal) -> WhoAmIResponse:
     )
 
 
+def _encode_sync_cursor(value: datetime) -> str:
+    raw = json.dumps({"updated_at": value.isoformat()}, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_sync_cursor(cursor: str) -> datetime:
+    try:
+        payload = json.loads(
+            base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        )
+        value = datetime.fromisoformat(payload["updated_at"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ApiError(400, "invalid_cursor", "workspace cursor is invalid") from exc
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value
+
+
 async def workspace_map(
-    session: AsyncSession, principal: Principal
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    since: str | None = None,
 ) -> WorkspaceMapResponse:
     require_permission(principal, "workspace:read")
     workspace_id = principal.workspace.id
-    docs_query = select(SharedDocument).where(
-        SharedDocument.workspace_id == workspace_id
+    cursor_time = min(_decode_sync_cursor(since), utcnow()) if since else None
+    allowed = (
+        principal.allowed_namespaces
+        if not principal.is_commander and "*" not in principal.allowed_namespaces
+        else None
     )
-    doc_count_query = select(func.count(SharedDocument.id)).where(
-        SharedDocument.workspace_id == workspace_id
+
+    def scoped(query: Any, namespace_column: Any) -> Any:
+        if allowed is not None:
+            query = query.where(namespace_column.in_(allowed))
+        return query
+
+    docs_query = scoped(
+        select(SharedDocument).where(SharedDocument.workspace_id == workspace_id),
+        SharedDocument.namespace,
     )
-    if not principal.is_commander and "*" not in principal.allowed_namespaces:
-        docs_query = docs_query.where(
-            SharedDocument.namespace.in_(principal.allowed_namespaces)
+    doc_count_query = scoped(
+        select(func.count(SharedDocument.id)).where(
+            SharedDocument.workspace_id == workspace_id,
+            SharedDocument.archived_at.is_(None),
+        ),
+        SharedDocument.namespace,
+    )
+    doc_namespace_query = scoped(
+        select(SharedDocument.namespace, func.count(SharedDocument.id))
+        .where(
+            SharedDocument.workspace_id == workspace_id,
+            SharedDocument.archived_at.is_(None),
         )
-        doc_count_query = doc_count_query.where(
-            SharedDocument.namespace.in_(principal.allowed_namespaces)
-        )
+        .group_by(SharedDocument.namespace),
+        SharedDocument.namespace,
+    )
+    if cursor_time is None:
+        docs_query = docs_query.where(SharedDocument.archived_at.is_(None))
+    else:
+        docs_query = docs_query.where(SharedDocument.updated_at > cursor_time)
     documents = (
         await session.execute(
             docs_query.order_by(SharedDocument.updated_at.desc()).limit(
@@ -97,40 +148,65 @@ async def workspace_map(
         )
     ).scalars().all()
     document_count = int(await session.scalar(doc_count_query) or 0)
+    document_namespaces = {
+        namespace: int(count)
+        for namespace, count in (await session.execute(doc_namespace_query)).all()
+    }
 
+    tasks_query = scoped(
+        select(CollabTask).where(CollabTask.workspace_id == workspace_id),
+        CollabTask.namespace,
+    )
+    task_count_query = scoped(
+        select(func.count(CollabTask.id)).where(
+            CollabTask.workspace_id == workspace_id
+        ),
+        CollabTask.namespace,
+    )
+    task_namespace_query = scoped(
+        select(CollabTask.namespace, func.count(CollabTask.id))
+        .where(CollabTask.workspace_id == workspace_id)
+        .group_by(CollabTask.namespace),
+        CollabTask.namespace,
+    )
+    if cursor_time is not None:
+        tasks_query = tasks_query.where(CollabTask.updated_at > cursor_time)
     tasks = (
         await session.execute(
-            select(CollabTask)
-            .where(CollabTask.workspace_id == workspace_id)
-            .order_by(CollabTask.priority.desc(), CollabTask.updated_at.desc())
-            .limit(settings.max_workspace_map_items)
+            tasks_query.order_by(
+                CollabTask.priority.desc(), CollabTask.updated_at.desc()
+            ).limit(settings.max_workspace_map_items)
         )
     ).scalars().all()
-    task_count = int(
-        await session.scalar(
-            select(func.count(CollabTask.id)).where(
-                CollabTask.workspace_id == workspace_id
-            )
-        )
-        or 0
-    )
+    task_count = int(await session.scalar(task_count_query) or 0)
+    task_namespaces = {
+        namespace: int(count)
+        for namespace, count in (await session.execute(task_namespace_query)).all()
+    }
 
     slots = []
     slot_count = 0
+    slot_namespaces: dict[str, int] = {}
+    timeline = []
     if can(principal, "state:read"):
-        slot_query = select(ContextSlot).where(
-            ContextSlot.workspace_id == workspace_id
+        slot_query = scoped(
+            select(ContextSlot).where(ContextSlot.workspace_id == workspace_id),
+            ContextSlot.namespace,
         )
-        slot_count_query = select(func.count(ContextSlot.id)).where(
-            ContextSlot.workspace_id == workspace_id
+        slot_count_query = scoped(
+            select(func.count(ContextSlot.id)).where(
+                ContextSlot.workspace_id == workspace_id
+            ),
+            ContextSlot.namespace,
         )
-        if not principal.is_commander and "*" not in principal.allowed_namespaces:
-            slot_query = slot_query.where(
-                ContextSlot.namespace.in_(principal.allowed_namespaces)
-            )
-            slot_count_query = slot_count_query.where(
-                ContextSlot.namespace.in_(principal.allowed_namespaces)
-            )
+        slot_namespace_query = scoped(
+            select(ContextSlot.namespace, func.count(ContextSlot.id))
+            .where(ContextSlot.workspace_id == workspace_id)
+            .group_by(ContextSlot.namespace),
+            ContextSlot.namespace,
+        )
+        if cursor_time is not None:
+            slot_query = slot_query.where(ContextSlot.updated_at > cursor_time)
         slots = (
             await session.execute(
                 slot_query.order_by(ContextSlot.updated_at.desc()).limit(
@@ -139,12 +215,53 @@ async def workspace_map(
             )
         ).scalars().all()
         slot_count = int(await session.scalar(slot_count_query) or 0)
+        slot_namespaces = {
+            namespace: int(count)
+            for namespace, count in (await session.execute(slot_namespace_query)).all()
+        }
+        timeline_query = scoped(
+            select(TimelineStream).where(
+                TimelineStream.workspace_id == workspace_id
+            ),
+            TimelineStream.namespace,
+        )
+        if cursor_time is not None:
+            timeline_query = timeline_query.where(
+                TimelineStream.created_at > cursor_time
+            )
+        events = (
+            await session.execute(
+                timeline_query.order_by(TimelineStream.created_at.desc()).limit(
+                    settings.max_workspace_map_items
+                )
+            )
+        ).scalars().all()
+        timeline = [
+            {
+                "id": str(event.id),
+                "event_type": event.event_type,
+                "agent_signature": event.agent_signature,
+                "namespace": event.namespace,
+                "payload": event.payload or {},
+                "token_cost": event.token_cost,
+                "latency_ms": event.latency_ms,
+                "created_at": event.created_at.isoformat(),
+            }
+            for event in events
+        ]
 
     counts = {
         "documents": document_count,
         "tasks": task_count,
         "slots": slot_count,
     }
+    timestamps = [item.updated_at for item in documents]
+    timestamps.extend(item.updated_at for item in tasks)
+    timestamps.extend(item.updated_at for item in slots)
+    timestamps.extend(
+        datetime.fromisoformat(item["created_at"]) for item in timeline
+    )
+    cursor_point = max(timestamps) if timestamps else cursor_time
     return WorkspaceMapResponse(
         workspace=workspace_info(principal.workspace),
         role=principal.role.value,
@@ -169,6 +286,15 @@ async def workspace_map(
             for task in tasks
             if task.status in (TaskStatus.DONE, TaskStatus.FAILED)
         ],
+        namespace_counts={
+            "documents": document_namespaces,
+            "tasks": task_namespaces,
+            "slots": slot_namespaces,
+        },
+        incremental=cursor_time is not None,
+        since=since,
+        next_cursor=_encode_sync_cursor(cursor_point or utcnow()),
+        timeline=timeline,
     )
 
 
