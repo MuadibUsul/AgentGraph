@@ -18,7 +18,7 @@ implemented with acceptance tests in `tests/`; deviations are listed.
 | AG-OB-01 orientation | Done (degraded) | Collaborators inferred until AG-ID-06; `next_calls` verified to run without errors. |
 | AG-OB-02 constitution + namespace map | Done | `system/*` platform namespace, readme stubs, soft/strict conventions, backfill. |
 | AG-OB-03 agent docs | Done | Generated guide, token-readable OpenAPI, MCP resources. |
-| AG-ST-15 cost control | Shadow mode | Metering, would-be limits, hot-key detection, `get_usage`; `BUDGET_MODE=enforce` turns on 429s (Phase 1 R1.1 completes forced backoff and deferral). |
+| AG-ST-15 cost control | Done (enforce available) | Shadow by default (`BUDGET_MODE=shadow`); `enforce` adds 429 `rate_limited` (writes 60/min burst 20, queries 120/min), server-enforced backoff (early retry refused without taking a token, wait doubles to 60 s, 3 in a row → 1 min `circuit_open` `ignored_backoff`), ≤4 in-flight requests and 1 stream per token, `circuit_open` for `hot_key_loop` and `write_spike` (10× own 7-day p99), and quota exhaustion that stores the write but defers indexing (`embedding_deferred_quota`) until the daily reset. Admin overrides per workspace or tenant (`/v1/admin/budget-limits/...`; tenant rows cap the subtree's summed embedding). **Gaps:** the concurrency count is per process; the dashboard has no circuit panel yet (the owner API `POST /v1/human/budget/circuits/{key}/clear` exists). |
 
 ## Phase 1 (in progress)
 

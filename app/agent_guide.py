@@ -81,6 +81,13 @@ def limits(live: bool = True) -> dict[str, Any]:
         "idempotency_window_hours": value("idempotency_window_hours", live),
         "requests_per_minute_default": value("rate_limit_default_per_minute", live),
         "sse_revalidate_seconds": value("sse_revalidate_seconds", live),
+        "write_rate_per_minute": value("write_rate_per_minute", live),
+        "write_burst": value("write_burst", live),
+        "query_rate_per_minute": value("query_rate_per_minute", live),
+        "max_in_flight_per_token": value("max_in_flight_per_token", live),
+        "max_streams_per_token": value("max_streams_per_token", live),
+        "backoff_max_seconds": value("backoff_max_seconds", live),
+        "embedding_tokens_per_day": value("embedding_tokens_per_day", live),
     }
 
 
@@ -147,7 +154,9 @@ def render(live: bool = True) -> str:
         "## Errors and retries",
         "",
         "Every error carries `code`, `class`, `action`, `retryable`, `retry_after_ms`.",
-        "On 429/503 wait for `Retry-After` before resending.",
+        "On 429/503 wait for `Retry-After` before resending. The server enforces it: "
+        "an early retry is refused, doubles the next wait, and repeated early "
+        "retries open a short `circuit_open` (reason `ignored_backoff`).",
         "",
     ]
     lines += [f"- `{name}`: {meta['rule']}" for name, meta in ERROR_CLASSES.items()]

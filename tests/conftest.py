@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import socket
 import sys
@@ -33,14 +34,12 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-@pytest.fixture(scope="session")
-async def api_base_url() -> AsyncIterator[str]:
-    if not INTEGRATION_ENABLED:
-        pytest.skip("TEST_DATABASE_URL is not set")
-
+@contextlib.asynccontextmanager
+async def run_server(extra_env: dict[str, str] | None = None, log_name: str = ".server.log"):
+    """Start the API in a subprocess against the test database."""
     port = _free_port()
     base_url = f"http://127.0.0.1:{port}"
-    log_path = PROJECT_ROOT / "tests" / ".server.log"
+    log_path = PROJECT_ROOT / "tests" / log_name
     env = os.environ.copy()
     env.update(
         {
@@ -55,6 +54,7 @@ async def api_base_url() -> AsyncIterator[str]:
             "INDEX_WORKER_ENABLED": "false",
             "FREE_MAX_DOCUMENTS": "1",
             "FREE_MAX_SLOTS": "1",
+            **(extra_env or {}),
         }
     )
     log_file = log_path.open("w", encoding="utf-8")
@@ -109,9 +109,25 @@ async def api_base_url() -> AsyncIterator[str]:
 
 
 @pytest.fixture(scope="session")
+async def api_base_url() -> AsyncIterator[str]:
+    if not INTEGRATION_ENABLED:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    async with run_server() as base_url:
+        yield base_url
+
+
+@pytest.fixture(scope="session")
 async def client(api_base_url: str) -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient(base_url=api_base_url, timeout=60) as http:
         yield http
+
+
+@pytest.fixture(scope="session")
+async def enforce_client(api_base_url: str) -> AsyncIterator[httpx.AsyncClient]:
+    """A second server on the same database with cost limits enforced."""
+    async with run_server({"BUDGET_MODE": "enforce"}, ".server-enforce.log") as base_url:
+        async with httpx.AsyncClient(base_url=base_url, timeout=60) as http:
+            yield http
 
 
 @pytest.fixture

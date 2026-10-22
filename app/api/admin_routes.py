@@ -26,6 +26,7 @@ from app.schemas import (
     ApiKeyRotatedResponse,
     AuditListResponse,
     BatchUndoResponse,
+    BudgetLimitsUpdate,
     BudgetOut,
     BudgetUpdateRequest,
     CreateWorkspaceRequest,
@@ -84,6 +85,7 @@ from app.schemas import (
     WorkspaceInfo,
     WorkspaceStatsResponse,
 )
+from app.services import budget as budget_service
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
 from app.services.timeline import list_timeline
@@ -1169,6 +1171,52 @@ async def cancel_task(
         task_key,
         reason=body.reason,
         expected_version=body.expected_version,
+    )
+
+
+# ------------------------------------------------- cost limits (AG-ST-15)
+
+
+async def _budget_scope(session: AsyncSession, scope_kind: str, scope_id: str) -> str:
+    if scope_kind == "workspace":
+        try:
+            workspace_id = uuid.UUID(scope_id)
+        except ValueError as exc:
+            raise ApiError(422, "validation_error", "workspace scope_id must be a UUID",
+                           details={"field": "scope_id"}) from exc
+        await services.get_workspace(session, workspace_id)
+        return str(workspace_id)
+    if scope_kind == "tenant":
+        await tenant_service.describe_tenant(session, scope_id)
+        return scope_id
+    raise ApiError(422, "validation_error", "scope_kind must be workspace or tenant",
+                   details={"field": "scope_kind", "allowed": ["workspace", "tenant"]})
+
+
+@router.get(
+    "/budget-limits/{scope_kind}/{scope_id}",
+    summary="Embedding quota and rate overrides for a workspace or tenant",
+)
+async def get_budget_limits(
+    scope_kind: str, scope_id: str, session: AsyncSession = Depends(get_db)
+) -> dict:
+    scope_id = await _budget_scope(session, scope_kind, scope_id)
+    return await budget_service.get_limits(scope_kind, scope_id)
+
+
+@router.put(
+    "/budget-limits/{scope_kind}/{scope_id}",
+    summary="Set overrides; null falls back to the default. Tenants cap embedding only",
+)
+async def set_budget_limits(
+    scope_kind: str,
+    scope_id: str,
+    body: BudgetLimitsUpdate,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    scope_id = await _budget_scope(session, scope_kind, scope_id)
+    return await budget_service.set_limits(
+        scope_kind, scope_id, body.model_dump(), updated_by="admin"
     )
 
 
