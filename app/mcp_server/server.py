@@ -35,7 +35,9 @@ from app.models import Tenant
 from app.schemas import (
     REVIEW_APPROVE_STATUSES,
     REVIEW_REJECT_STATUSES,
+    AppendEntriesRequest,
     ContinuationRequest,
+    DereferenceBatchRequest,
     DocumentArchiveRequest,
     DocumentBatchUpsertItem,
     DocumentBatchUpsertRequest,
@@ -63,9 +65,10 @@ from app.services import directory as directory_service
 from app.services import documents as document_service
 from app.services import events as event_service
 from app.services import exports as export_service
-from app.services import idempotency, indexer, token_budget, token_tree
+from app.services import idempotency, indexer, situation, token_budget, token_tree
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
+from app.services import logs as log_service
 from app.services import orientation as orientation_service
 from app.services import recall as recall_service
 from app.services import tasks as task_service
@@ -119,6 +122,8 @@ IDEMPOTENT_TOOLS = frozenset(
         "clear_taint",
         "recall_document",
         "set_budget",
+        "append_entries",
+        "ack_alert",
     }
 )
 _CONTENT_BLOCK = TypeAdapter(types.ContentBlock)
@@ -546,6 +551,9 @@ def _validation_error(exc: ValidationError) -> ToolError:
 
 
 def _api_error(exc: ApiError) -> ToolError:
+    from app.services import situation
+
+    situation.note_status(exc.status_code)
     details = exc.details
     delay = retry_after_ms(exc.headers)
     if delay is not None:
@@ -1261,6 +1269,95 @@ async def get_task_tree(
     return _compact(result)
 
 
+@mcp.tool(name="append_entries")
+async def append_entries(
+    doc_key: str,
+    entries: list[dict[str, Any]],
+    namespace: str | None = None,
+) -> dict[str, Any]:
+    """Append up to 25 entries [{body (<= 64 KB), frontmatter, idempotency_key}] to a
+    log document. No expected_version and never a version conflict; entries get a
+    gapless seq. Use logs for progress notes, messages and discussions."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = AppendEntriesRequest(namespace=namespace, entries=entries)
+            result = await log_service.append_entries(
+                session, principal, namespace=body.namespace, doc_key=doc_key,
+                entries=body.entries)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="read_entries")
+async def read_entries(
+    doc_key: str,
+    namespace: str | None = None,
+    after_seq: int | None = None,
+    limit: Annotated[int, Field(ge=1, le=500)] = 100,
+) -> dict[str, Any]:
+    """Read a log document's entries in seq order after after_seq."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await log_service.read_entries(
+                session, principal, namespace=namespace, doc_key=doc_key,
+                after_seq=after_seq, limit=limit)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_alerts")
+async def list_alerts(
+    state: Literal["open", "acked", "resolved"] | None = None,
+    severity: Literal["high", "medium", "low"] | None = None,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """Situation alerts about you (retry storms, idle loops, cost, ...). People see
+    every alert of the workspace in the console."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await situation.list_alerts(session, principal, state=state,
+                                                 severity=severity, cursor=cursor)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="ack_alert")
+async def ack_alert(alert_id: str, note: str | None = None) -> dict[str, Any]:
+    """Acknowledge an alert. People only: agents get 403."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await situation.ack_alert(session, principal, alert_id, note)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_metrics")
+async def get_metrics(
+    window: Literal["1h", "24h", "7d", "30d"] = "1h",
+    principal: str | None = None,
+) -> dict[str, Any]:
+    """Your own request metrics: writes, no-op writes, 409s, 429s, 5xx, reads and
+    embedding tokens over a window. Other principals' metrics are 403."""
+    async with async_session_factory() as session:
+        caller = await _principal_for_call(session)
+        try:
+            result = await situation.get_metrics(session, caller, principal_ref=principal,
+                                                 doc_ref=None, task_ref=None, window=window)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 @mcp.tool(name="clear_taint")
 async def clear_taint(
     doc_key: str,
@@ -1373,6 +1470,7 @@ async def upsert_shared_doc(
     content_origin: Literal["internal", "external_web", "external_user", "tool_output"] = (
         "internal"),
     resolves_recall: str | None = None,
+    doc_type: Literal["collaborative", "log"] | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -1383,6 +1481,9 @@ async def upsert_shared_doc(
     [{namespace, doc_key, version}] records what this version came from (a
     tainted source taints it); content_origin other than internal taints it;
     resolves_recall=<recall_id> resolves this document's node of a recall.
+    doc_type=log at creation makes an append-only log (append_entries). A
+    contended document (5+ conflicts in 10 s) answers 409 contention with a
+    suggestion: patch a section, or wait for Retry-After.
 
     expected_version=0 creates; otherwise pass the current version. Human-locked
     documents reject agent writes. SCOUT tokens may only create documents in
@@ -1403,6 +1504,7 @@ async def upsert_shared_doc(
                 derived_from=derived_from or [],
                 content_origin=content_origin,
                 resolves_recall=resolves_recall,
+                doc_type=doc_type,
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -1431,15 +1533,20 @@ async def patch_doc_section(
     doc_key: str,
     section_heading: str,
     new_markdown: str,
-    expected_version: int,
+    expected_version: int | None = None,
     include_content: bool = False,
     return_current_on_conflict: bool = False,
+    section_hash: str | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Replace only one Markdown section (by heading) instead of the whole doc.
 
-    The response is compact unless include_content=true.
+    Pass expected_version, or section_hash (sha256 of the section body you
+    read; GET /v1/documents/{key}/sections lists them): then only that section
+    must be unchanged, and patches to other sections never conflict (409
+    section_conflict carries current_section_hash). The response is compact
+    unless include_content=true.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -1449,6 +1556,7 @@ async def patch_doc_section(
                 section_heading=section_heading,
                 new_markdown=new_markdown,
                 expected_version=expected_version,
+                section_hash=section_hash,
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -2297,14 +2405,19 @@ async def list_documents(
 
 
 @mcp.tool(name="upsert_many")
-async def upsert_many(items: list[dict[str, Any]]) -> dict[str, Any]:
-    """Create or update up to 25 documents in one all-or-nothing transaction.
+async def upsert_many(
+    items: list[dict[str, Any]], atomic: bool | None = None
+) -> dict[str, Any]:
+    """Create or update up to 25 documents in one call.
 
     Each item accepts doc_key, content, title, frontmatter, expected_version,
-    namespace, agent and session_batch_id. If any item fails, the whole batch
-    rolls back and the error details identify the failing index and doc_key.
-    Up to 25 items and 5,000,000 bytes of content per batch; successful items
-    carry ok=true.
+    namespace, agent and session_batch_id. atomic=true: if any item fails the
+    whole batch rolls back and the error names failed_indexes; atomic=false:
+    each item succeeds or fails on its own. The default is atomic=false under
+    API 2026-11 and all-or-nothing before it. results[] has one entry per item
+    in order (ok, version, content_hash, noop, or error) with succeeded/failed
+    counts. Up to 25 items and 4 MiB of content (413 batch_too_large); a
+    document twice in one batch is 422 duplicate_key_in_batch.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -2331,7 +2444,7 @@ async def upsert_many(items: list[dict[str, Any]]) -> dict[str, Any]:
                         422,
                         {"index": index, "doc_key": item.get("doc_key"), "errors": details},
                     ) from exc
-            body = DocumentBatchUpsertRequest(items=parsed)
+            body = DocumentBatchUpsertRequest(items=parsed, atomic=atomic)
             result = await services.batch_upsert_documents(session, principal, body)
         except ValidationError as exc:
             raise _validation_error(exc) from exc
@@ -2352,26 +2465,38 @@ async def upsert_many(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 @mcp.tool(name="dereference_many")
 async def dereference_many(
-    uris: list[str],
+    uris: list[str] | None = None,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    keys: list[dict[str, Any]] | None = None,
+    fields: list[str] | None = None,
     taint_mode: Literal["annotate", "separate", "exclude"] = "annotate",
 ) -> dict[str, Any]:
-    """Resolve up to 25 L2 URIs; each result has ok plus document or error.
+    """Resolve up to 25 L2 URIs or keys [{namespace, doc_key, version}]; each
+    result has ok plus document or error, in request order (results[]).
+    fields limits each document to those fields.
 
     One failed URI does not hide successful items.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
+            body = DereferenceBatchRequest(
+                uris=uris or [], keys=keys or [], fields=fields,
+                include_unverified=include_unverified, include_tainted=include_tainted,
+                taint_mode=taint_mode)
             result = await services.batch_dereference(
                 session,
                 principal,
-                uris,
+                body.uris,
                 include_unverified=include_unverified,
                 include_tainted=include_tainted,
                 taint_mode=taint_mode,
+                keys=body.keys,
+                fields=body.fields,
             )
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result.model_dump(mode="json"))

@@ -228,6 +228,8 @@ def document_summary(
         taint_cleared_by=document.taint_cleared_by,
         content_origin=document.content_origin or "internal",
         recall_severity=document.recall_severity,
+        doc_type=document.doc_type or "collaborative",
+        last_human_edit=document.last_human_edit,
         archived_at=document.archived_at,
         archived_by=document.archived_by,
         archive_reason=document.archive_reason,

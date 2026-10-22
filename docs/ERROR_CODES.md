@@ -75,6 +75,7 @@ do not edit by hand. Every error body is
 | `last_owner_required` | 409 | `fix_request` | `fix_request_then_resend` | Assign another owner first. |
 | `locate_required` | 409 | `fix_request` | `fix_request_then_resend` | Run locate_personal_data first. |
 | `log_document_append_only` | 409 | `fix_request` | `append_entries` | Use append_entries instead. |
+| `not_a_log_document` | 409 | `fix_request` | `fix_request_then_resend` | Write with upsert_shared_doc instead. |
 | `policy_exists` | 409 | `fix_request` | `fix_request_then_resend` | Update the existing policy instead. |
 | `proposal_required` | 409 | `fix_request` | `propose_document_change` | Submit propose_document_change instead. |
 | `task_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another task_key. |

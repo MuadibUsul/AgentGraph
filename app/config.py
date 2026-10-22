@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     default_task_lease_seconds: int = Field(default=60, ge=5, le=86_400)
     max_task_lease_seconds: int = Field(default=3_600, ge=5, le=86_400)
     lease_reaper_interval_seconds: int = Field(default=15, ge=5, le=3_600)
+    # AG-TC-05: how often the anomaly rules run.
+    situation_interval_seconds: int = Field(default=60, ge=5, le=3_600)
     # AG-CO-03: lease TTL when a 2026-11 client sets none (heartbeat every
     # ttl/3), and how many orphanings escalate a task to a human.
     lease_default_ttl_seconds: int = Field(default=900, ge=60, le=3_600)

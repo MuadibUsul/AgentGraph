@@ -56,6 +56,9 @@ def note_request(workspace_id: Any, stamp: dict[str, Any] | None, *, write: bool
     entry["requests"] += 1
     entry["writes"] += int(write)
     _current.set(key)
+    from app.services import situation
+
+    situation.bind(workspace_id, stamp, write=write)
 
 
 def note_objects(kind: str, ids: Iterable[Any]) -> None:

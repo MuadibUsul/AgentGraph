@@ -275,6 +275,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "not_found": _spec(404, ABANDON, "Give up; cross-tenant access also returns 404."),
     "already_registered": _spec(409, ABANDON, "Give up this action."),
     "document_archived": _spec(409, ABANDON, "Give up, or ask for restore_document."),
+    "not_a_log_document": _spec(409, FIX_REQUEST, "Write with upsert_shared_doc instead."),
     "id_collision": _spec(409, ABANDON, "Abort the import or import into a new tenant."),
     "increment_out_of_order": _spec(
         409, FIX_REQUEST, "Import details.prev_export_id first, then this increment."

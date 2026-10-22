@@ -861,6 +861,29 @@ tree, so a branch's budget caps its whole subtree; a spent budget returns 429
 `budget_exhausted` naming the token that ran out, and 80% sends
 `budget.warning` to the issuer.
 
+## Logs, batches and situation awareness
+
+**Batches (AG-ST-07).** `upsert_many` writes up to 25 documents; under
+`2026-11` each item succeeds or fails on its own unless `atomic: true`.
+`dereference_many` reads up to 25 by URI or by `{namespace, doc_key, version}`.
+
+**Logs and hot documents (AG-ST-14).** Create a document with `doc_type: "log"`
+for progress notes and messages, then `append_entries`: no versions to match,
+no conflicts. For shared plans, patch one section with its `section_hash`
+(`GET /v1/documents/{key}/sections`): edits to different sections never clash.
+A document overwritten in a conflict storm answers 409 `contention` for a
+minute with a suggestion.
+
+**Filters (AG-ST-09).** `{"amount": {"gt": 1000}, "due": {"lte": "now+30d"},
+"status": {"in": ["open", "blocked"]}, "$or": [...]}` in `query_workspace`,
+`list_documents` and sync.
+
+**Situation (AG-TC-05).** The console opens on **Situation**: retry storms,
+idle loops, unclaimed tasks, conflict hotspots, cost spikes, index backlogs and
+taint spreading, checked every minute, with drill-down to the subject's
+metrics and timeline. High-severity alerts also reach the owners as
+`alert.raised`.
+
 ## Backups, restores and incident response
 
 **Backups (AG-ST-10).** With `BACKUP_DIR` set, a scheduler takes a full backup

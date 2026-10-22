@@ -15,6 +15,32 @@ import { setFormatLanguage, type FormatLanguage } from "./types";
 export type Language = FormatLanguage;
 
 const ZH: Record<string, string> = {
+  // Situation (AG-TC-05)
+  Situation: "态势",
+  "Anomalies across agents, tasks and documents, checked every minute. High severity alerts also notify the owners.":
+    "跨 agent、任务和文档的异常，每分钟检查一次。高级别告警同时通知所有者。",
+  "Alert state": "告警状态",
+  Acknowledged: "已确认",
+  Resolved: "已解决",
+  "Nothing needs attention": "暂无需要关注的异常",
+  "Retry storms, idle loops, unclaimed tasks and cost spikes will show here.":
+    "重试风暴、空转、无人认领的任务和成本异常会显示在这里。",
+  High: "高",
+  Medium: "中",
+  Low: "低",
+  Acknowledge: "确认",
+  "Alert acknowledged.": "告警已确认。",
+  "Unable to load alerts.": "无法加载告警。",
+  "Unable to load metrics.": "无法加载指标。",
+  "Unable to acknowledge the alert.": "无法确认告警。",
+  "Retry storm": "重试风暴",
+  "Idle loop": "空转",
+  "Unclaimed task": "无人认领的任务",
+  "Repeatedly orphaned task": "反复成为孤儿的任务",
+  "Conflict hotspot": "冲突热点",
+  "Cost anomaly": "成本异常",
+  "Index backlog": "索引积压",
+  "Taint spreading": "污点扩散",
   // Shell and navigation
   "Human · Agent Blackboard": "人类 · Agent 黑板",
   "Loading console…": "正在加载控制台…",

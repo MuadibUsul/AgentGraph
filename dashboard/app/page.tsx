@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentsView } from "./components/agents";
 import { AuditView } from "./components/audit";
+import { SituationView } from "./components/situation";
 import { Blackboard } from "./components/blackboard";
 import { DocumentsView } from "./components/documents";
 import { GovernanceView } from "./components/governance";
@@ -18,6 +19,7 @@ import {
   IconAgents,
   IconAudit,
   IconBoard,
+  IconPulse,
   IconChevron,
   IconClose,
   IconCopy,
@@ -94,6 +96,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
     return `/v1/human/accounts${rest.slice("/human-users".length)}`;
   }
   if (rest.startsWith("/timeline")) return `/v1/timeline${rest.slice("/timeline".length)}`;
+  if (rest.startsWith("/alerts") || rest.startsWith("/metrics")) return `/v1${rest}`;
   if (rest === "/tasks" || rest.startsWith("/tasks?")) return `/v1/tasks${rest.slice(6)}`;
   if (rest.startsWith("/tasks/")) {
     if (rest.endsWith("/review") || rest.endsWith("/escalate")) {
@@ -118,7 +121,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
   }
   return path;
 }
-type Tab = "blackboard" | "tasks" | "documents" | "agents" | "governance" | "audit";
+type Tab = "situation" | "blackboard" | "tasks" | "documents" | "agents" | "governance" | "audit";
 
 export default function ConsolePage() {
   const { t, lang } = useI18n();
@@ -157,7 +160,7 @@ export default function ConsolePage() {
   const [humanUsers, setHumanUsers] = useState<HumanUser[]>([]);
   const [audit, setAudit] = useState<AuditPayload>({ batches: [], diffs: [] });
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
-  const [tab, setTab] = useState<Tab>("blackboard");
+  const [tab, setTab] = useState<Tab>("situation");
   const [selectedDocKey, setSelectedDocKey] = useState<string | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<DocumentDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1128,6 +1131,7 @@ export default function ConsolePage() {
   }
 
   const tabs: Array<{ id: Tab; label: string; count?: number; alert?: number; icon: JSX.Element }> = [
+    { id: "situation", label: t("Situation"), icon: <IconPulse /> },
     { id: "blackboard", label: t("Blackboard"), count: slots.length, icon: <IconBoard /> },
     { id: "tasks", label: t("Tasks"), count: tasks.length, alert: approvals.length, icon: <IconTasks /> },
     { id: "documents", label: t("Documents"), count: docTotal, icon: <IconDocuments /> },
@@ -1561,6 +1565,13 @@ export default function ConsolePage() {
                       onRefresh={async () => {
                         await loadWorkspace(selectedWorkspace.id, true);
                       }}
+                      notify={setNotice}
+                    />
+                  )}
+                  {tab === "situation" && (
+                    <SituationView
+                      workspaceId={selectedWorkspace.id}
+                      request={api}
                       notify={setNotice}
                     />
                   )}

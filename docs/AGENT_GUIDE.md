@@ -193,6 +193,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `last_owner_required` | 409 | `fix_request` |
 | `locate_required` | 409 | `fix_request` |
 | `log_document_append_only` | 409 | `fix_request` |
+| `not_a_log_document` | 409 | `fix_request` |
 | `policy_exists` | 409 | `fix_request` |
 | `proposal_required` | 409 | `fix_request` |
 | `task_exists` | 409 | `fix_request` |

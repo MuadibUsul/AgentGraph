@@ -40,6 +40,7 @@ from app.protocol_middleware import ProtocolMiddleware
 from app.services.external_actions import external_action_loop
 from app.services.indexer import index_worker_loop
 from app.services.reaper import lease_reaper_loop
+from app.services.situation import MetricsMiddleware
 from app.services.webhooks import webhook_delivery_loop
 
 settings = get_settings()
@@ -92,12 +93,17 @@ async def lifespan(app: FastAPI):
     from app.services.backups import backup_scheduler_loop
     from app.services.incidents import incident_check_loop
     from app.services.mailer import mail_worker_loop
+    from app.services.situation import evaluation_loop as situation_evaluation_loop
+    from app.services.situation import flush as flush_metrics
+    from app.services.situation import situation_loop
     from app.services.token_budget import flush as flush_token_usage
     from app.services.token_budget import flush_loop as token_usage_loop
 
     background = [
         asyncio.create_task(access_log_loop(), name="agentgraph-access-log"),
         asyncio.create_task(token_usage_loop(), name="agentgraph-token-usage"),
+        asyncio.create_task(situation_loop(), name="agentgraph-metrics"),
+        asyncio.create_task(situation_evaluation_loop(), name="agentgraph-situation"),
         asyncio.create_task(mail_worker_loop(), name="agentgraph-mailer"),
         asyncio.create_task(incident_check_loop(), name="agentgraph-incident-sla"),
     ]
@@ -127,6 +133,8 @@ async def lifespan(app: FastAPI):
             await flush_access_log()
         with suppress(Exception):
             await flush_token_usage()
+        with suppress(Exception):
+            await flush_metrics()
         await event_bus.stop()
         await close_embedding_provider()
         await engine.dispose()
@@ -208,6 +216,7 @@ async def security_headers(request: Request, call_next):
 
 # Innermost: count in-flight requests per token only for authenticated calls.
 app.add_middleware(ConcurrencyLimitMiddleware)
+app.add_middleware(MetricsMiddleware)
 app.add_middleware(RequestContextMiddleware)
 # Inside CORS so protocol errors (unsupported_api_version) still carry CORS headers.
 app.add_middleware(ProtocolMiddleware)
@@ -410,6 +419,11 @@ async def root(request: Request) -> Any:
             "get_budget",
             "set_budget",
             "list_budgets",
+            "append_entries",
+            "read_entries",
+            "list_alerts",
+            "ack_alert",
+            "get_metrics",
             "get_usage",
             "get_index_status",
             "heartbeat",

@@ -19,6 +19,8 @@ from app.schemas import (
     AgentRegisterRequest,
     AgentStatusRequest,
     AgentUpdateRequest,
+    AlertAckRequest,
+    AppendEntriesRequest,
     AuditListResponse,
     ClearTaintRequest,
     ConstitutionAckRequest,
@@ -101,12 +103,13 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
-from app.services import directory, indexer, token_budget, token_tree
+from app.services import contention, directory, indexer, situation, token_budget, token_tree
 from app.services import documents as document_service
 from app.services import events as event_service
 from app.services import exports as export_service
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
+from app.services import logs as log_service
 from app.services import orientation as orientation_service
 from app.services import recall as recall_service
 from app.services import tasks as task_service
@@ -1076,6 +1079,81 @@ async def change_document_taint(
 
 
 @router.post(
+    "/documents/{doc_key:path}/entries", status_code=201,
+    summary="Append entries to a log document (no expected version, no conflicts)",
+)
+async def append_log_entries(
+    doc_key: str,
+    body: AppendEntriesRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await log_service.append_entries(session, principal, namespace=body.namespace,
+                                            doc_key=doc_key, entries=body.entries)
+
+
+@router.get("/documents/{doc_key:path}/entries", summary="Read a log document's entries")
+async def read_log_entries(
+    doc_key: str,
+    namespace: str | None = Query(default=None, max_length=64),
+    after_seq: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await log_service.read_entries(session, principal, namespace=namespace,
+                                          doc_key=doc_key, after_seq=after_seq, limit=limit)
+
+
+@router.get("/documents/{doc_key:path}/sections",
+            summary="Headings with section_hash, for patch_doc_section without a version")
+async def document_sections(
+    doc_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    document = await services.get_document(session, principal, doc_key,
+                                           include_unverified=True, include_tainted=True)
+    return {"doc_key": document.doc_key, "version": document.version,
+            "sections": contention.list_sections(document.content or "")}
+
+
+@router.get("/alerts", summary="Situation alerts (people: all; agents: about themselves)")
+async def list_situation_alerts(
+    state: str | None = Query(default=None, pattern="^(open|acked|resolved)$"),
+    severity: str | None = Query(default=None, pattern="^(high|medium|low)$"),
+    cursor: str | None = Query(default=None, max_length=40),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await situation.list_alerts(session, principal, state=state, severity=severity,
+                                       cursor=cursor)
+
+
+@router.post("/alerts/{alert_id}/ack", summary="Acknowledge an alert (people only)")
+async def ack_situation_alert(
+    alert_id: str,
+    body: AlertAckRequest | None = None,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await situation.ack_alert(session, principal, alert_id, body.note if body else None)
+
+
+@router.get("/metrics", summary="Metrics of a principal, document or task (agents: their own)")
+async def get_situation_metrics(
+    principal_ref: str | None = Query(default=None, alias="principal", max_length=256),
+    doc: str | None = Query(default=None, max_length=256),
+    task: str | None = Query(default=None, max_length=128),
+    window: str = Query(default="1h"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await situation.get_metrics(session, principal, principal_ref=principal_ref,
+                                       doc_ref=doc, task_ref=task, window=window)
+
+
+@router.post(
     "/documents/{doc_key:path}/clear-taint",
     response_model=DocumentMutationResponse,
     summary="Clear taint as a new untainted version (people only, AG-TC-01)",
@@ -1322,9 +1400,14 @@ async def list_workspace_actions(
 
 
 @router.post(
+    "/documents:batchUpsert",
+    response_model=DocumentBatchUpsertResponse,
+    summary="Create or update up to 25 shared documents (AG-ST-07 path)",
+)
+@router.post(
     "/documents/batch",
     response_model=DocumentBatchUpsertResponse,
-    summary="Atomically create or update up to 25 shared documents",
+    summary="Create or update up to 25 shared documents (atomic=true: all or nothing)",
 )
 async def batch_upsert_documents(
     body: DocumentBatchUpsertRequest,
@@ -1334,6 +1417,11 @@ async def batch_upsert_documents(
     return await services.batch_upsert_documents(session, principal, body)
 
 
+@router.post(
+    "/documents:batchGet",
+    response_model=DereferenceBatchResponse,
+    summary="Read up to 25 documents by key (and version) in one call (AG-ST-07 path)",
+)
 @router.post(
     "/dereference-many",
     response_model=DereferenceBatchResponse,
@@ -1351,6 +1439,8 @@ async def batch_dereference(
         include_unverified=body.include_unverified,
         include_tainted=body.include_tainted,
         taint_mode=body.taint_mode,
+        keys=body.keys,
+        fields=body.fields,
     )
 
 

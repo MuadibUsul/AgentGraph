@@ -50,6 +50,11 @@ BEGIN
         IF row_data->'frontmatter'->>'maintainer' IS NOT NULL THEN
             event_targets := jsonb_build_array(row_data->'frontmatter'->>'maintainer');
         END IF;
+        -- Extra addressees the writer computed (AG-TC-03: holders of tasks
+        -- whose context points at the document a person just edited).
+        IF COALESCE(current_setting('app.extra_targets', true), '') <> '' THEN
+            event_targets := event_targets || current_setting('app.extra_targets', true)::jsonb;
+        END IF;
         event_label := row_data->>'doc_key';
     ELSIF TG_TABLE_NAME = 'collab_tasks' THEN
         IF TG_OP = 'INSERT' THEN
@@ -124,6 +129,9 @@ BEGIN
             WHEN 'DOC_RECALLED' THEN 'doc.recalled'
             WHEN 'RECALL_CLOSED' THEN 'recall.closed'
             WHEN 'BUDGET_WARNING' THEN 'budget.warning'
+            WHEN 'ALERT_RAISED' THEN 'alert.raised'
+            WHEN 'DOC_CONTENDED' THEN 'doc.contended'
+            WHEN 'LOG_APPENDED' THEN 'doc.appended'
             WHEN 'ESCALATION_RESOLVED' THEN 'escalation.resolved'
             WHEN 'ESCALATION_REMINDER' THEN 'escalation.reminder'
             WHEN 'TASK_CHILDREN_DONE' THEN 'task.children_done'

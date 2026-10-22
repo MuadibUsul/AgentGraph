@@ -769,6 +769,52 @@ async def usage(
     return UsageOut(**await services.month_usage(session, workspace_id))
 
 
+@router.get("/workspaces/{workspace_id}/alerts", summary="Situation alerts (AG-TC-05)")
+async def situation_alerts(
+    workspace_id: uuid.UUID,
+    state: str | None = Query(default=None, pattern="^(open|acked|resolved)$"),
+    severity: str | None = Query(default=None, pattern="^(high|medium|low)$"),
+    cursor: str | None = Query(default=None, max_length=40),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import situation
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await situation.list_alerts(session, principal_for_admin(workspace), state=state,
+                                       severity=severity, cursor=cursor)
+
+
+@router.post("/workspaces/{workspace_id}/alerts/{alert_id}/ack",
+             summary="Acknowledge a situation alert")
+async def ack_situation_alert(
+    workspace_id: uuid.UUID,
+    alert_id: str,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import situation
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await situation.ack_alert(session, principal_for_admin(workspace), alert_id, None)
+
+
+@router.get("/workspaces/{workspace_id}/metrics",
+            summary="Metrics of a principal, document or task")
+async def situation_metrics(
+    workspace_id: uuid.UUID,
+    principal: str | None = Query(default=None, max_length=256),
+    doc: str | None = Query(default=None, max_length=256),
+    task: str | None = Query(default=None, max_length=128),
+    window: str = Query(default="1h"),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import situation
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await situation.get_metrics(session, principal_for_admin(workspace),
+                                       principal_ref=principal, doc_ref=doc, task_ref=task,
+                                       window=window)
+
+
 # ---------------------------------------------------------- v3.2 accounts
 
 

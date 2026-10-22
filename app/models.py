@@ -391,6 +391,19 @@ class SharedDocument(Base):
     recall_severity: Mapped[str | None] = mapped_column(String(8), nullable=True)
     content_origin: Mapped[str] = mapped_column(
         String(16), nullable=False, default="internal", server_default=text("'internal'"))
+    # AG-ST-14 / AG-TC-03 (v3.25).
+    doc_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="collaborative",
+        server_default=text("'collaborative'"))
+    log_seq: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0"))
+    log_unindexed: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    log_unindexed_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    log_index_batches: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    last_human_edit: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     policy_flags: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -861,6 +874,8 @@ class DocumentVersion(Base):
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
     author: Mapped[str] = mapped_column(String(128), nullable=False)
+    human_edited: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"))
     content_origin: Mapped[str] = mapped_column(
         String(16), nullable=False, default="internal", server_default=text("'internal'"))
     session_batch_id: Mapped[uuid.UUID | None] = mapped_column(

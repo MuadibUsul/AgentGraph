@@ -78,6 +78,10 @@ EVENT_TYPES: dict[str, str] = {
     "doc.recalled": "A version this document derives from was recalled (details: recall_id, "
                     "hop, via; targets: the author, the maintainer, holders of pinned tasks).",
     "recall.closed": "Every node of a recall is resolved or dismissed.",
+    "alert.raised": "A high-severity anomaly (targets: the workspace's owners; at most every "
+                    "30 minutes per alert).",
+    "doc.contended": "A document had 5+ version conflicts in 10 s; overwrites wait 60 s.",
+    "doc.appended": "Entries were appended to a log document (details: first/last seq).",
     "budget.warning": "A token's daily budget is at 80% (targets: its issuer, the owners).",
     "mention.created": "A document or task mentions a principal (targets: the mentioned, "
                        "and the owner of an offline agent).",
@@ -192,10 +196,20 @@ def _like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
 
 
-def _targets_me(principal: Principal) -> Any:
+def _targets_me(principal: Principal, extra: list[str] | None = None) -> Any:
     return WorkspaceEvent.targets.op("?|")(
-        text("CAST(:me AS text[])").bindparams(me=_identities(principal))
+        text("CAST(:me AS text[])").bindparams(
+            me=list(dict.fromkeys(_identities(principal) + (extra or []))))
     )
+
+
+async def _directory_identities(session: AsyncSession, principal: Principal) -> list[str]:
+    """agent:<agent_id> / agent:<prn_…> of the caller's directory entry (AG-ID-06)."""
+    if principal.is_human or not principal.token_cid:
+        return []
+    from app.services.collab import my_refs
+
+    return await my_refs(session, principal)
 
 
 def event_out(event: WorkspaceEvent) -> dict[str, Any]:
@@ -361,6 +375,7 @@ async def poll_events(
     if readable is not None:
         conditions.append(WorkspaceEvent.shard_key.in_(readable))
     async with async_session_factory() as session:
+        mine = await _directory_identities(session, principal)
         if subscription_id:
             subscription = await _subscription(session, principal, subscription_id)
             scope = []
@@ -368,16 +383,16 @@ async def poll_events(
                 scope.append(_prefix_condition(subscription.prefixes))
             if scope:
                 # Addressed events always reach their target (AG-EV-02 point 2).
-                conditions.append(or_(*scope, _targets_me(principal)))
+                conditions.append(or_(*scope, _targets_me(principal, mine)))
             if subscription.types:
                 conditions.append(or_(_type_condition(subscription.types),
-                                      _targets_me(principal)))
+                                      _targets_me(principal, mine)))
         if types:
             conditions.append(_type_condition(types))
         if namespaces:
             conditions.append(WorkspaceEvent.shard_key.in_(namespaces))
         if for_me:
-            conditions.append(_targets_me(principal))
+            conditions.append(_targets_me(principal, mine))
         if written_by_subtree:
             from app.services.lineage import subtree_token_ids
 

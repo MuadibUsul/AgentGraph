@@ -466,6 +466,8 @@ class DocumentUpsertRequest(StrictModel):
         default=None, max_length=40,
         description="This version no longer depends on the recalled versions (AG-TC-02)",
     )
+    doc_type: Literal["collaborative", "log"] | None = Field(
+        default=None, description="At creation only: log documents take append_entries")
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
     rebase: bool = False
@@ -501,7 +503,12 @@ class DocumentSectionPatchRequest(StrictModel):
             "leading matching heading is stripped for compatibility."
         ),
     )
-    expected_version: int = Field(ge=1)
+    expected_version: int | None = Field(default=None, ge=1)
+    section_hash: str | None = Field(
+        default=None, min_length=64, max_length=64,
+        description="sha256 of the section body you read: only that section must be "
+                    "unchanged (patches to other sections do not conflict)",
+    )
     derived_from: list[DocRef] = Field(default_factory=list, max_length=50)
     content_origin: Literal["internal", "external_web", "external_user", "tool_output"] = (
         "internal")
@@ -513,6 +520,12 @@ class DocumentSectionPatchRequest(StrictModel):
     @classmethod
     def _agent(cls, value: str | None) -> str | None:
         return _clean_agent(value)
+
+    @model_validator(mode="after")
+    def _version_or_hash(self) -> DocumentSectionPatchRequest:
+        if self.expected_version is None and self.section_hash is None:
+            raise ValueError("pass expected_version or section_hash")
+        return self
 
 
 class DocumentQueryRequest(StrictModel):
@@ -1210,6 +1223,21 @@ class EscalationResolveRequest(StrictModel):
     note: str | None = Field(default=None, max_length=2_000)
 
 
+class LogEntryIn(StrictModel):
+    body: str = Field(min_length=1, max_length=65_536)
+    frontmatter: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+class AppendEntriesRequest(StrictModel):
+    namespace: str | None = Field(default=None, max_length=64)
+    entries: list[LogEntryIn] = Field(min_length=1, max_length=25)
+
+
+class AlertAckRequest(StrictModel):
+    note: str | None = Field(default=None, max_length=2_000)
+
+
 class ClearTaintRequest(StrictModel):
     namespace: str | None = Field(default=None, max_length=64)
     version: int | None = Field(default=None, ge=1, description="must be the current version")
@@ -1354,14 +1382,19 @@ class DocumentBatchUpsertItem(DocumentUpsertRequest):
 
 class DocumentBatchUpsertRequest(StrictModel):
     items: list[DocumentBatchUpsertItem] = Field(min_length=1, max_length=BATCH_UPSERT_MAX)
+    atomic: bool | None = Field(
+        default=None,
+        description="true: all or nothing; false: each item on its own (default under "
+                    "2026-11; all or nothing before)",
+    )
 
     @model_validator(mode="after")
     def _payload_cap(self) -> DocumentBatchUpsertRequest:
         content_bytes = sum(
             len(item.content.encode("utf-8")) for item in self.items
         )
-        if content_bytes > 5_000_000:
-            raise ValueError("batch content exceeds the 5,000,000 byte cap")
+        if content_bytes > 16_000_000:
+            raise ValueError("batch content exceeds the 16,000,000 byte cap")
         return self
 
 
@@ -1390,6 +1423,8 @@ class DocumentSummary(BaseModel):
     content_origin: str = "internal"
     recall_severity: str | None = Field(
         default=None, description="warn | block while an open recall reaches this version")
+    doc_type: str = "collaborative"
+    last_human_edit: dict[str, Any] | None = None
     score: float | None = None
     archived_at: datetime | None = None
     archived_by: str | None = None
@@ -1416,6 +1451,9 @@ class DocumentOut(DocumentSummary):
     untrusted_content: str | None = Field(
         default=None, description="taint_mode=separate: a tainted body, to treat as data")
     handling: str | None = None
+    entries: list[dict[str, Any]] | None = Field(
+        default=None, description="log documents: the latest 100 entries")
+    entries_total: int | None = None
     created_by: str
     created_by_label: str | None = None
     created_at: datetime
@@ -1457,6 +1495,10 @@ class DocumentBatchUpsertResult(BaseModel):
 
 class DocumentBatchUpsertResponse(BaseModel):
     items: list[DocumentBatchUpsertResult]
+    results: list[dict[str, Any]] = Field(
+        default_factory=list, description="One entry per request item, in order (AG-ST-07)")
+    succeeded: int = 0
+    failed: int = 0
 
 
 class DocumentNormalizeResponse(BaseModel):
@@ -1490,8 +1532,26 @@ class DocumentQueryResponse(BaseModel):
     )
 
 
+class DereferenceBatchKey(StrictModel):
+    namespace: str | None = Field(default=None, max_length=64)
+    doc_key: str = Field(min_length=1, max_length=256)
+    version: int | None = Field(default=None, ge=1)
+
+
 class DereferenceBatchRequest(StrictModel):
-    uris: list[str] = Field(min_length=1, max_length=BATCH_DEREFERENCE_MAX)
+    uris: list[str] = Field(default_factory=list, max_length=BATCH_DEREFERENCE_MAX)
+    keys: list[DereferenceBatchKey] = Field(default_factory=list,
+                                            max_length=BATCH_DEREFERENCE_MAX)
+    fields: list[str] | None = Field(default=None, max_length=50)
+
+    @model_validator(mode="after")
+    def _some(self) -> DereferenceBatchRequest:
+        total = len(self.uris) + len(self.keys)
+        if total == 0:
+            raise ValueError("pass uris or keys")
+        if total > BATCH_DEREFERENCE_MAX:
+            raise ValueError(f"at most {BATCH_DEREFERENCE_MAX} uris and keys together")
+        return self
     include_unverified: bool = False
     include_tainted: bool = False
     taint_mode: Literal["annotate", "separate", "exclude"] = "annotate"
@@ -1506,6 +1566,8 @@ class DereferenceBatchItem(BaseModel):
 
 class DereferenceBatchResponse(BaseModel):
     items: list[DereferenceBatchItem]
+    results: list[dict[str, Any]] = Field(
+        default_factory=list, description="One entry per uri, then per key, in order")
 
 
 class DereferenceResponse(BaseModel):
