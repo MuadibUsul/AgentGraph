@@ -1494,6 +1494,13 @@ class BudgetUpdateRequest(StrictModel):
     max_concurrent_leases: int = Field(ge=1, le=100_000)
 
 
+class BudgetLimitsUpdate(StrictModel):
+    embedding_tokens_per_day: int | None = Field(default=None, ge=0)
+    write_rate_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+    write_burst: int | None = Field(default=None, ge=1, le=100_000)
+    query_rate_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+
+
 class BudgetOut(BaseModel):
     workspace_id: uuid.UUID
     monthly_token_budget: int

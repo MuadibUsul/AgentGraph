@@ -166,6 +166,19 @@ class Settings(BaseSettings):
     hot_key_writes_per_minute: int = Field(default=20, ge=2, le=10_000)
     circuit_open_minutes: int = Field(default=10, ge=1, le=1_440)
     embedding_tokens_per_day: int = Field(default=2_000_000, ge=1)
+    # Server-enforced backoff: a request before Retry-After is refused without
+    # taking a token and doubles the next wait; repeated violations trip a
+    # short circuit (reason ignored_backoff).
+    backoff_max_seconds: int = Field(default=60, ge=1, le=3_600)
+    backoff_violations_to_trip: int = Field(default=3, ge=1, le=100)
+    backoff_circuit_minutes: int = Field(default=1, ge=1, le=1_440)
+    # A token's write rate above this multiple of its own 7-day p99 for the
+    # same hour trips the circuit (reason write_spike); needs enough history.
+    write_spike_multiplier: float = Field(default=10.0, ge=1.0, le=1_000.0)
+    write_spike_min_history_minutes: int = Field(default=30, ge=1, le=10_080)
+    # In-flight requests per credential; long-polls (SSE) have their own pool.
+    max_in_flight_per_token: int = Field(default=4, ge=1, le=10_000)
+    max_streams_per_token: int = Field(default=1, ge=1, le=100)
 
     # ------------------------------------------- failure-semantics protocol
     # PRD AG-ST-18: 24 h idempotency window; an in-progress record older than

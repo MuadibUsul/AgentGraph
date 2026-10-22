@@ -30,7 +30,7 @@ dashboard/.env.local
 Thumbs.db
 .idea/
 .vscode/
-tests/.server.log
+tests/.server*.log
 
 # Build metadata
 dashboard/*.tsbuildinfo

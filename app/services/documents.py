@@ -190,7 +190,7 @@ async def _document_embedding(
     vectors, set when the chunks are (re)indexed. Asynchronous writes
     (2026-11) leave that to the index worker.
     """
-    if indexer.asynchronous():
+    if indexer.asynchronous() or await budget.defer_embedding(workspace_id):
         return None, None
     await enforce_embedding_budget(session=None, workspace_id=workspace_id,
                                    chars=len(content.encode("utf-8")))

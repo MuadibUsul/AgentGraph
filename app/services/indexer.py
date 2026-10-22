@@ -22,10 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import async_session_factory
-from app.models import DocumentIndex, SharedDocument, UsageLedger
+from app.models import DocumentIndex, SharedDocument
+from app.services import budget
 from app.services.common import append_event
 from app.stamp_context import current_stamp, set_current_stamp
 from app.versioning import LATEST_VERSION, at_least
+from app.warnings_context import add_warning
 
 logger = logging.getLogger("agentgraph.indexer")
 settings = get_settings()
@@ -48,9 +50,28 @@ async def _row(session: AsyncSession, document: SharedDocument) -> DocumentIndex
 
 
 async def after_write(session: AsyncSession, document: SharedDocument) -> DocumentIndex:
-    """Index now (baseline) or enqueue (2026-11) after a write has been flushed."""
+    """Index now (baseline) or enqueue (2026-11) after a write has been flushed.
+
+    With the daily embedding quota spent (enforce mode) the write is still
+    stored, and indexing waits for the quota reset (AG-ST-15 point 3).
+    """
     row = await _row(session, document)
-    if asynchronous():
+    if await budget.defer_embedding(document.workspace_id):
+        waiting = row.state in ("pending", "deferred") and row.pending_version
+        if waiting and row.pending_version < document.version:
+            row.superseded += 1
+        row.state = "deferred"
+        row.pending_version = document.version
+        row.attempts = 0
+        row.next_attempt_at = budget.next_quota_reset()
+        row.enqueued_at = _now()
+        row.updated_at = _now()
+        add_warning(
+            "embedding_deferred_quota",
+            "stored; the daily embedding quota is spent, so indexing waits for the reset",
+            index_after=row.next_attempt_at.isoformat(),
+        )
+    elif asynchronous():
         waiting = row.state == "pending" and row.pending_version
         if waiting and row.pending_version < document.version:
             row.superseded += 1  # coalesced: only the latest version is embedded
@@ -145,21 +166,6 @@ async def index_status(
     }
 
 
-async def _quota_exhausted(session: AsyncSession, workspace_id) -> bool:
-    from app.services.budget import EMBEDDING_CATEGORY, _day_start, enforcing
-
-    if not enforcing():
-        return False
-    used = await session.scalar(
-        select(func.coalesce(func.sum(UsageLedger.amount), 0)).where(
-            UsageLedger.workspace_id == workspace_id,
-            UsageLedger.category == EMBEDDING_CATEGORY,
-            UsageLedger.created_at >= _day_start(),
-        )
-    )
-    return int(used or 0) >= settings.embedding_tokens_per_day
-
-
 async def process_jobs(limit: int | None = None) -> int:
     """Index due documents. Returns how many were indexed in this pass."""
     from app.services.retrieval import reindex_document_chunks
@@ -204,9 +210,9 @@ async def _index_one(document_id, workspace_id, reindex) -> bool:
             await session.delete(row)
             await session.commit()
             return False
-        if await _quota_exhausted(session, workspace_id):
+        if await budget.defer_embedding(workspace_id):
             row.state = "deferred"
-            row.next_attempt_at = _now() + timedelta(minutes=10)
+            row.next_attempt_at = budget.next_quota_reset()
             row.updated_at = _now()
             await session.commit()
             return False

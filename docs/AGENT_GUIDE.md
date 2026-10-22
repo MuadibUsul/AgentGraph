@@ -70,6 +70,13 @@ Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.
 - `idempotency_window_hours`: 24
 - `requests_per_minute_default`: 600
 - `sse_revalidate_seconds`: 30
+- `write_rate_per_minute`: 60
+- `write_burst`: 20
+- `query_rate_per_minute`: 120
+- `max_in_flight_per_token`: 4
+- `max_streams_per_token`: 1
+- `backoff_max_seconds`: 60
+- `embedding_tokens_per_day`: 2000000
 
 ## Reviews
 
@@ -79,7 +86,7 @@ Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.
 ## Errors and retries
 
 Every error carries `code`, `class`, `action`, `retryable`, `retry_after_ms`.
-On 429/503 wait for `Retry-After` before resending.
+On 429/503 wait for `Retry-After` before resending. The server enforces it: an early retry is refused, doubles the next wait, and repeated early retries open a short `circuit_open` (reason `ignored_backoff`).
 
 - `retry_after`: Wait for Retry-After, then resend unchanged with the same idempotency key.
 - `retry_backoff`: Retry with full-jitter exponential backoff, at most 5 times, with the same idempotency key.

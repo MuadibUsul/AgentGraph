@@ -197,3 +197,4 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 | `constitution_draft` | The constitution is still the generated template. |
 | `token_expiring` | The calling token expires within a day. |
 | `quota_80_percent` | The daily embedding quota is at least 80% used. |
+| `embedding_deferred_quota` | Stored, but indexing waits for the daily embedding quota reset. |

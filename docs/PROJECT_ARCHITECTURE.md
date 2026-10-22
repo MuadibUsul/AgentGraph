@@ -169,7 +169,10 @@ E:\Codes\AgentGraph\
 │       ├── v3_8_addresses.sql            # canonical ID、别名重定向、墓碑、namespace 注册、$ref 引用（AG-ST-17）
 │       ├── v3_9_lineage.sql              # 根令牌、权限快照、谱系章触发器（AG-ID-03）
 │       ├── v3_10_review_rounds.sql       # 审核轮次与返工（AG-CO-01）
-│       └── v3_11_onboarding.sql          # system 命名空间、宪法确认、访问审计（AG-OB-01/02）
+│       ├── v3_11_onboarding.sql          # system 命名空间、宪法确认、访问审计（AG-OB-01/02）
+│       ├── v3_12_budget.sql              # embedding 计量、令牌桶、熔断（AG-ST-15 影子模式）
+│       ├── v3_13_async_index.sql         # 异步索引任务与状态（AG-ST-13）
+│       └── v3_14_budget_enforce.sql      # 强制退避、配额覆盖（工作区/租户）（AG-ST-15 拦截）
 │
 ├── dashboard/
 │   ├── package.json                      # Next.js 14.2 / React 18 / react-markdown

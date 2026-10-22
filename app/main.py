@@ -26,6 +26,7 @@ from app.api.human_routes import router as human_router
 from app.api.stream_routes import admin_router as admin_stream_router
 from app.api.stream_routes import router as stream_router
 from app.api.v1_routes import router as v1_router
+from app.concurrency import ConcurrencyLimitMiddleware
 from app.config import get_settings
 from app.database import apply_schema, check_database, engine
 from app.engine.embeddings import close_embedding_provider, configured_embedding_model
@@ -176,6 +177,8 @@ async def security_headers(request: Request, call_next):
     return response
 
 
+# Innermost: count in-flight requests per token only for authenticated calls.
+app.add_middleware(ConcurrencyLimitMiddleware)
 app.add_middleware(RequestContextMiddleware)
 # Inside CORS so protocol errors (unsupported_api_version) still carry CORS headers.
 app.add_middleware(ProtocolMiddleware)
