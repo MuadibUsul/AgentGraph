@@ -95,6 +95,9 @@ async def get_stream_principal(request: Request) -> Principal:
         if principal is None:
             raise ApiError(401, "unauthorized", "invalid or inactive API key")
         ensure_tenant_usable(principal, write=False, path=request.url.path)
+        from app.services.token_tree import after_authentication
+
+        await after_authentication(principal, path=request.url.path)
         from app.services.common import set_audit_actor
 
         set_audit_actor(principal)
@@ -254,10 +257,13 @@ def _key_revalidator(raw_key: str, original: Principal) -> Revalidator:
     """Re-resolve the stream's credential so revocation ends the stream."""
 
     async def _check() -> Principal | None:
-        async with async_session_factory() as session:
-            principal = await resolve_principal(
-                session, raw_key, agent_hint=original.agent_signature
-            )
+        try:
+            async with async_session_factory() as session:
+                principal = await resolve_principal(
+                    session, raw_key, agent_hint=original.agent_signature
+                )
+        except ApiError:
+            return None  # revoked or expired (AG-ID-04/05)
         if principal is None or principal.workspace.id != original.workspace.id:
             return None
         if principal.tenant is not None and principal.tenant.status == "deleting":

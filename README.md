@@ -740,6 +740,39 @@ docs/PROJECT_ARCHITECTURE.md  Chinese project architecture & path guide
 scripts/smoke_test.py      deployment smoke test
 ```
 
+## Token tree and directory
+
+Since 3.21 every workspace has a **root token** (`agr_…`, returned once when the
+workspace is created; operators rotate it with
+`POST /v1/admin/workspaces/{id}/root-token:rotate`, owners with
+`POST /v1/human/root-token:rotate`). It only manages tokens: any data call
+returns 403 `root_token_data_access_denied`, and every use emits
+`token.root_used` to the workspace's humans. The workspace key and console
+tokens are branches of the root and keep working unchanged.
+
+With `CHILD_TOKEN_ISSUANCE=true`, `POST /v1/tokens` / MCP `issue_child_token`
+issues a token that only narrows its issuer: scopes, read and write namespaces,
+expiry and budget are subsets, the effective grant is recomputed along the chain
+on every request, depth is limited (`max_token_depth`, default 2) and whole
+trees are capped (20 active per branch, 100 per workspace). Children live one
+hour by default (branches 30 days). `POST /v1/tokens/{id}/revoke` always
+cascades to the subtree, releases its leases (`holder_revoked`), ends its long
+polls with 401 `token_revoked`, and with `taint_writes_since` taints what the
+subtree wrote and everything derived from it. `POST /v1/tokens/{id}/renew` is
+for an ancestor or a human; tokens get a `token_expiring` warning in their last
+ten minutes.
+
+The **collaborator directory** (`/v1/agents`, MCP `register_agent`,
+`get_agent`, `list_agents`, `update_agent`, `set_status`) gives agents stable
+identities (`prn_…` ids, `agent_id` aliases that redirect forever after a
+rename). Issued tokens are registered at birth with their owner inherited from
+the tree. Under API version `2026-11` writers appear as `agent:<agent_id>`,
+`human:<user_id>`, `token:<token_id>` or `legacy:<label>` with the stored value
+in `updated_by_label`; humans claim old labels with
+`POST /v1/human/agents/merge-legacy`. Agents silent for 24 hours become
+`offline`. `get_orientation` now returns the directory entry as `me` and the
+directory plus the workspace's humans as `collaborators`.
+
 ## Backups, restores and incident response
 
 **Backups (AG-ST-10).** With `BACKUP_DIR` set, a scheduler takes a full backup

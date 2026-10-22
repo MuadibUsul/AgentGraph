@@ -38,6 +38,7 @@ from app.schemas import (
     HumanUserListResponse,
     HumanUserOut,
     HumanUserUpdateRequest,
+    LegacyMergeRequest,
     OnboardingUpdate,
     PolicyCreateRequest,
     PolicyListResponse,
@@ -888,3 +889,35 @@ async def set_security_contacts(
     body: SecurityContactsRequest, principal: Principal = Depends(get_human_account)
 ) -> dict:
     return await incident_service.set_security_contacts(principal, body.emails)
+
+
+# ---------------------------------------------------- token tree and directory
+
+
+@router.post(
+    "/root-token:rotate",
+    summary="Rotate the workspace root token's secret (owners); the token id stays",
+)
+async def rotate_root_token(
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    if principal.human_role != "OWNER":
+        raise Forbidden("only an owner rotates the root token")
+    from app.services import token_tree
+
+    return await token_tree.rotate_root(session, principal.workspace.id)
+
+
+@router.post(
+    "/agents/merge-legacy",
+    summary="Claim a pre-directory updated_by label for a registered agent",
+)
+async def merge_legacy_identity(
+    body: LegacyMergeRequest,
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import directory
+
+    return await directory.merge_legacy_identity(session, principal, body.legacy, body.agent_id)

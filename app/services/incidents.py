@@ -343,6 +343,8 @@ async def _compute_scope(session: AsyncSession, inputs: dict[str, Any]) -> dict[
             await session.execute(
                 text("SELECT tenant_id, canonical_id FROM agent_tokens "
                      "WHERE canonical_id = ANY(:tokens) UNION ALL "
+                     "SELECT tenant_id, key_token_id FROM workspaces "
+                     "WHERE key_token_id = ANY(:tokens) UNION ALL "
                      "SELECT tenant_id, root_token_id FROM workspaces "
                      "WHERE root_token_id = ANY(:tokens)"),
                 {"tokens": tokens},

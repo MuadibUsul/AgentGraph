@@ -90,9 +90,26 @@ class Workspace(Base):
         String(32), nullable=False, default="developer_5usd",
         server_default=text("'developer_5usd'"),
     )
-    # The workspace key is this workspace's root token (PRD AG-ID-03).
+    # Token id of the workspace key: a branch with commander rights (AG-ID-01).
+    key_token_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    # The root token only manages tokens; its secret is held by a human.
     root_token_id: Mapped[str] = mapped_column(
         String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    root_key_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    root_key_rotated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    max_token_depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=2, server_default=text("2")
+    )
+    branch_token_quota: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=20, server_default=text("20")
+    )
+    workspace_token_quota: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=100, server_default=text("100")
     )
     # Server-derived: a trigger creates a root tenant when none is supplied.
     tenant_id: Mapped[str] = mapped_column(
@@ -212,6 +229,27 @@ class AgentToken(Base):
     )
     issued_by_agent_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # AG-ID-02: explicit grant (None = legacy token, limited by its role only).
+    scopes: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    read_namespaces: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    write_namespaces: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    can_issue: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    max_descendants: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    lineage: Mapped[list[str] | None] = mapped_column(ARRAY(String(40)), nullable=True)
+    issued_by_token_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    issued_by_human: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    agent_profile: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    revoke_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revoked_ancestor: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    expiring_notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(

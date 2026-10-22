@@ -1540,3 +1540,15 @@ async def delete_incident_notice(incident_id: str, notice_id: str) -> dict:
 @router.post("/incidents/check-sla", summary="Run the 24/48/60/72-hour checks now")
 async def check_incident_slas() -> dict:
     return await incident_service.check_slas()
+
+
+@router.post(
+    "/workspaces/{workspace_id}/root-token:rotate",
+    summary="Rotate a workspace's root token secret (shown once; the token id stays)",
+)
+async def rotate_root_token(
+    workspace_id: uuid.UUID, session: AsyncSession = Depends(get_db)
+) -> dict:
+    from app.services import token_tree
+
+    return await token_tree.rotate_root(session, workspace_id)

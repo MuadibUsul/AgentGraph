@@ -69,6 +69,12 @@ EVENT_TYPES: dict[str, str] = {
     "action.updated": "An external action changed state.",
     "budget.circuit_open": "Writes from a token are paused by a circuit breaker.",
     "responsibilities.transferred": "Open work moved to a successor.",
+    "token.root_used": "The workspace root token was used (targets: the workspace's humans).",
+    "token.issued": "A child token was issued (targets: the issuer).",
+    "token.revoked": "A token and its subtree were revoked (targets: humans, the issuer).",
+    "token.expiring": "A token expires within 10 minutes (targets: its parent).",
+    "agent.registered": "An agent joined the directory (targets: the workspace's humans).",
+    "agent.status_changed": "An agent's directory status changed.",
     "security.incident_notice": "A security incident notice for this organisation "
                                 "(targets: the notified owners).",
     "timeline.*": "Application event that repeats a row change (e.g. timeline.task_claimed).",
@@ -380,7 +386,15 @@ async def poll_events(
         else:
             oldest = await check_cursor(session, workspace_id, seq)
     deadline = asyncio.get_running_loop().time() + wait_seconds
+    next_check = asyncio.get_running_loop().time() + 1.0
+    waited = False
     while True:
+        if wait_seconds and asyncio.get_running_loop().time() >= next_check:
+            # A revoked token's long poll ends within seconds (AG-ID-04 point 4).
+            from app.services.token_tree import still_valid
+
+            await still_valid(principal)
+            next_check = asyncio.get_running_loop().time() + 1.0
         async with async_session_factory() as session:
             rows = (
                 await session.execute(
@@ -399,7 +413,13 @@ async def poll_events(
                 )
                 await session.commit()
         if rows or asyncio.get_running_loop().time() >= deadline:
+            if waited:
+                # Whatever woke a long poll, a revoked token gets 401, not events.
+                from app.services.token_tree import still_valid
+
+                await still_valid(principal)
             break
+        waited = True
         await asyncio.sleep(min(_POLL_INTERVAL, max(0.0, deadline - asyncio.get_running_loop()
                                                     .time())))
     has_more = len(rows) > limit

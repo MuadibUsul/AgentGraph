@@ -114,6 +114,12 @@ BEGIN
             WHEN 'BUDGET_CIRCUIT_OPEN' THEN 'budget.circuit_open'
             WHEN 'RESPONSIBILITIES_TRANSFERRED' THEN 'responsibilities.transferred'
             WHEN 'SECURITY_INCIDENT_NOTICE' THEN 'security.incident_notice'
+            WHEN 'TOKEN_ROOT_USED' THEN 'token.root_used'
+            WHEN 'TOKEN_ISSUED' THEN 'token.issued'
+            WHEN 'TOKEN_REVOKED' THEN 'token.revoked'
+            WHEN 'TOKEN_EXPIRING' THEN 'token.expiring'
+            WHEN 'AGENT_REGISTERED' THEN 'agent.registered'
+            WHEN 'AGENT_STATUS_CHANGED' THEN 'agent.status_changed'
             ELSE 'timeline.' || lower(COALESCE(NULLIF(row_data->>'event_type', ''), 'event'))
         END;
         IF jsonb_typeof(row_data->'payload'->'targets') = 'array' THEN

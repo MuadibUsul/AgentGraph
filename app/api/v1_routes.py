@@ -16,6 +16,9 @@ from app.error_registry import protocol_docs
 from app.errors import ApiError
 from app.models import TaskStatus
 from app.schemas import (
+    AgentRegisterRequest,
+    AgentStatusRequest,
+    AgentUpdateRequest,
     AuditListResponse,
     ConstitutionAckRequest,
     DereferenceBatchRequest,
@@ -80,6 +83,9 @@ from app.schemas import (
     TimelineEventRequest,
     TimelineItemOut,
     TimelineListResponse,
+    TokenIssueRequest,
+    TokenRenewRequest,
+    TokenRevokeRequest,
     UsageOut,
     WhoAmIResponse,
     WorkspaceMapResponse,
@@ -87,9 +93,9 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
+from app.services import directory, indexer, token_tree
 from app.services import events as event_service
 from app.services import exports as export_service
-from app.services import indexer
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
@@ -664,6 +670,96 @@ async def explain_write(
 ) -> dict:
     require_permission(principal, "doc:read")
     return await lineage_service.explain_write(session, principal, doc_key, version)
+
+
+@router.post("/tokens", status_code=201,
+             summary="Issue a child token (only narrows the issuer's grant; secret shown once)")
+async def issue_child_token(
+    body: TokenIssueRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await token_tree.issue_child_token(session, principal, body.model_dump())
+
+
+@router.post("/tokens/{ref}/revoke",
+             summary="Revoke a token and its whole subtree (optionally taint their writes)")
+async def revoke_token(
+    ref: str,
+    body: TokenRevokeRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await token_tree.revoke_token(session, principal, ref, reason=body.reason,
+                                         taint_writes_since=body.taint_writes_since)
+
+
+@router.post("/tokens/{ref}/renew", summary="Renew a token (its parent or an ancestor renews)")
+async def renew_token(
+    ref: str,
+    body: TokenRenewRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await token_tree.renew_token(session, principal, ref, body.ttl_seconds)
+
+
+# --------------------------------------------------------- directory (AG-ID-06)
+
+
+@router.post("/agents/register", status_code=201,
+             summary="Register the calling token's agent in the directory")
+async def register_agent(
+    body: AgentRegisterRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await directory.register_agent(session, principal, body.model_dump())
+
+
+@router.get("/agents", summary="The collaborator directory")
+async def list_agents(
+    role: str | None = Query(default=None, max_length=32),
+    capability: str | None = Query(default=None, max_length=64),
+    status: str | None = Query(default=None, pattern="^(active|idle|offline|retired)$"),
+    cursor: str | None = Query(default=None, max_length=512),
+    limit: int = Query(default=100, ge=1, le=200),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "workspace:read")
+    return await directory.list_agents(session, principal, role=role, capability=capability,
+                                       status=status, cursor=cursor, limit=limit)
+
+
+@router.post("/agents/me/status", summary="Set your own status (active or idle)")
+async def set_agent_status(
+    body: AgentStatusRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await directory.set_status(session, principal, body.status, body.note)
+
+
+@router.get("/agents/{ref}", summary="One directory entry (agent_id, alias or prn_ id)")
+async def get_agent(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "workspace:read")
+    return await directory.get_agent(session, principal, ref)
+
+
+@router.patch("/agents/{ref}", summary="Change directory fields (per-field permissions)")
+async def update_agent(
+    ref: str,
+    body: AgentUpdateRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await directory.update_agent(session, principal, ref, body.fields,
+                                        body.expected_version)
 
 
 @router.get("/tokens/{ref}", summary="Inspect a token (self, an ancestor or a descendant)")

@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.actors import actor_label, actor_ref
 from app.engine.blackboard import lease_is_active
 from app.engine.formatter import render_document
 from app.models import (
@@ -165,7 +166,8 @@ def task_out(task: CollabTask) -> TaskOut:
         reject_history=task.reject_history or [],
         review_round=task.review_round,
         review_history=task.review_history or [],
-        created_by=task.created_by,
+        created_by=actor_ref(task.created_by),
+        created_by_label=actor_label(task.created_by),
         created_at=task.created_at,
     )
 
@@ -210,7 +212,8 @@ def document_summary(
         archive_reason=document.archive_reason,
         trust=document.trust_level,
         archived=document.archived_at is not None,
-        updated_by=document.updated_by,
+        updated_by=actor_ref(document.updated_by),
+        updated_by_label=actor_label(document.updated_by),
         updated_at=document.updated_at,
         updated_stamp=document.updated_stamp,
         **getattr(document, "_index_status", {}),
@@ -227,7 +230,8 @@ def document_out(
     return DocumentOut(
         **summary.model_dump(),
         content=document.content,
-        created_by=document.created_by,
+        created_by=actor_ref(document.created_by),
+        created_by_label=actor_label(document.created_by),
         created_at=document.created_at,
         created_stamp=document.created_stamp,
         agent_view=render_document(

@@ -9,6 +9,7 @@ mine, what should I read and call next". Until the collaborator directory
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -62,7 +63,7 @@ def principal_key(principal: Principal) -> str:
 
 async def _me(session: AsyncSession, principal: Principal) -> dict[str, Any]:
     token = None
-    if principal.auth_kind in (AuthKind.AGENT, AuthKind.WORKSPACE):
+    if principal.auth_kind in (AuthKind.AGENT, AuthKind.WORKSPACE, AuthKind.ROOT):
         view = await lineage.get_token(session, principal, "self")
         token = {
             "token_id": view["token_id"],
@@ -72,14 +73,38 @@ async def _me(session: AsyncSession, principal: Principal) -> dict[str, Any]:
             "namespaces": view["namespaces"],
             "expires_at": view.get("expires_at"),
             "parent_token_id": view.get("parent_token_id"),
+            "lineage": view.get("lineage"),
         }
     from app.auth import PERMISSIONS
+    from app.services import directory
 
+    entry = await directory.me(session, principal) if principal.token_cid else None
+    owner = None
+    if entry and entry["owner_human"]:
+        user = await session.get(HumanUser, uuid.UUID(entry["owner_human"]))
+        if user is not None:
+            owner = {"user_id": str(user.id), "display_name": user.display_name}
+    if entry is not None:
+        return {
+            "agent_id": entry["agent_id"],
+            "principal_id": entry["principal_id"],
+            "display_name": entry["display_name"],
+            "type": "agent",
+            "role": entry["role"] or principal.role.value,
+            "role_scope": principal.role.value,
+            "capabilities": entry["capabilities"],
+            "owner_human": owner,
+            "trust_level": entry["trust_level"],
+            "status": entry["status"],
+            "registered": True,
+            "token": token,
+        }
     return {
         "agent_id": principal.agent_signature,
         "display_name": principal.agent_signature,
         "type": "human" if principal.is_human else "agent",
         "role": principal.role.value,
+        "role_scope": principal.role.value,
         "capabilities": sorted(PERMISSIONS.get(principal.role, set())),
         "owner_human": None,
         "trust_level": "internal",
@@ -119,6 +144,56 @@ def _summary(body: str, limit: int = 2_048) -> str:
 
 
 async def _collaborators(session: AsyncSession, principal: Principal) -> list[dict[str, Any]]:
+    """The directory and the workspace's humans; inferred from writes before it exists."""
+    from app.services import directory
+
+    registry = (await directory.list_agents(session, principal, limit=200))["items"]
+    me = principal.token_cid
+    people = [
+        {
+            "agent_id": entry["agent_id"],
+            "type": "agent",
+            "display_name": entry["display_name"],
+            "role": entry["role"],
+            "capabilities": entry["capabilities"],
+            "owner_human": entry["owner_human"],
+            "trust_level": entry["trust_level"],
+            "status": entry["status"],
+            "last_seen_at": entry["last_seen_at"],
+            "source": "registry",
+        }
+        for entry in registry
+        if me not in entry["token_ids"] and entry["status"] != "retired"
+    ]
+    if people:
+        humans = (
+            await session.execute(
+                select(HumanUser).where(HumanUser.workspace_id == principal.workspace.id,
+                                        HumanUser.is_active.is_(True))
+            )
+        ).scalars().all()
+        people.extend(
+            {
+                "user_id": str(user.id),
+                "type": "human",
+                "display_name": user.display_name,
+                "role": user.role.lower(),
+                "capabilities": [],
+                "owner_human": None,
+                "status": "active",
+                "last_seen_at": user.last_login_at,
+                "source": "registry",
+            }
+            for user in humans
+            if user.id != principal.user_id
+        )
+        return people[:100]
+    return await _inferred_collaborators(session, principal)
+
+
+async def _inferred_collaborators(
+    session: AsyncSession, principal: Principal
+) -> list[dict[str, Any]]:
     since = utcnow() - timedelta(days=30)
     writers = dict(
         (
@@ -442,7 +517,10 @@ async def build(
     # AG-EV-02 point 3: every principal starts subscribed to what it may read.
     from app.services import events as event_service
 
-    subscription = await event_service.default_subscription(session, principal)
+    # A token without events:read still gets its pack, just no subscription.
+    subscription = (await event_service.default_subscription(session, principal)
+                    if can(principal, "events:read") else None)
+    pack["inbox"]["default_subscription_id"] = (subscription or {}).get("subscription_id")
     pack["events"] = {
         "default_subscription": subscription,
         "how": "poll_events(subscription_id, cursor, wait_seconds=25); "
@@ -461,8 +539,11 @@ async def build(
         pack["onboarding"] = onboarding_block
         if onboarding_block["first_time"] and max_bytes == DEFAULT_MAX_BYTES:
             max_bytes = FIRST_TIME_MAX_BYTES
-    warnings = [{"code": "not_registered",
-                 "message": "the collaborator directory is not live yet; identity is inferred"}]
+    warnings = []
+    if not me["registered"] and principal.auth_kind is AuthKind.AGENT:
+        warnings.append({"code": "not_registered",
+                         "message": "this token has no directory entry; call register_agent",
+                         "register_with": "register_agent"})
     if constitution["stub"]:
         warnings.append({"code": "constitution_draft",
                          "message": "the constitution is still the generated template"})

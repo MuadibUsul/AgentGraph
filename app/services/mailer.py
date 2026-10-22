@@ -59,11 +59,12 @@ async def deliver_pending(limit: int = 50) -> dict[str, int]:
             if status in counts:
                 counts[status] += 1
             await session.execute(
-                text("UPDATE email_outbox SET status = :status, error = :error, "
-                     "attempts = attempts + 1, "
-                     "sent_at = CASE WHEN :status = 'sent' THEN NOW() ELSE sent_at END "
+                text("UPDATE email_outbox SET status = CAST(:status AS varchar), "
+                     "error = :error, attempts = attempts + 1, "
+                     "sent_at = CASE WHEN :sent THEN NOW() ELSE sent_at END "
                      "WHERE id = :id"),
-                {"id": row["id"], "status": status, "error": error},
+                {"id": row["id"], "status": status, "error": error,
+                 "sent": status == "sent"},
             )
         await session.commit()
     return counts

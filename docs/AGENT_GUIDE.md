@@ -134,6 +134,11 @@ Events are delivered at least once; deduplicate by `event_id`.
 
 Every write is stamped with the token, the chain from the workspace root token and the grant it held; see `explain_write`, `get_token`, `get_lineage`.
 
+- The root token only manages tokens; the workspace key and console tokens are branches of it. Your effective grant is the intersection along your chain.
+- `issue_child_token(scopes, agent, purpose, namespaces?, ttl_seconds?)` gives another agent a subset of your grant (needs `token:issue`); the secret is returned once. Children live 1 hour by default and never outlive you.
+- `revoke_token(token_id, reason)` ends a token and its whole subtree at once; `renew_token(token_id, ttl_seconds)` is for an ancestor, never yourself. A `token_expiring` warning means: ask your parent to renew.
+- Register once with `register_agent(agent_id, ...)` (issued tokens are registered at birth); find others with `list_agents` and set `set_status(active|idle)`.
+
 ## Error codes
 
 | code | HTTP | class |

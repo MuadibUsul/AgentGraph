@@ -59,7 +59,7 @@ SUPPORTED_FORMATS = (FORMAT,)
 # table -> (archive file, columns never exported)
 EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "tenants": ("objects.jsonl", ()),
-    "workspaces": ("objects.jsonl", ("api_key_hash",)),
+    "workspaces": ("objects.jsonl", ("api_key_hash", "root_key_hash")),
     "memberships": ("objects.jsonl", ()),
     "namespaces": ("objects.jsonl", ()),
     "human_users": ("objects.jsonl", ("password_hash",)),
@@ -94,6 +94,8 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "state_audit_diffs": ("audit_log.jsonl", ()),
     "access_audit": ("audit_log.jsonl", ()),
     "token_access_log": ("audit_log.jsonl", ()),
+    "agent_directory": ("objects.jsonl", ()),
+    "agent_aliases": ("objects.jsonl", ()),
 }
 # Rebuilt from exported state after an import.
 DERIVED = frozenset({"document_chunks", "document_index"})

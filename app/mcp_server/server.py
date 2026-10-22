@@ -57,9 +57,10 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
+from app.services import directory as directory_service
 from app.services import events as event_service
 from app.services import exports as export_service
-from app.services import idempotency, indexer
+from app.services import idempotency, indexer, token_tree
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
@@ -103,6 +104,11 @@ IDEMPOTENT_TOOLS = frozenset(
         "rename_document",
         "register_parts",
         "ack_constitution",
+        "revoke_token",
+        "renew_token",
+        "register_agent",
+        "update_agent",
+        "set_status",
     }
 )
 _CONTENT_BLOCK = TypeAdapter(types.ContentBlock)
@@ -387,12 +393,19 @@ class MCPAuthMiddleware:
         if not raw_key:
             await self._unauthorized(scope, receive, send)
             return
-        async with async_session_factory() as session:
-            principal = await resolve_principal(
-                session,
-                raw_key,
-                agent_hint=request_headers.get("x-agent-signature"),
-            )
+        try:
+            async with async_session_factory() as session:
+                principal = await resolve_principal(
+                    session,
+                    raw_key,
+                    agent_hint=request_headers.get("x-agent-signature"),
+                )
+        except ApiError as exc:
+            # token_revoked / token_expired keep their codes over MCP too.
+            response = JSONResponse(exc.body(), status_code=exc.status_code,
+                                    headers={"WWW-Authenticate": "Bearer"})
+            await response(scope, receive, send)
+            return
         if principal is None:
             await self._unauthorized(scope, receive, send)
             return
@@ -453,8 +466,16 @@ async def _principal_for_call(session: AsyncSession) -> Principal:
     from app.services.access_log import note_request
     from app.stamp_context import current_stamp
 
-    note_request(principal.workspace.id, current_stamp(),
-                 write=tool_name in IDEMPOTENT_TOOLS or tool_name == "draft_external_action")
+    write = tool_name in IDEMPOTENT_TOOLS or tool_name == "draft_external_action"
+    note_request(principal.workspace.id, current_stamp(), write=write)
+    from app.services import directory, token_tree
+
+    try:
+        await token_tree.after_authentication(principal, tool=tool_name)
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+    await directory.touch(principal, write=write)
+    await directory.load_actor_map(principal)
     await activate_tenant(session, principal.workspace.id, principal.tenant_scope)
     from app.services.common import set_audit_actor
     from app.services.usage import enforce_rate_limit
@@ -1620,6 +1641,160 @@ async def list_token_tree(
                 limit=limit,
                 cursor=cursor,
             )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="issue_child_token")
+async def issue_child_token(
+    scopes: list[str],
+    agent: dict[str, Any],
+    purpose: str,
+    namespaces: dict[str, list[str]] | None = None,
+    ttl_seconds: int | None = None,
+    can_issue: bool = False,
+    max_descendants: int = 0,
+    budget: dict[str, int] | None = None,
+    role_scope: str | None = None,
+) -> dict[str, Any]:
+    """Issue a token for another agent. It can only narrow your own grant.
+
+    scopes: subset of yours (docs:read, docs:write, tasks:read, tasks:write,
+    tasks:review, proposals:write, events:read, external_action:draft, export,
+    webhooks:manage, token:issue). namespaces: {"read": [...], "write": [...]},
+    subsets of yours. agent: {agent_id, display_name, role, capabilities,
+    description} registers the new agent in the directory. ttl_seconds defaults
+    to 3600 for a child (max 86400) and cannot outlive you. The secret ("token")
+    is returned once: hand it to the new agent, never log it.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await token_tree.issue_child_token(session, principal, {
+                "scopes": scopes, "agent": agent, "purpose": purpose,
+                "namespaces": namespaces, "ttl_seconds": ttl_seconds, "can_issue": can_issue,
+                "max_descendants": max_descendants, "budget": budget,
+                "role_scope": role_scope,
+            })
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="revoke_token")
+async def revoke_token(
+    token_id: str, reason: str, taint_writes_since: datetime | None = None
+) -> dict[str, Any]:
+    """Revoke a token and its whole subtree at once (no non-cascading option).
+
+    Callable by the token itself, any ancestor, or a human. Leases the subtree
+    held go back to the board; with taint_writes_since, everything the subtree
+    wrote since then is tainted and the taint follows references downstream.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await token_tree.revoke_token(
+                session, principal, token_id, reason=reason,
+                taint_writes_since=taint_writes_since)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="renew_token")
+async def renew_token(token_id: str, ttl_seconds: int) -> dict[str, Any]:
+    """Extend a descendant's expiry (never your own; never past your own expiry)."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await token_tree.renew_token(session, principal, token_id, ttl_seconds)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="register_agent")
+async def register_agent(
+    agent_id: str,
+    display_name: str | None = None,
+    role: str | None = None,
+    capabilities: list[str] | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Register this token's agent in the directory (once per token).
+
+    agent_id: ^[a-z][a-z0-9-]{2,39}$, unique in the tenant. Afterwards your
+    writes show as agent:<agent_id> (API version 2026-11) and other agents can
+    find you with list_agents. Tokens from issue_child_token are registered at birth.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await directory_service.register_agent(session, principal, {
+                "agent_id": agent_id, "display_name": display_name, "role": role,
+                "capabilities": capabilities or [], "description": description,
+            })
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_agent")
+async def get_agent(agent_id: str) -> dict[str, Any]:
+    """One directory entry by agent_id, an old alias, or prn_ id."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await directory_service.get_agent(session, principal, agent_id)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_agents")
+async def list_agents(
+    role: str | None = None,
+    capability: str | None = None,
+    status: Literal["active", "idle", "offline", "retired"] | None = None,
+    cursor: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=200)] = 100,
+) -> dict[str, Any]:
+    """The collaborator directory: who else works here, their roles and capabilities."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await directory_service.list_agents(
+                session, principal, role=role, capability=capability, status=status,
+                cursor=cursor, limit=limit)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="update_agent")
+async def update_agent(
+    agent_id: str, fields: dict[str, Any], expected_version: int | None = None
+) -> dict[str, Any]:
+    """Change your own entry: display_name, capabilities, description, status."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await directory_service.update_agent(
+                session, principal, agent_id, fields, expected_version)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="set_status")
+async def set_status(status: Literal["active", "idle"], note: str | None = None) -> dict[str, Any]:
+    """Tell collaborators whether you are working (active) or waiting (idle)."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await directory_service.set_status(session, principal, status, note)
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)

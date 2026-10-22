@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -299,3 +300,22 @@ async def test_incidents_are_admin_only(ops):
     bad = await client.post("/v1/admin/incidents", headers=ADMIN,
                             json={"title": "x", "severity": "huge"})
     assert bad.status_code == 422
+
+
+async def test_outbox_records_delivery_honestly(ops):
+    """Without SMTP the outbox marks mail no_transport instead of pretending."""
+    conn = await asyncpg.connect(_dsn())
+    try:
+        mail_id = await conn.fetchval(
+            "INSERT INTO email_outbox (to_email, subject, body) VALUES "
+            "('x@example.test', 's', 'b') RETURNING id")
+        status = "queued"
+        for _ in range(40):
+            status = await conn.fetchval("SELECT status FROM email_outbox WHERE id = $1",
+                                         mail_id)
+            if status != "queued":
+                break
+            await asyncio.sleep(0.5)
+        assert status == "no_transport"
+    finally:
+        await conn.close()

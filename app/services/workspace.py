@@ -557,9 +557,13 @@ async def create_workspace(
     session: AsyncSession, *, name: str, tier: str, tenant_id: str | None = None
 ) -> WorkspaceCreatedResponse:
     raw_key = generate_api_key()
+    from app.services.token_tree import generate_root_key
+
+    root_key = generate_root_key()
     workspace = Workspace(
         name=name,
         api_key_hash=hash_api_key(raw_key),
+        root_key_hash=hash_api_key(root_key),
         tier=tier,
     )
     if tenant_id is not None:
@@ -573,7 +577,7 @@ async def create_workspace(
     await scaffold_new_workspace(session, workspace.id)
     await session.commit()
     return WorkspaceCreatedResponse(
-        workspace=workspace_info(workspace), api_key=raw_key
+        workspace=workspace_info(workspace), api_key=raw_key, root_key=root_key
     )
 
 
@@ -688,7 +692,7 @@ async def create_agent_token(
         ),
         per_minute_limit=request.per_minute_limit,
         monthly_token_budget=request.monthly_token_budget,
-        # Branch tokens hang off the workspace root token (PRD AG-ID-03).
+        # Console tokens are branches issued on behalf of the root (AG-ID-01).
         parent_token_id=workspace.root_token_id,
         root_token_id=workspace.root_token_id,
         depth=1,
@@ -701,6 +705,7 @@ async def create_agent_token(
     except IntegrityError:
         await session.rollback()
         raise ApiError(409, "agent_token_exists", "agent token already exists") from None
+    token.lineage = [workspace.root_token_id, token.canonical_id]
     await snapshot_token(session, workspace, token)
     await session.commit()
     return AgentTokenCreatedResponse(token=agent_token_out(token), api_key=raw_key)

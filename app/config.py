@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     export_retention_days: int = Field(default=30, ge=1, le=3_650)
     max_import_bytes: int = Field(default=512 * 1024 * 1024, ge=1_024)
 
+    # Token tree (AG-ID-02): issue_child_token stays off until an operator
+    # enables it (PRD gate: root/branch split, lineage and revocation first).
+    child_token_issuance: bool = False
+
     # ------------------------------------------- backups (AG-ST-10, R1.3)
     # Archives go to BACKUP_DIR, which must live on other storage than the
     # database (another disk, an NFS/object-storage mount). Unset = no backups.

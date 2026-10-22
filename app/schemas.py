@@ -759,6 +759,7 @@ class TaskOut(TaskSummary):
     review_round: int = 0
     review_history: list[Any] = Field(default_factory=list)
     created_by: str
+    created_by_label: str | None = None
     created_at: datetime
 
 
@@ -960,6 +961,72 @@ class SecurityContactsRequest(StrictModel):
     emails: list[str] = Field(default_factory=list, max_length=10)
 
 
+class TokenNamespaces(StrictModel):
+    read: list[str] | None = Field(default=None, max_length=200)
+    write: list[str] | None = Field(default=None, max_length=200)
+
+
+class AgentProfile(StrictModel):
+    agent_id: str = Field(min_length=3, max_length=40, pattern=r"^[a-z][a-z0-9-]{2,39}$")
+    display_name: str | None = Field(default=None, max_length=64)
+    role: str | None = Field(default=None, max_length=32)
+    capabilities: list[str] = Field(default_factory=list, max_length=20)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class TokenBudget(StrictModel):
+    per_minute_limit: int | None = Field(default=None, ge=1)
+    monthly_token_budget: int | None = Field(default=None, ge=1)
+
+
+class TokenIssueRequest(StrictModel):
+    scopes: list[str] = Field(min_length=1, max_length=20)
+    namespaces: TokenNamespaces | None = None
+    ttl_seconds: int | None = Field(default=None, ge=60)
+    can_issue: bool = False
+    max_descendants: int = Field(default=0, ge=0, le=10_000)
+    budget: TokenBudget | None = None
+    agent: AgentProfile
+    purpose: str = Field(min_length=1, max_length=200)
+    role_scope: Literal["SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"] | None = Field(
+        default=None, description="Defaults to the issuer's role (agents) or the narrowest "
+                                  "role covering the scopes (root, workspace key, humans)"
+    )
+
+
+class TokenRevokeRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=500)
+    taint_writes_since: datetime | None = None
+
+
+class TokenRenewRequest(StrictModel):
+    ttl_seconds: int = Field(ge=60)
+
+
+class AgentRegisterRequest(StrictModel):
+    agent_id: str = Field(min_length=3, max_length=40)
+    display_name: str | None = Field(default=None, max_length=64)
+    role: str | None = Field(default=None, max_length=32)
+    capabilities: list[str] = Field(default_factory=list, max_length=20)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class AgentUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    fields: dict[str, Any] = Field(min_length=1)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class AgentStatusRequest(StrictModel):
+    status: Literal["active", "idle"]
+    note: str | None = Field(default=None, max_length=200)
+
+
+class LegacyMergeRequest(StrictModel):
+    legacy: str = Field(min_length=1, max_length=128)
+    agent_id: str = Field(min_length=3, max_length=40)
+
+
 class TaskContextResponse(BaseModel):
     task: TaskOut
     lease: LeaseOut | None = None
@@ -1114,6 +1181,9 @@ class DocumentSummary(BaseModel):
     )
     archived: bool = False
     updated_by: str
+    updated_by_label: str | None = Field(
+        default=None, description="Stored label when updated_by is a typed ref (2026-11)"
+    )
     updated_at: datetime
     updated_stamp: dict[str, Any] | None = None
     stored: bool = True
@@ -1126,6 +1196,7 @@ class DocumentSummary(BaseModel):
 class DocumentOut(DocumentSummary):
     content: str
     created_by: str
+    created_by_label: str | None = None
     created_at: datetime
     created_stamp: dict[str, Any] | None = None
     agent_view: str
@@ -1341,6 +1412,11 @@ class AdminWorkspaceOut(WorkspaceInfo):
 class WorkspaceCreatedResponse(BaseModel):
     workspace: WorkspaceInfo
     api_key: str = Field(description="Shown exactly once; store it securely.")
+    root_key: str | None = Field(
+        default=None,
+        description="The root token's secret, shown once: it only manages tokens "
+                    "(issue, revoke, renew). Keep it with a human, never with an agent.",
+    )
 
 
 class ApiKeyRotatedResponse(BaseModel):
