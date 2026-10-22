@@ -178,7 +178,9 @@ E:\Codes\AgentGraph\
 │       ├── v3_17_events.sql              # 事件 seq（提交时分配）、类型化事件、订阅（AG-EV-01/02）
 │       ├── v3_18_onboarding_progress.sql # 控制台“开始使用”清单进度（按用户 + 工作区，RLS）
 │       ├── v3_19_agent_onboarding.sql    # Agent MCP 引导状态机（agent_onboarding，RLS，历史回填）
-│       └── v3_20_durability_incidents.sql # 备份/恢复/演练、平台告警、邮件外发、安全事件与通知、令牌访问记录
+│       ├── v3_20_durability_incidents.sql # 备份/恢复/演练、平台告警、邮件外发、安全事件与通知、令牌访问记录
+│       ├── v3_21_token_tree.sql          # 根令牌、子令牌签发字段与谱系、协作者名录（agent_directory）
+│       └── v3_22_members.sql             # 成员邀请、ADMIN 角色、个人权利请求、遮盖日志
 │   └── functions/                        # 每次启动在迁移之后应用的当前函数定义（如 notify_workspace_change）
 │
 ├── dashboard/
@@ -667,6 +669,10 @@ ruff check .
 | `app/services/incidents.py` | 安全事件：影响范围计算、72 小时通知（邮件/事件/横幅）、只追加通知记录、时限检查、记录导出 |
 | `app/services/access_log.py` | 按令牌/分钟聚合的访问记录（读到的文档与任务），供事件范围计算 |
 | `app/services/alerts.py`、`app/services/mailer.py` | 平台告警与邮件外发队列（配置 SMTP 后发送） |
+| `app/services/token_tree.py` | 根令牌、`issue_child_token`（只减不增）、级联吊销、续期、根令牌轮换 |
+| `app/services/directory.py` | 协作者名录：注册、查询、状态、离线扫描、遗留身份认领、按 2026-11 输出 `agent:`/`human:` 引用 |
+| `app/services/members.py` | 成员与角色：邀请、改角色、移除（吊销或转交令牌）、沿树继承 owner/admin、切换工作区 |
+| `app/services/rights.py` | 个人权利请求：定位、导出、假名化、遮盖、删除、说明、提醒与最小化、恢复后重放遮盖日志 |
 | `scripts/deploy_tlines.sh` | Tlines 部署：数据库备份、旧镜像打标签、构建重启、校验、自动/手动回滚 |
 | `scripts/webhook_receiver.py` | Bot 侧签名 Webhook 接收器：校验时间戳/HMAC，写入 JSONL outbox |
 | `app/services/tasks.py` | 失败认领/续租/释放/交接/审核/升级写入 `TASK_*_FAILED` 时间线 |

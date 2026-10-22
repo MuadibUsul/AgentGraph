@@ -770,6 +770,10 @@ class StateAuditDiff(Base):
 class DocumentVersion(Base):
     __tablename__ = "document_versions"
 
+    # AG-TC-07: personal data redacted in place; content_hash keeps the original.
+    redacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    redaction_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     stamp: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, server_default=FetchedValue()
     )

@@ -1027,6 +1027,60 @@ class LegacyMergeRequest(StrictModel):
     agent_id: str = Field(min_length=3, max_length=40)
 
 
+class MemberInviteRequest(StrictModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: Literal["owner", "admin", "member", "guest"]
+    expires_at: datetime | None = Field(
+        default=None, description="Guests default to 30 days; others never expire"
+    )
+
+
+class MemberUpdateRequest(StrictModel):
+    role: Literal["owner", "admin", "member", "guest"]
+    expires_at: datetime | None = None
+
+
+class AcceptInviteRequest(StrictModel):
+    code: str = Field(min_length=10, max_length=128)
+    password: str = Field(min_length=8, max_length=256)
+    display_name: str = Field(min_length=1, max_length=128)
+
+
+class SwitchWorkspaceRequest(StrictModel):
+    workspace_id: uuid.UUID
+
+
+class RightsSubject(StrictModel):
+    principal_ref: str | None = Field(default=None, max_length=128)
+    emails: list[str] = Field(default_factory=list, max_length=20)
+    names: list[str] = Field(default_factory=list, max_length=20)
+    phones: list[str] = Field(default_factory=list, max_length=20)
+    other_identifiers: list[str] = Field(default_factory=list, max_length=20)
+
+
+class RightsRequestCreate(StrictModel):
+    subject: RightsSubject
+    type: Literal["access", "copy", "portability", "correction", "deletion", "explanation"]
+    include_subtree: bool = True
+    scope: Literal["customer", "platform"] = "customer"
+    received_at: datetime | None = None
+    notes: str | None = Field(default=None, max_length=5_000)
+
+
+class RightsExportRequest(StrictModel):
+    items: list[str] | None = Field(default=None, max_length=10_000)
+
+
+class RightsEraseRequest(StrictModel):
+    mode: Literal["pseudonymise", "redact", "delete"]
+    items: list[str] | None = Field(default=None, max_length=10_000)
+
+
+class RightsCloseRequest(StrictModel):
+    outcome: Literal["fulfilled", "rejected", "withdrawn"] = "fulfilled"
+    notes: str | None = Field(default=None, max_length=5_000)
+
+
 class TaskContextResponse(BaseModel):
     task: TaskOut
     lease: LeaseOut | None = None
@@ -1517,6 +1571,10 @@ class DocumentVersionSummary(BaseModel):
     stamp: dict[str, Any] | None = Field(
         default=None, description="Lineage stamp fixed when this version was written"
     )
+    redacted: bool = Field(
+        default=False, description="Personal data was redacted from this version (AG-TC-07)"
+    )
+    redaction_hash: str | None = None
 
 
 class DocumentVersionOut(DocumentVersionSummary):

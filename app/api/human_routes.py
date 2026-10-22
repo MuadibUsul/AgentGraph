@@ -83,8 +83,9 @@ router = APIRouter(prefix="/v1/human", tags=["Human Console"])
 async def _owner(
     principal: Principal = Depends(get_human_account),
 ) -> Principal:
-    if principal.human_role != "OWNER":
-        raise Forbidden("workspace OWNER role is required")
+    """Owners and admins of the node (AG-ID-10 role table)."""
+    if principal.human_role not in ("OWNER", "ADMIN"):
+        raise Forbidden("an owner or admin of this organisation is required")
     return principal
 
 
@@ -532,7 +533,7 @@ async def accounts(
     principal: Principal = Depends(get_human_principal),
     session: AsyncSession = Depends(get_db),
 ) -> HumanUserListResponse:
-    if principal.human_role != "OWNER":
+    if principal.human_role not in ("OWNER", "ADMIN"):
         from app.errors import Forbidden
 
         raise Forbidden("owner role required to list accounts")
@@ -552,7 +553,7 @@ async def create_account(
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> HumanUserCreatedResponse:
-    if principal.human_role != "OWNER":
+    if principal.human_role not in ("OWNER", "ADMIN"):
         from app.errors import Forbidden
 
         raise Forbidden("owner role required to create accounts")
@@ -575,7 +576,7 @@ async def update_account(
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> HumanUserOut:
-    if principal.human_role != "OWNER":
+    if principal.human_role not in ("OWNER", "ADMIN"):
         from app.errors import Forbidden
 
         raise Forbidden("owner role required to update accounts")

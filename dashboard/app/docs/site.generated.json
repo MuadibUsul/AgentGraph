@@ -677,6 +677,37 @@
     {
      "endpoints": [
       {
+       "body": [
+        {
+         "description": "",
+         "name": "code",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "password",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "display_name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/auth/accept-invite",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Accept a member invitation: create the account and sign in"
+      },
+      {
        "body": [],
        "description": "",
        "method": "GET",
@@ -845,6 +876,25 @@
         "422"
        ],
        "summary": "Create a workspace and owner account with email/password"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "workspace_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/auth/switch-workspace",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A session for another workspace you may use (404 if you may not)"
       }
      ],
      "group": "auth"
@@ -4437,6 +4487,164 @@
        "parameters": [
         {
          "description": "",
+         "in": "path",
+         "name": "request_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/rights-requests/{request_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A request with its inventory and timeline"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "request_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/rights-requests/{request_id}/close",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Close the request"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "mode",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "items",
+         "required": false,
+         "type": "string[] | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "request_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/rights-requests/{request_id}/erase",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Pseudonymise, redact or delete located items"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "request_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/rights-requests/{request_id}/explain",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "How the person's data was processed: categories, agents, purposes"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "request_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/rights-requests/{request_id}/export",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Build the access/portability export (agentgraph-export/1 subset)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "request_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/rights-requests/{request_id}/export/download",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Download the export (the request's handler, for 7 days)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "request_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/rights-requests/{request_id}/locate",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Locate the person's data: structured records and exact text matches"
+      }
+     ],
+     "group": "rights-requests"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
          "in": "query",
          "name": "namespace",
          "required": false,
@@ -5343,6 +5551,228 @@
       }
      ],
      "group": "tasks"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "include_inherited",
+         "required": false,
+         "type": "boolean"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/members",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Members of a node, with owners and admins inherited from ancestors"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "email",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "role",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "Guests default to 30 days; others never expire",
+         "name": "expires_at",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/members",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Invite a member (people without an account get an email invitation)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "role",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "expires_at",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "PATCH",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "principal_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/members/{principal_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Change a member's role"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "DELETE",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "principal_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "transfer_tokens_to",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/members/{principal_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Remove a member; their tokens are revoked unless transferred"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "subject",
+         "required": true,
+         "type": "RightsSubject"
+        },
+        {
+         "description": "",
+         "name": "type",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "include_subtree",
+         "required": false,
+         "type": "boolean"
+        },
+        {
+         "description": "",
+         "name": "scope",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "received_at",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "notes",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/rights-requests",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Open a personal rights request (owners and admins)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/rights-requests",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Rights requests of a node"
+      }
+     ],
+     "group": "tenants"
     },
     {
      "endpoints": [

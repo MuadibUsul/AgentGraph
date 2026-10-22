@@ -696,8 +696,8 @@ async def set_limits(
 async def clear_circuit(
     session: AsyncSession, principal: Principal, target_key: str
 ) -> dict[str, Any]:
-    if not principal.is_human or principal.human_role != "OWNER":
-        raise Forbidden("only a workspace owner can clear a circuit breaker")
+    if not principal.is_human or principal.human_role not in ("OWNER", "ADMIN"):
+        raise Forbidden("only an owner or admin can clear a circuit breaker")
     result = await session.execute(
         text(
             "UPDATE budget_circuits SET cleared_at = NOW(), cleared_by = :by "

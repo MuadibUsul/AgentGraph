@@ -40,6 +40,9 @@ async def lease_reaper_loop() -> None:
                 from app.services.directory import sweep_offline
 
                 await sweep_offline()
+                from app.services.rights import upkeep as rights_upkeep
+
+                await rights_upkeep()
                 purged = await purge_due_tenants(session)
                 if purged:
                     logger.info("purged %s tenant(s) after the deletion grace period", purged)

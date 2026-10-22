@@ -773,6 +773,38 @@ in `updated_by_label`; humans claim old labels with
 `offline`. `get_orientation` now returns the directory entry as `me` and the
 directory plus the workspace's humans as `collaborators`.
 
+## Members, roles and personal-data requests
+
+**Members (AG-ID-10).** A person's membership in a tenant node decides what
+they are there: `owner > admin > member > guest`. Owners and admins of an
+ancestor act as owners and admins in the whole subtree (`inherited: true`);
+members and guests do not inherit, and guests only use workspaces shared with
+them. `GET/POST /v1/tenants/{id}/members`, `PATCH/DELETE
+/v1/tenants/{id}/members/{principal_id}` (`{id}` may be `current`). Nobody
+grants a role above their own (403 `role_not_assignable`); a root keeps at
+least one owner (409 `last_owner_required`); guests expire after 30 days by
+default; removing a member revokes the agent tokens they issued unless
+`transfer_tokens_to` names a successor. People without an account receive an
+invitation (`POST /v1/auth/accept-invite`); `POST /v1/auth/switch-workspace`
+gives a session for another workspace a person may use (404, audited,
+otherwise).
+
+**Personal-data requests (AG-TC-07).** Owners and admins (or the operator, for
+platform-held data) open `POST /v1/tenants/{id}/rights-requests`, due in 15
+business days. `…/locate` lists the person's structured records (account,
+memberships, tokens they issued, lineage stamps, audit, usage, assigned tasks)
+and exact text matches in every document version, frontmatter, task and
+retained event. `…/export` builds an `agentgraph-export/1` subset with
+`summary.md` (download by the handler for 7 days). `…/erase` with
+`pseudonymise` replaces names and email everywhere they appear as labels but
+keeps the `prn_` id, so lineage still answers who wrote what under which grant;
+`redact` writes a redacted version of each hit document and rewrites the hit
+historical versions in place (`redacted: true`, `redaction_hash`); `delete`
+tombstones documents that belong to the person. Erasures go to an append-only
+redaction log that every restore replays. `…/explain` summarises categories,
+agents and purposes; closed requests keep only a hash of the subject after 30
+days.
+
 ## Backups, restores and incident response
 
 **Backups (AG-ST-10).** With `BACKUP_DIR` set, a scheduler takes a full backup

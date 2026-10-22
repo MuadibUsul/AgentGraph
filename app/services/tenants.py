@@ -30,7 +30,7 @@ logger = logging.getLogger("agentgraph.tenants")
 settings = get_settings()
 
 # Account roles of 3.x map onto PRD membership roles.
-_MEMBERSHIP_ROLE = {"OWNER": "owner", "REVIEWER": "member", "VIEWER": "guest"}
+_MEMBERSHIP_ROLE = {"OWNER": "owner", "ADMIN": "admin", "REVIEWER": "member", "VIEWER": "guest"}
 
 
 def tenant_info(tenant: Tenant) -> TenantInfo:

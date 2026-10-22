@@ -205,7 +205,9 @@ async def _active_count(session: AsyncSession, workspace_id: Any, *,
 
 
 def _issuer_kind_ok(principal: Principal) -> None:
-    if principal.auth_kind is AuthKind.HUMAN and principal.human_role in ("OWNER", "REVIEWER"):
+    # Owners, admins and members register their own agents (AG-ID-10 role table).
+    if principal.auth_kind is AuthKind.HUMAN and principal.human_role in (
+            "OWNER", "ADMIN", "REVIEWER"):
         return
     if principal.auth_kind in (AuthKind.ROOT, AuthKind.WORKSPACE, AuthKind.HUMAN_ADMIN):
         return
@@ -469,7 +471,8 @@ def _may_manage(principal: Principal, token: AgentToken, *, allow_self: bool) ->
     if principal.auth_kind in (AuthKind.ROOT, AuthKind.HUMAN_ADMIN, AuthKind.WORKSPACE):
         return True
     if principal.auth_kind is AuthKind.HUMAN:
-        return principal.human_role == "OWNER"
+        return principal.human_role in ("OWNER", "ADMIN") or (
+            principal.user_id is not None and token.issued_by_human == principal.user_id)
     if principal.token_cid == token.canonical_id:
         return allow_self
     return principal.token_cid in (token.lineage or [])
@@ -526,6 +529,38 @@ async def revoke_token(
     await session.commit()
     return {"revoked": ids, "count": len(ids), "revoked_at": now,
             "released_leases": released, "tainted_documents": tainted}
+
+
+async def revoke_subtrees(session: AsyncSession, tenant_id: str, token_ids: list[str], *,
+                          reason: str) -> list[str]:
+    """Revoke tokens (and their subtrees) across a node's workspaces, no permission check.
+
+    Used when a member leaves (AG-ID-10 point 6); callers check permissions.
+    """
+    if not token_ids:
+        return []
+    now = _now()
+    rows = (
+        await session.execute(
+            select(AgentToken).join(Workspace, Workspace.id == AgentToken.workspace_id)
+            .where(Workspace.tenant_id == tenant_id, AgentToken.revoked_at.is_(None),
+                   AgentToken.lineage.overlap(token_ids))
+        )
+    ).scalars().all()
+    from app.services.leases import revoke_holder
+
+    revoked = []
+    for token in rows:
+        ancestor = next((item for item in (token.lineage or []) if item in token_ids),
+                        token.canonical_id)
+        token.revoked_at = now
+        token.is_active = False
+        token.revoke_reason = reason
+        token.revoked_ancestor = ancestor
+        await session.flush()
+        await revoke_holder(session, token.workspace_id, token, reason="holder_revoked")
+        revoked.append(token.canonical_id)
+    return revoked
 
 
 async def _taint_writes(session: AsyncSession, workspace_id: Any, token_ids: list[str],

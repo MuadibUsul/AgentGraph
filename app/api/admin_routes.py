@@ -71,6 +71,8 @@ from app.schemas import (
     ProposalOut,
     ProposalRejectRequest,
     RestoreRequest,
+    RightsEraseRequest,
+    RightsRequestCreate,
     SlotListResponse,
     SlotMutationResponse,
     TaskActionResponse,
@@ -1552,3 +1554,56 @@ async def rotate_root_token(
     from app.services import token_tree
 
     return await token_tree.rotate_root(session, workspace_id)
+
+
+# ------------------------------------------------- rights requests (AG-TC-07)
+
+
+@router.post("/tenants/{tenant_id}/rights-requests", status_code=201,
+             summary="Open a rights request, including for platform-held data")
+async def admin_create_rights_request(
+    tenant_id: str, body: RightsRequestCreate, session: AsyncSession = Depends(get_db)
+) -> dict:
+    from app.services import rights
+
+    principal = await _tenant_principal(session, tenant_id)
+    return await rights.create_request(session, principal, tenant_id, body.model_dump())
+
+
+@router.post("/rights-requests/{request_id}/locate", summary="Locate (operator)")
+async def admin_locate_personal_data(
+    request_id: str, session: AsyncSession = Depends(get_db)
+) -> dict:
+    from app.services import rights
+
+    return await rights.locate(session, await _rights_principal(session, request_id),
+                               request_id)
+
+
+@router.post("/rights-requests/{request_id}/erase", summary="Erase (operator)")
+async def admin_erase_personal_data(
+    request_id: str, body: RightsEraseRequest, session: AsyncSession = Depends(get_db)
+) -> dict:
+    from app.services import rights
+
+    return await rights.erase(session, await _rights_principal(session, request_id),
+                              request_id, mode=body.mode, items=body.items)
+
+
+@router.get("/rights-requests/{request_id}", summary="A rights request (operator)")
+async def admin_get_rights_request(
+    request_id: str, session: AsyncSession = Depends(get_db)
+) -> dict:
+    from app.services import rights
+
+    return await rights.get_request(session, await _rights_principal(session, request_id),
+                                    request_id)
+
+
+async def _rights_principal(session: AsyncSession, request_id: str):
+    tenant_id = await session.scalar(
+        text("SELECT tenant_id FROM rights_requests WHERE id = :id"), {"id": request_id})
+    if tenant_id is None:
+        raise ApiError(404, "not_found", "rights request not found",
+                       details={"request_id": request_id})
+    return await _tenant_principal(session, tenant_id)

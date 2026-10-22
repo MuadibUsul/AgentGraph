@@ -199,20 +199,22 @@ async def _resolve_principal(
     workspace = await session.get(Workspace, human_session.workspace_id)
     if workspace is None:
         return None
-    role = (
-        RoleScope.VIEWER
-        if user.role == "VIEWER"
-        else RoleScope.COMMANDER
-    )
+    # AG-ID-10: the membership (direct, or owner/admin inherited from an
+    # ancestor) decides what a person is in this workspace's node.
+    from app.services.members import ACCOUNT_ROLE, workspace_access
+
+    access = await workspace_access(session, user, workspace.id)
+    if access is None:
+        return None
     return Principal(
         workspace=workspace,
-        role=role,
+        role=RoleScope.VIEWER if access["role"] == "guest" else RoleScope.COMMANDER,
         agent_signature=user.email,
         auth_kind=AuthKind.HUMAN,
         allowed_namespaces=["*"],
         token_id=human_session.id,
         user_id=user.id,
-        human_role=user.role,
+        human_role=ACCOUNT_ROLE[access["role"]],
     )
 
 
@@ -657,6 +659,11 @@ def require_permission(principal: Principal, permission: str) -> None:
         raise Forbidden(
             f"role {principal.role.value} lacks permission '{permission}'"
         )
+
+
+def is_manager(principal: Principal) -> bool:
+    """An owner or admin of the node (AG-ID-10): members, policies, quotas, exports."""
+    return principal.auth_kind is AuthKind.HUMAN and principal.human_role in ("OWNER", "ADMIN")
 
 
 def effective_agent(principal: Principal, provided: str | None) -> str:

@@ -23,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.admin_routes import router as admin_router
 from app.api.auth_routes import router as auth_router
 from app.api.human_routes import router as human_router
+from app.api.org_routes import router as org_router
 from app.api.public_docs import router as public_docs_router
 from app.api.stream_routes import admin_router as admin_stream_router
 from app.api.stream_routes import router as stream_router
@@ -217,6 +218,7 @@ app.add_middleware(
 app.include_router(v1_router)
 app.include_router(auth_router)
 app.include_router(human_router)
+app.include_router(org_router)
 app.include_router(stream_router)
 app.include_router(admin_router)
 app.include_router(admin_stream_router)

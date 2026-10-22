@@ -636,11 +636,19 @@ async def _restore(
             tenants_out.append({"tenant_id": tenant, "imports": imports})
         if target == "in_place":
             await _after_in_place(tenant_id, saved_passwords)
+        # Erasures made after the backup are applied again (AG-TC-07 point 7).
+        from app.services.rights import replay
+
+        replayed = 0
+        async with factory() as restored:
+            replayed = await replay(restored, list(selected))
+            await restored.commit()
     finally:
         if engine is not None:
             await engine.dispose()
     return {
         "tenants": tenants_out,
+        "redactions_replayed": replayed,
         "pre_restore_export_id": pre_restore_export,
         "warnings": [] if target == "staging" else [
             {"code": "keys_rotated",

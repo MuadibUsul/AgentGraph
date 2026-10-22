@@ -129,6 +129,8 @@ def _version_summary(version: DocumentVersion) -> DocumentVersionSummary:
         taint_sources=version.taint_sources or [],
         created_at=version.created_at,
         stamp=version.stamp,
+        redacted=version.redacted_at is not None,
+        redaction_hash=version.redaction_hash,
     )
 
 

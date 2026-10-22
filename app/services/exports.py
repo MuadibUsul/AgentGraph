@@ -96,6 +96,8 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "token_access_log": ("audit_log.jsonl", ()),
     "agent_directory": ("objects.jsonl", ()),
     "agent_aliases": ("objects.jsonl", ()),
+    # Replayed after a restore or import so erased data stays erased (AG-TC-07).
+    "redaction_log": ("audit_log.jsonl", ()),
 }
 # Rebuilt from exported state after an import.
 DERIVED = frozenset({"document_chunks", "document_index"})
@@ -108,6 +110,9 @@ EPHEMERAL = frozenset({
     # belong to the operator, not to a tenant's data.
     "backups", "restore_runs", "restore_drills", "platform_alerts", "email_outbox",
     "incidents", "incident_nodes", "incident_notices", "incident_timeline",
+    # Invitations are transient; rights requests hold the very personal data
+    # they are about and are minimized in place, never copied out (AG-TC-07).
+    "member_invitations", "rights_requests", "rights_request_events", "rights_exports",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
@@ -184,7 +189,7 @@ def _authorize(principal: Principal, scope: str) -> None:
     """
     if principal.auth_kind is AuthKind.HUMAN_ADMIN:
         return
-    if principal.auth_kind is AuthKind.HUMAN and principal.human_role == "OWNER":
+    if principal.auth_kind is AuthKind.HUMAN and principal.human_role in ("OWNER", "ADMIN"):
         return
     if principal.auth_kind is AuthKind.WORKSPACE and scope != "tenant":
         return
@@ -383,7 +388,7 @@ def _visible(principal: Principal, row: dict[str, Any]) -> bool:
         return False
     if principal.auth_kind is AuthKind.WORKSPACE:
         return row["workspace_id"] == principal.workspace.id
-    return principal.auth_kind is AuthKind.HUMAN and principal.human_role == "OWNER"
+    return principal.auth_kind is AuthKind.HUMAN and principal.human_role in ("OWNER", "ADMIN")
 
 
 async def get_export_any(export_id: str) -> dict[str, Any]:
@@ -493,7 +498,7 @@ async def _table_rows(
     if table == "tenants":
         where = "t.id = ANY(:tenants)"
         params["tenants"] = tenants
-    elif table == "memberships":
+    elif table == "memberships" or ("workspace_id" not in columns and "tenant_id" in columns):
         where = "t.tenant_id = ANY(:tenants)"
         params["tenants"] = tenants
     elif table == "workspaces":
