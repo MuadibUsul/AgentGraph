@@ -60,6 +60,7 @@ from app.schemas import (
     TaskReviewRequest,
 )
 from app.services import addresses as address_service
+from app.services import leases as lease_service
 from app.services.common import (
     append_event,
     db_now,
@@ -80,6 +81,7 @@ from app.services.links import add_link
 from app.services.policies import enforce_policy
 from app.services.taint import refresh_task_taint
 from app.tenant import activate_tenant
+from app.versioning import LATEST_VERSION, at_least
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -193,6 +195,21 @@ def _check_epoch(task: CollabTask, expected: int | None) -> None:
         raise LeaseConflict("collab_task", task_out(task).model_dump(mode="json"))
 
 
+def _check_assignee(task: CollabTask, principal: Principal, agent: str) -> None:
+    if not task.assignee:
+        return
+    allowed = {f"agent:{agent}", f"human:{agent}"}
+    if principal.user_id is not None:
+        allowed.add(f"human:{principal.user_id}")
+    if task.assignee not in allowed:
+        raise ApiError(
+            403,
+            "not_assignee",
+            "this task is assigned to another principal",
+            details={"task_key": task.task_key, "assignee": task.assignee},
+        )
+
+
 def _require_claim_owner(task: CollabTask, principal: Principal, agent: str) -> None:
     if task.claimed_by != agent:
         raise ApiError(
@@ -232,10 +249,7 @@ def _resolve_review_history(history: list[Any] | None) -> list[Any]:
 
 
 def _clear_lease(task: CollabTask) -> None:
-    task.claimed_by = None
-    task.lease_owner = None
-    task.lease_expires_at = None
-    task.lease_epoch += 1
+    lease_service.clear_task_lease(task)
 
 
 async def _upstream_briefs(
@@ -396,6 +410,7 @@ async def _create_task_core(
         namespace=namespace,
         input_context=request.input_context,
         max_retries=request.max_retries,
+        assignee=getattr(request, "assignee", None),
         version=1,
         created_by=agent,
         created_at=utcnow(),
@@ -516,19 +531,20 @@ async def claim_task(
         raise EscalatedToHuman(task_out(task).model_dump(mode="json"))
     if task.status not in _CLAIMABLE and task.status is not TaskStatus.IN_PROGRESS:
         raise InvalidStateTransition(task.status.value, "IN_PROGRESS")
+    _check_assignee(task, principal, agent)
     now = await db_now(session)
     _check_lease(task, agent, now)
     before = task_snapshot(task)
     _clear_lease(task)
+    ttl = lease_service.ttl_for(request.lease_ttl_seconds, request.lease_seconds)
     task.status = TaskStatus.IN_PROGRESS
     task.claimed_by = agent
     task.lease_owner = agent
-    task.lease_expires_at = now + timedelta(
-        seconds=request.lease_seconds or settings.default_task_lease_seconds
-    )
+    task.lease_expires_at = now + timedelta(seconds=ttl)
     task.version += 1
     task.updated_at = now
     await session.flush()
+    lease = await lease_service.grant_task_lease(session, principal, task, agent, ttl)
     await refresh_task_taint(session, task)
     await record_audit(
         session,
@@ -550,6 +566,7 @@ async def claim_task(
             "task_key": task.task_key,
             "version": task.version,
             "lease_epoch": task.lease_epoch,
+            "lease_id": lease.lease_id,
             "lease_expires_at": task.lease_expires_at.isoformat()
             if task.lease_expires_at
             else None,
@@ -559,6 +576,7 @@ async def claim_task(
     await session.commit()
     return TaskContextResponse(
         task=task_out(task),
+        lease=lease_service.lease_out(lease),
         upstream_briefs=await _upstream_briefs(session, task, principal),
         slots=await _context_slots(session, principal, task),
         documents=await _context_documents(session, principal, task),
@@ -580,11 +598,15 @@ async def renew_task(
         raise InvalidStateTransition(task.status.value, "renew")
     now = await db_now(session)
     _check_epoch(task, request.lease_epoch)
-    _require_active_lease(task, agent, now)
+    lease_service.check_fencing(task, request.fencing_token)
+    await lease_service.require_holder(session, task, agent, now)
+    lease = await lease_service.active_task_lease(session, task)
     task.lease_owner = agent
     task.lease_expires_at = now + timedelta(
-        seconds=request.lease_seconds or settings.default_task_lease_seconds
+        seconds=request.lease_seconds
+        or (lease.ttl_seconds if lease else settings.default_task_lease_seconds)
     )
+    await lease_service.touch(session, task, now)
     task.claimed_by = agent
     task.version += 1
     task.updated_at = now
@@ -609,7 +631,8 @@ async def release_task(
         if principal.auth_kind is not AuthKind.HUMAN_ADMIN:
             raise Forbidden("only the admin console may force-release a task")
     else:
-        _require_active_lease(task, agent, now)
+        lease_service.check_fencing(task, request.fencing_token)
+        await lease_service.require_holder(session, task, agent, now)
     before = task_snapshot(task)
     task.status = TaskStatus.READY
     _clear_lease(task)
@@ -733,6 +756,11 @@ async def handoff_task(
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
     ensure_task_role(principal, task.assigned_role)
+    now = await db_now(session)
+    # A holder whose lease ended learns that first, whatever the task became.
+    lease_service.check_fencing(task, request.fencing_token)
+    if at_least(LATEST_VERSION):
+        await lease_service.require_holder(session, task, agent, now)
     if task.status is TaskStatus.ESCALATED_TO_HUMAN:
         raise EscalatedToHuman(task_out(task).model_dump(mode="json"))
     if task.status not in (
@@ -742,7 +770,6 @@ async def handoff_task(
     ):
         raise InvalidStateTransition(task.status.value, request.next_status)
     _check_version(task, request.expected_version)
-    now = await db_now(session)
     _check_lease(task, agent, now)
     _check_epoch(task, request.lease_epoch)
     _require_claim_owner(task, principal, agent)
@@ -1071,6 +1098,7 @@ async def escalate_task(
     ensure_namespace(principal, task.namespace, write=True)
     ensure_task_role(principal, task.assigned_role)
     _check_version(task, request.expected_version)
+    lease_service.check_fencing(task, request.fencing_token)
     if task.status in (TaskStatus.DONE, TaskStatus.FAILED):
         raise InvalidStateTransition(task.status.value, "ESCALATED_TO_HUMAN")
     before = task_snapshot(task)
@@ -1116,6 +1144,7 @@ async def escalate_task(
 async def reap_expired_task_leases(
     session: AsyncSession, limit: int = 50
 ) -> int:
+    """Expire overdue leases: the task returns to READY (or escalates) as an orphan."""
     now = await db_now(session)
     tasks = (
         await session.execute(
@@ -1131,37 +1160,13 @@ async def reap_expired_task_leases(
             .limit(limit)
         )
     ).scalars().all()
-    reaped = 0
     for task in tasks:
-        before = task_snapshot(task)
-        task.status = TaskStatus.READY
-        _clear_lease(task)
-        task.version += 1
-        task.updated_at = now
-        await session.flush()
-        await record_audit(
-            session,
-            workspace_id=task.workspace_id,
-            session_batch_id=uuid.uuid4(),
-            agent_signature="lease_reaper",
-            target_table="collab_tasks",
-            target_record_id=task.id,
-            operation="UPDATE",
-            before=before,
-            after=task_snapshot(task),
+        await lease_service.orphan_task(
+            session, task, state="expired", reason="timeout", actor="lease_reaper"
         )
-        await append_event(
-            session,
-            workspace_id=task.workspace_id,
-            agent="lease_reaper",
-            event_type="LEASE_EXPIRED",
-            payload={"task_key": task.task_key, "version": task.version},
-            namespace=task.namespace,
-        )
-        reaped += 1
-    if reaped:
-        await session.commit()
-    return reaped
+    await lease_service.flag_missed_heartbeats(session)
+    await session.commit()
+    return len(tasks)
 
 
 async def reassign_task(

@@ -664,6 +664,12 @@ async def update_agent_token(
         # A changed grant is a new, immutable snapshot; old stamps keep theirs.
         await session.flush()
         await snapshot_token(session, workspace, token)
+    if request.is_active is False:
+        # A revoked token's leases end now, not when they would have timed out.
+        from app.services.leases import revoke_holder
+
+        await session.flush()
+        await revoke_holder(session, workspace.id, token, reason="holder_revoked")
     await session.commit()
     return token
 

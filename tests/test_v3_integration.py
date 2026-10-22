@@ -707,6 +707,9 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         "ack_constitution",
                         "get_usage",
                         "get_index_status",
+                        "heartbeat",
+                        "release_lease",
+                        "list_leases",
                         "get_api_docs",
                     }
                     sync = await session.call_tool("workspace_sync", {})
@@ -723,10 +726,16 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                     claim_tool = next(
                         tool for tool in tools.tools if tool.name == "agent_claim_and_read"
                     )
-                    lease_schema = claim_tool.inputSchema["properties"]["lease_seconds"]
-                    assert lease_schema["default"] == 60
-                    assert lease_schema["minimum"] == 5
-                    assert lease_schema["maximum"] == 3600
+                    # The server picks the TTL when none is sent (900 s under 2026-11).
+                    properties = claim_tool.inputSchema["properties"]
+                    for name, low in (("lease_seconds", 5), ("lease_ttl_seconds", 60)):
+                        lease_schema = properties[name]
+                        assert lease_schema.get("default") is None
+                        bounds = next(
+                            item for item in lease_schema.get("anyOf", [lease_schema])
+                            if item.get("type") == "integer"
+                        )
+                        assert bounds["minimum"] == low and bounds["maximum"] == 3600
                     create_tool = next(
                         tool for tool in tools.tools if tool.name == "create_task"
                     )
@@ -1085,6 +1094,9 @@ async def test_dashboard_root_and_openapi(client):
         "ack_constitution",
         "get_usage",
         "get_index_status",
+        "heartbeat",
+        "release_lease",
+        "list_leases",
         "propose_document_change",
         "vote_on_proposal",
         "list_document_proposals",

@@ -44,6 +44,7 @@ from app.schemas import (
     DocumentUpsertRequest,
     ExternalActionCreateRequest,
     HandoffBrief,
+    LeaseHeartbeatRequest,
     ProposalCreateRequest,
     ProposalVoteRequest,
     RegisterPartsRequest,
@@ -57,6 +58,7 @@ from app.schemas import (
 from app.services import addresses as address_service
 from app.services import budget as budget_service
 from app.services import idempotency, indexer
+from app.services import leases as lease_service
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
 from app.services.common import set_event_platform
@@ -843,16 +845,28 @@ async def request_human_review(
 async def agent_claim_and_read(
     task_key: str,
     lease_seconds: Annotated[
-        int,
+        int | None,
         Field(
             description=(
-                f"Lease TTL in seconds. Default {settings.default_task_lease_seconds}; "
-                f"allowed 5–{settings.max_task_lease_seconds}."
+                f"Legacy lease TTL in seconds (5–{settings.max_task_lease_seconds}). "
+                "Prefer lease_ttl_seconds."
             ),
             ge=5,
             le=settings.max_task_lease_seconds,
         ),
-    ] = settings.default_task_lease_seconds,
+    ] = None,
+    lease_ttl_seconds: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Lease TTL, 60–3600 s (default 900 under API 2026-11, "
+                f"{settings.default_task_lease_seconds} before). Heartbeat every "
+                "lease.heartbeat_interval_s or the task returns to READY."
+            ),
+            ge=60,
+            le=3_600,
+        ),
+    ] = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -861,12 +875,16 @@ async def agent_claim_and_read(
     Returns the task, upstream L1 handoff briefs, referenced state slots and
     document summaries. L2 artifact bodies are intentionally not included;
     call dereference(artifact_uri) only when verification is required.
+    The response's lease carries lease_id, fencing_token and
+    heartbeat_interval_s: call heartbeat(lease_id) on that interval and pass
+    fencing_token with your task writes.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
             body = TaskClaimRequest(
                 lease_seconds=lease_seconds,
+                lease_ttl_seconds=lease_ttl_seconds,
                 agent=agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -945,6 +963,7 @@ async def agent_handoff_task(
     output_artifact: dict[str, Any] | None = None,
     expected_version: int | None = None,
     lease_epoch: int | None = None,
+    fencing_token: int | None = None,
     create_next: dict[str, Any] | None = None,
     human_feedback: str | None = None,
     agent: str | None = None,
@@ -971,6 +990,7 @@ async def agent_handoff_task(
                 output_artifact=output_artifact or {},
                 expected_version=expected_version,
                 lease_epoch=lease_epoch,
+                fencing_token=fencing_token,
                 create_next=create_next,
                 human_feedback=human_feedback,
                 agent=_actor(principal, agent) if principal.is_commander else agent,
@@ -989,6 +1009,7 @@ async def agent_escalate_to_human(
     task_key: str,
     reason: str,
     expected_version: int | None = None,
+    fencing_token: int | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -999,6 +1020,7 @@ async def agent_escalate_to_human(
             body = TaskEscalateRequest(
                 reason=reason,
                 expected_version=expected_version,
+                fencing_token=fencing_token,
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -1315,6 +1337,65 @@ async def get_index_status(namespace: str | None = None) -> dict[str, Any]:
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)
+
+
+@mcp.tool(name="heartbeat")
+async def heartbeat(
+    lease_id: str,
+    note: Annotated[str | None, Field(max_length=500)] = None,
+    progress: Annotated[float | None, Field(ge=0, le=1)] = None,
+    agent: str | None = None,
+) -> dict[str, Any]:
+    """Keep a lease alive: extends it to now + ttl. Send every heartbeat_interval_s.
+
+    A missed lease returns the task to READY and later writes get lease_lost.
+    The note and progress are kept and go into the auto continuation pack.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = LeaseHeartbeatRequest(note=note, progress=progress, agent=agent)
+            result = await lease_service.heartbeat(session, principal, lease_id, body)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="release_lease")
+async def release_lease(
+    lease_id: str, reason: str | None = None, agent: str | None = None
+) -> dict[str, Any]:
+    """Give up a lease you hold; the task returns to READY for someone else."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lease_service.release(
+                session, principal, lease_id, reason=reason, agent=agent
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="list_leases")
+async def list_leases(
+    holder: str | None = "me",
+    state: Literal["active", "released", "expired", "revoked"] | None = None,
+    cursor: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=200)] = 50,
+) -> dict[str, Any]:
+    """Your leases (agents) or anyone's (humans), newest first, cursor-paginated."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lease_service.list_leases(
+                session, principal, holder=holder, state=state, cursor=cursor, limit=limit
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
 
 
 @mcp.tool(name="get_usage")

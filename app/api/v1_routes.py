@@ -41,6 +41,11 @@ from app.schemas import (
     ExternalActionCreateRequest,
     ExternalActionListResponse,
     ExternalActionOut,
+    LeaseHeartbeatRequest,
+    LeaseHeartbeatResponse,
+    LeaseListResponse,
+    LeaseOut,
+    LeaseReleaseRequest,
     LinkCreateRequest,
     LinkListResponse,
     LinkOut,
@@ -81,6 +86,7 @@ from app.schemas import (
 from app.services import addresses as address_service
 from app.services import budget as budget_service
 from app.services import indexer
+from app.services import leases as lease_service
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
 
@@ -302,6 +308,54 @@ async def renew_task(
     session: AsyncSession = Depends(get_db),
 ) -> TaskOut:
     return await services.renew_task(session, principal, task_key, body)
+
+
+@router.post(
+    "/leases/{lease_id}/heartbeat",
+    response_model=LeaseHeartbeatResponse,
+    summary="Extend a lease to now + ttl; send every heartbeat_interval_s (AG-CO-03)",
+)
+async def lease_heartbeat(
+    lease_id: str,
+    body: LeaseHeartbeatRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> LeaseHeartbeatResponse:
+    return await lease_service.heartbeat(session, principal, lease_id, body)
+
+
+@router.post(
+    "/leases/{lease_id}/release",
+    response_model=LeaseOut,
+    summary="Give up a lease; the task returns to READY",
+)
+async def release_lease(
+    lease_id: str,
+    body: LeaseReleaseRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> LeaseOut:
+    return await lease_service.release(
+        session, principal, lease_id, reason=body.reason, agent=body.agent
+    )
+
+
+@router.get(
+    "/leases",
+    response_model=LeaseListResponse,
+    summary="Leases by holder (agents see their own) and state",
+)
+async def list_leases(
+    holder: str | None = Query(default="me", max_length=160),
+    state: str | None = Query(default=None, pattern="^(active|released|expired|revoked)$"),
+    cursor: str | None = Query(default=None, max_length=512),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> LeaseListResponse:
+    return await lease_service.list_leases(
+        session, principal, holder=holder, state=state, cursor=cursor, limit=limit
+    )
 
 
 @router.post(

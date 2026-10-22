@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     default_task_lease_seconds: int = Field(default=60, ge=5, le=86_400)
     max_task_lease_seconds: int = Field(default=3_600, ge=5, le=86_400)
     lease_reaper_interval_seconds: int = Field(default=15, ge=5, le=3_600)
+    # AG-CO-03: lease TTL when a 2026-11 client sets none (heartbeat every
+    # ttl/3), and how many orphanings escalate a task to a human.
+    lease_default_ttl_seconds: int = Field(default=900, ge=60, le=3_600)
+    orphan_escalation_threshold: int = Field(default=3, ge=1, le=100)
     default_max_retries: int = Field(default=3, ge=1, le=100)
     max_reject_history: int = Field(default=20, ge=1, le=500)
     human_override_default_lock: bool = True

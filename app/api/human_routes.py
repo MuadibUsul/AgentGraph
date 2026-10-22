@@ -53,6 +53,8 @@ from app.schemas import (
     TenantDeleteRequest,
     TenantOut,
     TombstoneOut,
+    TransferResponsibilitiesRequest,
+    TransferResponsibilitiesResponse,
     UsageOut,
     WebhookDeliveryListResponse,
     WebhookRuleCreateRequest,
@@ -62,6 +64,7 @@ from app.schemas import (
     WorkspaceStatsResponse,
 )
 from app.services import budget as budget_service
+from app.services import leases as lease_service
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
 from app.services.retrieval import backfill_workspace_chunks
@@ -774,6 +777,19 @@ async def purge_document(
     session: AsyncSession = Depends(get_db),
 ) -> TombstoneOut:
     return await services.purge_document(session, principal, doc_key, body)
+
+
+@router.post(
+    "/transfer-responsibilities",
+    response_model=TransferResponsibilitiesResponse,
+    summary="Move a principal's open tasks, reviews and maintained docs to a successor",
+)
+async def transfer_responsibilities(
+    body: TransferResponsibilitiesRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> TransferResponsibilitiesResponse:
+    return await lease_service.transfer_responsibilities(session, principal, body)
 
 
 @router.post(
