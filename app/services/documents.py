@@ -174,22 +174,27 @@ async def _record_version(
 
 
 def _embedding_text(text: str) -> str:
-    return text
+    # Jina's maximum is 8194 tokens; a whole 100 KB Chinese document can exceed
+    # that. Document writes use chunk embeddings instead; this is only for the
+    # short query fallback.
+    return text[:6_000]
 
 
 async def _document_embedding(
     workspace_id: uuid.UUID, content: str
 ) -> tuple[list[float] | None, str | None]:
-    """Whole-document vector for synchronous (baseline) writes.
+    """Budget check for a write; documents are never embedded whole.
 
-    Asynchronous writes (2026-11) leave it to the index worker, which embeds
-    chunks only; the whole-document vector is a legacy fallback.
+    A whole 100 KB document can exceed the provider's token limit, so writes
+    embed chunks only and the document vector is the mean of its chunk
+    vectors, set when the chunks are (re)indexed. Asynchronous writes
+    (2026-11) leave that to the index worker.
     """
     if indexer.asynchronous():
         return None, None
     await enforce_embedding_budget(session=None, workspace_id=workspace_id,
                                    chars=len(content.encode("utf-8")))
-    return await _embed(content), get_embedding_provider().model
+    return None, None
 
 
 async def _embed(content: str) -> list[float]:

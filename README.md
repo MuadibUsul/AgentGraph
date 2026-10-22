@@ -828,9 +828,13 @@ Remaining honest boundaries:
   `OPENAI_BASE_URL=https://api.jina.ai/v1`) with the key held only in the server
   environment. The free Jina tier is 100K TPM, so the production reindex uses
   `EMBEDDING_BATCH_SIZE=8` and `EMBEDDING_BATCH_INTERVAL_SECONDS=5` to pace
-  requests. Changing dimensions clears the vector columns and recreates the
-  HNSW indexes on startup; run `POST /v1/admin/workspaces/{id}/reindex` for each
-  workspace afterwards.
+  requests. Document writes now embed **chunks only** and derive the document
+  vector from the mean of chunk vectors; the old whole-document request was
+  removed because a 100 KB document can exceed Jina's 8194-token limit. The
+  `_embed` helper remains only for the short semantic-query fallback, capped at
+  6,000 characters. Changing dimensions clears the vector columns and recreates
+  the HNSW indexes on startup; run `POST /v1/admin/workspaces/{id}/reindex` for
+  each workspace afterwards.
 - Human auth uses password sessions, not OIDC/WebAuthn/MFA.
 - Visual regression/axe automation is not configured in this repository; the
   design-system acceptance report marks those items NOT TESTED/BLOCKED.
