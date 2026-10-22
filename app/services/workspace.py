@@ -114,11 +114,19 @@ def _document_visibility(
         conditions.append(
             (SharedDocument.verification_status == "VERIFIED")
             | (SharedDocument.created_by == principal.agent_signature)
+            | (
+                (SharedDocument.namespace == "system")
+                & (SharedDocument.created_by == "system")
+            )
         )
     if not include_tainted:
         conditions.append(
             SharedDocument.tainted.is_(False)
             | (SharedDocument.created_by == principal.agent_signature)
+            | (
+                (SharedDocument.namespace == "system")
+                & (SharedDocument.created_by == "system")
+            )
         )
     return conditions
 

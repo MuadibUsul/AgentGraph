@@ -278,11 +278,19 @@ def _visibility_conditions(
         conditions.append(
             (SharedDocument.verification_status == "VERIFIED")
             | (SharedDocument.created_by == principal.agent_signature)
+            | (
+                (SharedDocument.namespace == "system")
+                & (SharedDocument.created_by == "system")
+            )
         )
     if not include_tainted:
         conditions.append(
             SharedDocument.tainted.is_(False)
             | (SharedDocument.created_by == principal.agent_signature)
+            | (
+                (SharedDocument.namespace == "system")
+                & (SharedDocument.created_by == "system")
+            )
         )
     return conditions
 
@@ -297,6 +305,11 @@ def _ensure_document_visible(
     if principal.is_commander:
         return
     own = document.created_by == principal.agent_signature
+    platform_system = (
+        document.namespace == "system" and document.created_by == "system"
+    )
+    if platform_system:
+        return
     if (
         not include_unverified
         and not own
