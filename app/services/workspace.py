@@ -741,6 +741,21 @@ async def update_agent_token(
     token = await session.get(AgentToken, token_id)
     if token is None or token.workspace_id != workspace.id:
         raise NotFound("agent_token")
+    if request.agent_signature is not None:
+        duplicate = await session.scalar(
+            select(AgentToken.id).where(
+                AgentToken.workspace_id == workspace.id,
+                AgentToken.agent_signature == request.agent_signature,
+                AgentToken.id != token.id,
+            )
+        )
+        if duplicate is not None:
+            raise ApiError(
+                409,
+                "agent_token_exists",
+                f"agent '{request.agent_signature}' already has a token",
+            )
+        token.agent_signature = request.agent_signature
     if request.role_scope is not None:
         token.role_scope = AgentRole(request.role_scope)
     if request.allowed_namespaces is not None:
@@ -760,6 +775,7 @@ async def update_agent_token(
     grant_changed = any(
         value is not None
         for value in (
+            request.agent_signature,
             request.role_scope,
             request.allowed_namespaces,
             request.expires_in_days,
