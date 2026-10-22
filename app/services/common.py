@@ -45,6 +45,12 @@ def set_event_platform(platform: str) -> None:
 
 
 
+# Platform-written documents (created_by "system") in these namespaces are
+# readable by every agent role: the constitution and namespace readmes, and
+# the continuation packs a successor needs after a lease is lost.
+PLATFORM_DOC_NAMESPACES = ("system", "handoff")
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 

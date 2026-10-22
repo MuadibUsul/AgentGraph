@@ -49,6 +49,7 @@ from app.schemas import (
     WorkspaceStatsResponse,
 )
 from app.services.common import (
+    PLATFORM_DOC_NAMESPACES,
     agent_token_out,
     document_summary,
     slot_summary,
@@ -115,7 +116,7 @@ def _document_visibility(
             (SharedDocument.verification_status == "VERIFIED")
             | (SharedDocument.created_by == principal.agent_signature)
             | (
-                (SharedDocument.namespace == "system")
+                SharedDocument.namespace.in_(PLATFORM_DOC_NAMESPACES)
                 & (SharedDocument.created_by == "system")
             )
         )
@@ -124,7 +125,7 @@ def _document_visibility(
             SharedDocument.tainted.is_(False)
             | (SharedDocument.created_by == principal.agent_signature)
             | (
-                (SharedDocument.namespace == "system")
+                SharedDocument.namespace.in_(PLATFORM_DOC_NAMESPACES)
                 & (SharedDocument.created_by == "system")
             )
         )

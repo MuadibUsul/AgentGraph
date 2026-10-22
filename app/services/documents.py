@@ -83,6 +83,7 @@ from app.schemas import (
 from app.services import addresses as address_service
 from app.services import budget, indexer, onboarding
 from app.services.common import (
+    PLATFORM_DOC_NAMESPACES,
     append_event,
     document_out,
     document_snapshot,
@@ -299,7 +300,7 @@ def _visibility_conditions(
             (SharedDocument.verification_status == "VERIFIED")
             | (SharedDocument.created_by == principal.agent_signature)
             | (
-                (SharedDocument.namespace == "system")
+                SharedDocument.namespace.in_(PLATFORM_DOC_NAMESPACES)
                 & (SharedDocument.created_by == "system")
             )
         )
@@ -308,7 +309,7 @@ def _visibility_conditions(
             SharedDocument.tainted.is_(False)
             | (SharedDocument.created_by == principal.agent_signature)
             | (
-                (SharedDocument.namespace == "system")
+                SharedDocument.namespace.in_(PLATFORM_DOC_NAMESPACES)
                 & (SharedDocument.created_by == "system")
             )
         )
@@ -326,7 +327,7 @@ def _ensure_document_visible(
         return
     own = document.created_by == principal.agent_signature
     platform_system = (
-        document.namespace == "system" and document.created_by == "system"
+        document.namespace in PLATFORM_DOC_NAMESPACES and document.created_by == "system"
     )
     if platform_system:
         return

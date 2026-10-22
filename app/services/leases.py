@@ -422,7 +422,7 @@ async def _auto_continuation(
             "auto_generated": True,
             "handoff_to": None,
         },
-        author="platform",
+        author="system",
         change_summary=f"auto-generated continuation ({reason})",
     )
     return document.doc_key
