@@ -117,6 +117,7 @@ do not edit by hand. Every error body is
 | `review_feedback_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in feedback, then resend. |
 | `review_note_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in note, then resend. |
 | `rollup_summary_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a rollup summary. |
+| `scope_unknown` | 422 | `fix_request` | `fix_request_then_resend` | Use permissions listed in details.allowed. |
 | `subject_identifier_required` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `task_tree_too_deep` | 422 | `fix_request` | `fix_request_then_resend` | Split under a shallower task. |
 | `tenant_cycle` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |

@@ -15,6 +15,16 @@ import { setFormatLanguage, type FormatLanguage } from "./types";
 export type Language = FormatLanguage;
 
 const ZH: Record<string, string> = {
+  // Token delegation
+  "{name} updated.": "{name} 已更新。",
+  "Edit {name}": "编辑 {name}",
+  "Role package plus a permission delta. Changes apply to the next request.":
+    "角色权限包加上权限增减，修改从下一次请求起生效。",
+  "Comma-separated; * allows every namespace.": "用逗号分隔；* 表示所有命名空间。",
+  "Add permissions": "增加权限",
+  "Remove permissions": "移除权限",
+  "Comma-separated. Removals are inherited by every token this one issues.":
+    "用逗号分隔。移除的权限会被它签发的所有令牌继承。",
   "The request timed out; the action may still have completed. Showing the latest state.":
     "请求超时，操作可能已经完成，已刷新为最新状态。",
   "A rejection needs a reason: write feedback first.": "驳回需要理由：请先填写反馈。",

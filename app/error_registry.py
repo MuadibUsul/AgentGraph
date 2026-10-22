@@ -300,6 +300,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "gone": _spec(410, ABANDON, "Give up; details carry the tombstone."),
     "reviewer_conflict": _spec(422, ABANDON, "Give up this action."),
     "review_feedback_required": _spec(422, FIX_REQUEST, "Say why in feedback, then resend."),
+    "scope_unknown": _spec(422, FIX_REQUEST, "Use permissions listed in details.allowed."),
     "review_note_required": _spec(422, FIX_REQUEST, "Say why in note, then resend."),
     "share_cross_root_not_allowed": _spec(
         422, ABANDON, "Use cross-tree collaboration instead."

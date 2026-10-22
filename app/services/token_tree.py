@@ -46,8 +46,9 @@ from app.warnings_context import add_warning
 settings = get_settings()
 
 ROOT_KEY_PREFIX = "agr_"
-CHILD_TTL_DEFAULT = 3_600
-CHILD_TTL_MAX = 86_400
+# Token delegation 1.0 (T-2, T-3): children live 12 hours by default, 72 at most.
+CHILD_TTL_DEFAULT = 12 * 3_600
+CHILD_TTL_MAX = 72 * 3_600
 BRANCH_TTL_DEFAULT = 30 * 86_400
 BRANCH_TTL_MAX = 90 * 86_400
 EXPIRING_SECONDS = 600
@@ -428,6 +429,9 @@ async def issue_child_token(
         issued_by_human=issued_by_human,
         per_minute_limit=limits.get("per_minute_limit"),
         monthly_token_budget=limits.get("monthly_token_budget"),
+        # A child inherits its issuer's delta: a removed permission stays removed.
+        scope_add=sorted(principal.perm_add),
+        scope_remove=sorted(principal.perm_remove),
         agent_profile={
             "agent_id": agent_id,
             "display_name": (agent.get("display_name") or agent_id)[:64],

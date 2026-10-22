@@ -147,3 +147,12 @@ Not started: AG-CO-10 (waits for a product decision), AG-CO-11 (deferred by the 
 | Verdicts need reasons | Done | Rejecting a task review without feedback is 422 `review_feedback_required`; rejecting a proposal without a note is 422 `review_note_required`; nothing changes. The console disables Reject until a reason is written. |
 | Stalled work surfaced | Done | Task summaries carry computed `surfaced=true` when a task has waited on a person (AWAITING_HUMAN / WAITING_HUMAN) or on a verdict (REVIEWING / HANDOFF) for over 24 hours; no reminders are sent. |
 | Deviation | Note | Instead of new `event_deliveries` / `inbox_cursors` tables, recipients are the existing event `targets` (one event per change, so a retried transition cannot deliver twice) and the reading position is a principal-owned watermark named `inbox`, per the spec's own rule to extend existing mechanisms. Targeted events outside the catalog (mentions, budget warnings, review submissions, resource grants) also reach the inbox, with priority 1. |
+
+## Token delegation 1.0 (gap fill)
+
+| Item | Status | Notes |
+|---|---|---|
+| Role package plus delta | Done | Agent tokens carry `scope_add` / `scope_remove` (migration 3.31.0). Effective permissions = (role package ∪ add) − remove, then intersected with the chain's coarse scopes. Admins (and the console's Edit dialog) set the delta with `PATCH /v1/admin/workspaces/{id}/agent-tokens/{token}`; an unknown permission is 422 `scope_unknown` (with `allowed`). Agent tokens are never COMMANDER, so a commander delta cannot be expressed. `get_token` shows `permission_delta`, `effective_permissions` and `can_delegate`; the permission snapshot is refreshed (`grant_changed`). |
+| Inheritance | Done | A child issued by a token inherits its delta. Removals accumulate down the chain (a child can never regain what an ancestor removed); additions are only taken from the token itself, minus every ancestor's removals. |
+| Child lifetime | Done | A child token defaults to 12 hours (at most 72); branch tokens keep 30 days (at most 90). Renewal uses the same ceilings. |
+| Error codes | Note | PRD Appendix A is the single source of error codes, so the spec's names map to the existing ones: escalation → `scope_escalation`, depth → `depth_limit_exceeded`, issuing without the right → `issue_not_permitted`, an ancestor revoked → `token_revoked` with `details.reason = revoked_ancestor`. New: `scope_unknown`. |

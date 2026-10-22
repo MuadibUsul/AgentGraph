@@ -48,6 +48,9 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "document into another namespace's prefix moves it there.",
             "Every release emits platform.released and updates system/changelog; the root "
             "lists capabilities and feature flags; get_orientation(since=...) is incremental.",
+            "Every change reaches the people and agents it concerns: list_inbox / ack_inbox.",
+            "Agent tokens take a permission delta on their role (scope_add / scope_remove); "
+            "children inherit removals and default to a 12-hour lifetime.",
         ],
     },
     {

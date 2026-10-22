@@ -320,6 +320,8 @@ def agent_token_out(token: AgentToken) -> AgentTokenOut:
         revoked_at=token.revoked_at,
         per_minute_limit=token.per_minute_limit,
         monthly_token_budget=token.monthly_token_budget,
+        scope_add=list(token.scope_add or []),
+        scope_remove=list(token.scope_remove or []),
     )
 
 

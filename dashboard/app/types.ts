@@ -163,6 +163,8 @@ export interface AgentToken {
   is_active: boolean;
   created_at: string;
   last_seen_at: string | null;
+  scope_add?: string[];
+  scope_remove?: string[];
 }
 
 export interface DocumentVersionSummary {

@@ -63,6 +63,19 @@ function fuzzyScore(value: string, query: string): number {
   return 30;
 }
 
+// Mirrors app.auth.ALL_PERMISSIONS (what a delta may name).
+const PERMISSIONS = [
+  "action:propose", "action:read", "audit:read", "budget:read", "doc:create",
+  "doc:propose", "doc:read", "doc:verify", "doc:write", "events:read", "link:read",
+  "link:write", "proposal:read", "proposal:vote", "query", "state:read", "state:write",
+  "task:claim", "task:create", "task:read", "task:review", "task:transition",
+  "timeline:append", "timeline:read", "workspace:read",
+];
+
+function splitList(value: string): string[] {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
 const ROLES = [
   {
     role: "SCOUT",
@@ -187,6 +200,11 @@ export function AgentsView({
   const [role, setRole] = useState("EXECUTOR");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<AgentToken | null>(null);
+  const [editRole, setEditRole] = useState("EXECUTOR");
+  const [editNamespaces, setEditNamespaces] = useState("");
+  const [editAdd, setEditAdd] = useState("");
+  const [editRemove, setEditRemove] = useState("");
 
   function addNamespace(value: string) {
     const name = value.trim();
@@ -274,6 +292,40 @@ export function AgentsView({
     }
   }
 
+  function startEdit(token: AgentToken) {
+    setError(null);
+    setEditing(token);
+    setEditRole(token.role_scope);
+    setEditNamespaces(token.allowed_namespaces.join(", "));
+    setEditAdd((token.scope_add ?? []).join(", "));
+    setEditRemove((token.scope_remove ?? []).join(", "));
+  }
+
+  async function saveEdit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!editing) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await request(`/v1/admin/workspaces/${workspaceId}/agent-tokens/${editing.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          role_scope: editRole,
+          allowed_namespaces: splitList(editNamespaces),
+          scope_add: splitList(editAdd),
+          scope_remove: splitList(editRemove),
+        }),
+      });
+      setEditing(null);
+      await onRefresh();
+      notify(t("{name} updated.", { name: editing.agent_signature }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("Unable to update token"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="tab-stack">
       <div className="role-grid">
@@ -350,7 +402,20 @@ export function AgentsView({
                         <span title={token.agent_signature}>{token.agent_signature}</span>
                       </div>
                     </td>
-                    <td><RolePill role={token.role_scope} /></td>
+                    <td>
+                      <RolePill role={token.role_scope} />
+                      {((token.scope_add?.length ?? 0) > 0 || (token.scope_remove?.length ?? 0) > 0) && (
+                        <small
+                          className="field-hint"
+                          title={[
+                            ...(token.scope_add ?? []).map((item) => `+${item}`),
+                            ...(token.scope_remove ?? []).map((item) => `-${item}`),
+                          ].join(" ")}
+                        >
+                          {" "}+{token.scope_add?.length ?? 0} / −{token.scope_remove?.length ?? 0}
+                        </small>
+                      )}
+                    </td>
                     <td>
                       <div className="namespace-chips">
                         {token.allowed_namespaces.map((namespace) => (
@@ -374,6 +439,14 @@ export function AgentsView({
                         type="button"
                         className="button ghost small"
                         disabled={busy}
+                        onClick={() => startEdit(token)}
+                      >
+                        {t("Edit")}
+                      </button>
+                      <button
+                        type="button"
+                        className="button ghost small"
+                        disabled={busy}
                         onClick={() => void toggle(token)}
                       >
                         {token.is_active ? t("Disable") : t("Enable")}
@@ -386,6 +459,75 @@ export function AgentsView({
           </div>
         )}
       </section>
+
+      {editing && (
+        <Modal
+          title={t("Edit {name}", { name: editing.agent_signature })}
+          subtitle={t("Role package plus a permission delta. Changes apply to the next request.")}
+          onClose={() => setEditing(null)}
+          footer={
+            <>
+              <button type="button" className="button ghost" onClick={() => setEditing(null)}>
+                {t("Cancel")}
+              </button>
+              <button
+                type="submit"
+                form="agent-token-edit-form"
+                className="button primary"
+                disabled={busy || splitList(editNamespaces).length === 0}
+              >
+                {busy ? <Spinner /> : null} {t("Save")}
+              </button>
+            </>
+          }
+        >
+          <form id="agent-token-edit-form" onSubmit={saveEdit}>
+            <label className="field">
+              <span>{t("Role scope")}</span>
+              <select value={editRole} onChange={(e) => setEditRole(e.target.value)}>
+                {ROLES.map((item) => (
+                  <option key={item.role} value={item.role}>{t(item.role)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>{t("Allowed namespaces")}</span>
+              <input value={editNamespaces} onChange={(e) => setEditNamespaces(e.target.value)} />
+              <small className="field-hint">{t("Comma-separated; * allows every namespace.")}</small>
+            </label>
+            <label className="field">
+              <span>{t("Add permissions")}</span>
+              <input
+                value={editAdd}
+                onChange={(e) => setEditAdd(e.target.value)}
+                placeholder="doc:create"
+                list="permission-options"
+              />
+            </label>
+            <label className="field">
+              <span>{t("Remove permissions")}</span>
+              <input
+                value={editRemove}
+                onChange={(e) => setEditRemove(e.target.value)}
+                placeholder="proposal:vote"
+                list="permission-options"
+              />
+              <small className="field-hint">
+                {t("Comma-separated. Removals are inherited by every token this one issues.")}
+              </small>
+            </label>
+            <datalist id="permission-options">
+              {PERMISSIONS.map((item) => (
+                <option key={item} value={item} />
+              ))}
+            </datalist>
+            <div className="inline-note">
+              <a href="/docs/auth/" target="_blank" rel="noreferrer">{t("Tokens and roles")}</a>
+            </div>
+            {error && <div className="inline-error">{error}</div>}
+          </form>
+        </Modal>
+      )}
 
       {showCreate && (
         <Modal

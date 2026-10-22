@@ -244,6 +244,13 @@ class AgentToken(Base):
         Integer, nullable=False, default=0, server_default=text("0")
     )
     lineage: Mapped[list[str] | None] = mapped_column(ARRAY(String(40)), nullable=True)
+    # Token delegation 1.0: permission deltas on top of the role package.
+    scope_add: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    scope_remove: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     issued_by_token_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     issued_by_human: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True

@@ -488,9 +488,22 @@ async def get_token(session: AsyncSession, principal: Principal, ref: str) -> di
     if token is None:
         raise NotFound("token")
     descendants = _descendants(tokens, token.canonical_id)
-    return _token_view(
+    view = _token_view(
         token, active_descendants=sum(1 for item in descendants if item.is_active)
     )
+    # Token delegation 1.0: the delta on the role package and what it adds up to.
+    from app.auth import PERMISSIONS, SCOPE_PERMISSIONS, RoleScope
+
+    removed = set(token.scope_remove or [])
+    granted = (set(PERMISSIONS.get(RoleScope(token.role_scope.value), set()))
+               | set(token.scope_add or [])) - removed
+    if token.scopes is not None and "*" not in granted:
+        allowed = set().union(*(SCOPE_PERMISSIONS.get(scope, ()) for scope in token.scopes))
+        granted &= allowed
+    view["permission_delta"] = {"add": sorted(token.scope_add or []), "remove": sorted(removed)}
+    view["effective_permissions"] = sorted(granted)
+    view["can_delegate"] = bool(token.can_issue)
+    return view
 
 
 async def get_lineage(session: AsyncSession, principal: Principal, ref: str) -> dict[str, Any]:

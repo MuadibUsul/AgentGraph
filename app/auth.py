@@ -70,6 +70,9 @@ class Principal:
     # AG-ID-12: an owner/admin of an ancestor sees metadata here; content
     # needs an open admin access session.
     inherited_access: bool = False
+    # Token delegation 1.0: permissions added to / removed from the role package.
+    perm_add: frozenset[str] = frozenset()
+    perm_remove: frozenset[str] = frozenset()
 
     @property
     def tenant_id(self) -> str:
@@ -282,6 +285,8 @@ async def _agent_principal(
         read = meet(read, list(item.read_namespaces or item.allowed_namespaces or ["*"]))
         write = meet(write, list(item.write_namespaces or item.allowed_namespaces or ["*"]))
     expires = [item.expires_at for item in [*ancestors, token] if item.expires_at]
+    # Removals accumulate down the chain; additions are the token's own.
+    removed = frozenset().union(*(set(item.scope_remove or []) for item in [*ancestors, token]))
     return Principal(
         workspace=workspace,
         role=RoleScope(token.role_scope.value),
@@ -298,6 +303,8 @@ async def _agent_principal(
         can_issue=bool(token.can_issue) and (scopes is None or "token:issue" in scopes),
         token_depth=token.depth,
         max_descendants=token.max_descendants,
+        perm_add=frozenset(token.scope_add or []) - removed,
+        perm_remove=removed,
     )
 
 
@@ -628,6 +635,8 @@ SCOPE_PERMISSIONS: dict[str, frozenset[str]] = {
     "token:issue": frozenset({"token:issue"}),
 }
 SCOPES = tuple(sorted(SCOPE_PERMISSIONS))
+# Every permission a delta may name (the role packages' union, without "*").
+ALL_PERMISSIONS = tuple(sorted(set().union(*PERMISSIONS.values()) - {"*"}))
 
 
 def scopes_for_role(role: RoleScope) -> list[str]:
@@ -649,8 +658,23 @@ def effective_scopes(principal: Principal) -> list[str]:
     return base
 
 
+def role_permissions(principal: Principal) -> set[str]:
+    """The role package with the token's delta applied (delegation 1.0)."""
+    granted = set(PERMISSIONS.get(principal.role, set()))
+    if "*" in granted:
+        return granted
+    return (granted | principal.perm_add) - principal.perm_remove
+
+
+def effective_permissions(principal: Principal) -> list[str]:
+    granted = role_permissions(principal)
+    if "*" in granted:
+        return ["*"]
+    return sorted(permission for permission in granted if can(principal, permission))
+
+
 def can(principal: Principal, permission: str) -> bool:
-    granted = PERMISSIONS.get(principal.role, set())
+    granted = role_permissions(principal)
     if not ("*" in granted or permission in granted):
         return False
     if principal.scopes is None:

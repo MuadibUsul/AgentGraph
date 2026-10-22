@@ -235,6 +235,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `review_feedback_required` | 422 | `fix_request` |
 | `review_note_required` | 422 | `fix_request` |
 | `rollup_summary_required` | 422 | `fix_request` |
+| `scope_unknown` | 422 | `fix_request` |
 | `subject_identifier_required` | 422 | `fix_request` |
 | `task_tree_too_deep` | 422 | `fix_request` |
 | `tenant_cycle` | 422 | `fix_request` |

@@ -682,6 +682,14 @@ class AgentTokenUpdateRequest(StrictModel):
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)
     per_minute_limit: int | None = Field(default=None, ge=1, le=1_000_000)
     monthly_token_budget: int | None = Field(default=None, ge=0)
+    scope_add: list[str] | None = Field(
+        default=None, max_length=50,
+        description="Permissions added to the role package (e.g. doc:create); replaces the list",
+    )
+    scope_remove: list[str] | None = Field(
+        default=None, max_length=50,
+        description="Permissions removed from the role package (e.g. proposal:vote)",
+    )
 
     @field_validator("agent_signature")
     @classmethod
@@ -705,6 +713,8 @@ class AgentTokenUpdateRequest(StrictModel):
                 self.expires_in_days,
                 self.per_minute_limit,
                 self.monthly_token_budget,
+                self.scope_add,
+                self.scope_remove,
             )
         ):
             raise ValueError("at least one token field is required")
@@ -1786,6 +1796,8 @@ class AgentTokenOut(BaseModel):
     last_seen_at: datetime | None
     expires_at: datetime | None = None
     revoked_at: datetime | None = None
+    scope_add: list[str] = Field(default_factory=list)
+    scope_remove: list[str] = Field(default_factory=list)
     per_minute_limit: int | None = None
     monthly_token_budget: int | None = None
 
