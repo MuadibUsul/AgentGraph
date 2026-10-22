@@ -8,6 +8,7 @@ import { SituationView } from "./components/situation";
 import { Blackboard } from "./components/blackboard";
 import { DocumentsView } from "./components/documents";
 import { GovernanceView } from "./components/governance";
+import { AnimatedNumber, spotlight, useSlidingIndicator } from "./components/motion";
 import { AgentConnect, GettingStarted, type OnboardingStepId } from "./components/onboarding";
 import { LanguageToggle, useI18n } from "./i18n";
 import {
@@ -162,6 +163,8 @@ export default function ConsolePage() {
   const [audit, setAudit] = useState<AuditPayload>({ batches: [], diffs: [] });
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [tab, setTab] = useState<Tab>("situation");
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  const tabIndicator = useSlidingIndicator(tabBarRef, tab);
   const [selectedDocKey, setSelectedDocKey] = useState<string | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<DocumentDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1418,28 +1421,28 @@ export default function ConsolePage() {
               </div>
 
               <div className="stat-grid">
-                <div className="stat-card">
+                <div className="stat-card" onPointerMove={spotlight}>
                   <div className="stat-icon mint"><IconDocuments /></div>
                   <div className="stat-label">{t("Shared documents")}</div>
-                  <div className="stat-value">{formatNumber(stats?.documents ?? 0)}</div>
+                  <div className="stat-value"><AnimatedNumber value={stats?.documents ?? 0} format={formatNumber} /></div>
                   <div className="stat-foot">{t("frontmatter + Markdown · versioned")}</div>
                 </div>
-                <div className="stat-card">
+                <div className="stat-card" onPointerMove={spotlight}>
                   <div className="stat-icon sky"><IconTasks /></div>
                   <div className="stat-label">{t("Tasks on the board")}</div>
-                  <div className="stat-value">{formatNumber(stats?.tasks ?? 0)}</div>
+                  <div className="stat-value"><AnimatedNumber value={stats?.tasks ?? 0} format={formatNumber} /></div>
                   <div className="stat-foot">{t("claims, leases, review gates")}</div>
                 </div>
-                <div className="stat-card">
+                <div className="stat-card" onPointerMove={spotlight}>
                   <div className="stat-icon violet"><IconLayers /></div>
                   <div className="stat-label">{t("State slots")}</div>
-                  <div className="stat-value">{formatNumber(stats?.slots ?? 0)}</div>
+                  <div className="stat-value"><AnimatedNumber value={stats?.slots ?? 0} format={formatNumber} /></div>
                   <div className="stat-foot">{t("human-locked live state")}</div>
                 </div>
-                <div className="stat-card">
+                <div className="stat-card" onPointerMove={spotlight}>
                   <div className="stat-icon amber"><IconAgents /></div>
                   <div className="stat-label">{t("Scoped agents")}</div>
-                  <div className="stat-value">{formatNumber(stats?.agent_tokens ?? 0)}</div>
+                  <div className="stat-value"><AnimatedNumber value={stats?.agent_tokens ?? 0} format={formatNumber} /></div>
                   <div className="stat-foot">{t("Awaiting human review: {count}", { count: approvals.length })}</div>
                 </div>
               </div>
@@ -1454,7 +1457,12 @@ export default function ConsolePage() {
                 />
               )}
 
-              <div className="tab-bar" role="tablist" aria-label={t("Workspace views")}>
+              <div
+                ref={tabBarRef}
+                className={`tab-bar ${tabIndicator.ready ? "has-indicator" : ""}`}
+                role="tablist"
+                aria-label={t("Workspace views")}
+              >
                 {tabs.map((item) => (
                   <button
                     key={item.id}
@@ -1475,6 +1483,16 @@ export default function ConsolePage() {
                     )}
                   </button>
                 ))}
+                {tabIndicator.ready && (
+                  <span
+                    className="tab-indicator"
+                    aria-hidden="true"
+                    style={{
+                      width: tabIndicator.width - 16,
+                      transform: `translateX(${tabIndicator.left + 8}px)`,
+                    }}
+                  />
+                )}
               </div>
 
               <div

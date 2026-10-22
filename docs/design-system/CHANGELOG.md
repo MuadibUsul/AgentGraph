@@ -1,5 +1,37 @@
 # Design System Changelog
 
+## 2026-10-22 — v3.4 tactile layer (after Cult UI)
+
+Requested by the product owner: take the depth and motion language of
+Cult UI (animated shadcn components) without adopting its stack. The console
+stays on plain CSS and tokens; no Tailwind, shadcn or motion library.
+
+### Changed
+
+- `app/cult.css`, loaded last, adds depth only: texture buttons (a light-edged
+  gradient shell around a graded fill, inset highlight, pressed state),
+  shadow cards (hairline ring + stacked soft shadows + top highlight instead of
+  a flat border), raised pills in segmented controls, inset fields with a
+  soft focus halo, and a blurred scale-in for dialogs.
+- The workspace tab bar has one indicator that slides between tabs
+  (`useSlidingIndicator`), with a faint accent glow.
+- Stat cards count up to new values (`AnimatedNumber`), lift 2px on hover and
+  show a spotlight that follows the cursor (`spotlight`).
+- `.eyebrow` is now a glowing badge with a status dot (plain text inside the
+  document header, where it shows the key path).
+
+### Reverses part of v3.3
+
+- v3.3 removed glow shadows and hover lifts. v3.4 brings back a restrained
+  version for interactive surfaces only: stat cards, the tab indicator and
+  primary buttons. Page backgrounds and panels stay flat.
+
+### Kept
+
+- Graphite surfaces, the single indigo action color, density, type scale and
+  all copy; contrast of text and control borders is unchanged.
+- Everything animated stops under `prefers-reduced-motion`.
+
 ## 2026-10-20 — v3.3 visual refresh
 
 ### Inherited

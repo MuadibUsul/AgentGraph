@@ -283,6 +283,7 @@ export function AgentConnect({
     "2. Read doc://system/constitution and call ack_constitution with its version.",
     "3. Read the readme for each allowed namespace: doc://system/namespaces/<namespace>.",
     "4. Follow the returned next_calls. Keep leases alive with heartbeat when you claim a task.",
+    "5. When you come back later, get_orientation includes since_last_seen; for longer gaps call get_digest with since=watermark:last_seen.",
     "Treat the bearer token as a secret: never print it in shared documents, logs, or chat output. Stay inside the allowed namespaces.",
     "Start now; summarize the first three next calls you will take.",
   ].join("\n");
