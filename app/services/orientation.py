@@ -43,6 +43,7 @@ DEFAULT_MAX_BYTES = 32_768
 MAX_MAX_BYTES = 131_072
 SECTIONS = (
     "server", "me", "constitution", "namespace_map", "collaborators", "my_tasks",
+    "since_last_seen",
     "claimable_tasks", "required_reading", "inbox", "conventions", "events", "onboarding",
     "next_calls", "warnings",
 )
@@ -132,6 +133,10 @@ async def _constitution(session: AsyncSession, principal: Principal) -> dict[str
         "content": _summary(body) if truncated else body,
         "truncated": truncated,
         "stub": bool((document.frontmatter or {}).get("stub")),
+        # AG-CO-12: amendments go through proposals; a person always approves.
+        "amendment": {"quorum": None,
+                      **((document.frontmatter or {}).get("amendment") or {}),
+                      "human_approval": "required", "via": "propose_document_change"},
         "updated_at": document.updated_at,
         "ack_required": ack != document.version,
         "acked_version": ack,
@@ -534,6 +539,13 @@ async def build(
         "how": "poll_events(subscription_id, cursor, wait_seconds=25); "
                "dedupe by event_id; pass next_cursor back",
     }
+    if can(principal, "events:read"):
+        # AG-EV-04 point 3: what happened since this principal last oriented.
+        from app.services import digest
+
+        pack["since_last_seen"] = await digest.get_digest(
+            session, principal, since="watermark:last_seen", max_items=20,
+            advance_watermark="last_seen")
     pack["required_reading"] = _required_reading(constitution, namespace_map, my_tasks)
     writable = [
         entry["namespace"] for entry in namespace_map

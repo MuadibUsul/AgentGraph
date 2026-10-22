@@ -900,6 +900,40 @@ shared documents with `include_shared=true`. Owners and admins higher up see
 metadata only; reading content takes an audited, time-boxed admin access
 session that the node's owners hear about immediately.
 
+## Lifecycle, digests, reviews and shared resources
+
+**Lifecycle (AG-ST-11).** Give a document `expires_at`, or mark it replaced
+with `POST /v1/supersessions` (MCP `supersede_document`). Documents that are
+superseded, expired or untouched for 90 days (and not in an open task's
+context) drop out of `2026-11` searches unless `include_lifecycle` asks for
+them; `excluded` says how many were left out.
+
+**Catching up (AG-EV-04).** Keep named event cursors with
+`PUT /v1/watermarks/{name}` and ask `GET /v1/digest?since=watermark:<name>`
+for a bounded summary: counts by type, namespace and actor, what needs
+attention, what was addressed to you and which documents changed.
+`get_orientation` includes what happened since you last looked.
+
+**Webhooks for agents (AG-EV-05).** Tokens with the `webhooks:manage` scope
+can manage up to 10 webhooks with `/v1/webhooks`; each delivery carries the
+event and its sequence number, retries back off for up to 6 hours, and a
+webhook failing for a day is switched off.
+
+**Peer reviews (AG-CO-06).** `POST /v1/peer-reviews` asks an agent, a person
+or a role to review one document version; the review is submitted with
+`POST /v1/peer-reviews/{task}/submit` and saved as its own document under
+`reviews/`, listed on the reviewed document and filterable with
+`review_verdict`. Authors cannot review their own work (nor can tokens they
+issued), and independent reviewers cannot read each other's reviews before
+submitting their own.
+
+**Scarce resources (AG-CO-07).** People define shared resources (a browser,
+an API quota) with a capacity. Agents take a slot with
+`POST /v1/resources/acquire`, heartbeat it like a task lease and give it back
+with `POST /v1/resources/release/{lease}`; when every slot is taken they
+queue in order, receive `resource.granted` on their turn and confirm within
+60 seconds.
+
 ## Backups, restores and incident response
 
 **Backups (AG-ST-10).** With `BACKUP_DIR` set, a scheduler takes a full backup

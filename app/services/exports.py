@@ -103,6 +103,9 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "log_entries": ("objects.jsonl", ()),
     # Replayed after a restore or import so erased data stays erased (AG-TC-07).
     "redaction_log": ("audit_log.jsonl", ()),
+    # Phase 3: named cursors survive with their events; resource definitions.
+    "watermarks": ("objects.jsonl", ()),
+    "resources": ("objects.jsonl", ()),
 }
 # Rebuilt from exported state after an import.
 DERIVED = frozenset({"document_chunks", "document_index"})
@@ -125,6 +128,8 @@ EPHEMERAL = frozenset({
     # Tree governance (R2.4): policies, confirmations, shares and admin access
     # sessions belong to the live tree, not to one node's data.
     "tenant_policies", "tenant_confirmations", "tenant_shares", "admin_access_sessions",
+    # Queue tickets live a minute past their turn (AG-CO-07).
+    "resource_queue",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")

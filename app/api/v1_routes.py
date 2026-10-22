@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse, Response
@@ -40,6 +41,7 @@ from app.schemas import (
     DocumentRenameRequest,
     DocumentSectionPatchRequest,
     DocumentStatusRequest,
+    DocumentSupersedeRequest,
     DocumentTaintRequest,
     DocumentUpsertRequest,
     DocumentVerifyRequest,
@@ -60,6 +62,8 @@ from app.schemas import (
     LinkListResponse,
     LinkOut,
     NamespaceRegisterRequest,
+    PeerReviewRequest,
+    PeerReviewSubmitRequest,
     PolicyListResponse,
     ProposalApplyRequest,
     ProposalApplyResponse,
@@ -71,6 +75,8 @@ from app.schemas import (
     RecallDismissRequest,
     RecallRequest,
     RegisterPartsRequest,
+    ResourceAcquireRequest,
+    ResourceDefineRequest,
     SlotListResponse,
     SlotMutationResponse,
     SlotOut,
@@ -97,13 +103,28 @@ from app.schemas import (
     TokenRenewRequest,
     TokenRevokeRequest,
     UsageOut,
+    WatermarkSetRequest,
+    WebhookRuleCreateRequest,
+    WebhookRuleListResponse,
+    WebhookRuleOut,
     WhoAmIResponse,
     WorkspaceMapResponse,
     WorkspaceStatsResponse,
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
-from app.services import contention, directory, indexer, situation, token_budget, token_tree
+from app.services import (
+    contention,
+    digest,
+    directory,
+    indexer,
+    lifecycle,
+    resources,
+    reviews,
+    situation,
+    token_budget,
+    token_tree,
+)
 from app.services import documents as document_service
 from app.services import events as event_service
 from app.services import exports as export_service
@@ -673,6 +694,9 @@ async def list_documents(
     written_by_subtree: str | None = Query(
         default=None, description="tok_… id: documents written by this token or its subtree"
     ),
+    review_verdict: Literal["pass", "pass_with_notes", "fail"] | None = Query(
+        default=None, description="Only documents with a peer review of this verdict"
+    ),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentListResponse:
@@ -701,6 +725,7 @@ async def list_documents(
         order=order,
         fields=fields,
         written_by_subtree=written_by_subtree,
+        review_verdict=review_verdict,
     )
 
 
@@ -1116,6 +1141,159 @@ async def document_sections(
                                            include_unverified=True, include_tainted=True)
     return {"doc_key": document.doc_key, "version": document.version,
             "sections": contention.list_sections(document.content or "")}
+
+
+def _webhook_manager(principal: Principal) -> None:
+    """Commanders, or agents granted the webhooks:manage scope (never by default)."""
+    if principal.is_commander or "webhooks:manage" in (principal.scopes or ()):
+        return
+    raise ApiError(403, "forbidden", "managing webhooks needs the webhooks:manage scope",
+                   details={"scope": "webhooks:manage"})
+
+
+@router.get("/webhooks", response_model=WebhookRuleListResponse,
+            summary="Webhooks of the workspace (scope webhooks:manage)")
+async def list_webhooks(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> WebhookRuleListResponse:
+    _webhook_manager(principal)
+    return await services.list_rules(session, principal.workspace.id)
+
+
+@router.post("/webhooks", response_model=WebhookRuleOut, status_code=201,
+             summary="Create a webhook; a generated secret is returned once")
+async def create_webhook(
+    body: WebhookRuleCreateRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> WebhookRuleOut:
+    _webhook_manager(principal)
+    return await services.create_rule(session, principal.workspace.id, body)
+
+
+@router.delete("/webhooks/{rule_id}", status_code=204, summary="Delete a webhook")
+async def delete_webhook(
+    rule_id: uuid.UUID,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    _webhook_manager(principal)
+    await services.delete_rule(session, principal.workspace.id, rule_id)
+    return Response(status_code=204)
+
+
+# ------------------------------------------------------------------ phase 3
+
+
+@router.post("/supersessions", summary="Mark a document superseded by another (AG-ST-11)")
+async def supersede_document(
+    body: DocumentSupersedeRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await lifecycle.supersede(session, principal, old=body.old.model_dump(),
+                                     new=body.new.model_dump(), reason=body.reason)
+
+
+@router.put("/watermarks/{name}", summary="Set a named event cursor you own (AG-EV-04)")
+async def set_watermark(
+    name: str,
+    body: WatermarkSetRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await digest.set_watermark(session, principal, name, body.cursor)
+
+
+@router.get("/watermarks/{name}", summary="Read a named event cursor you own")
+async def get_watermark(
+    name: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await digest.get_watermark(session, principal, name)
+
+
+@router.get("/digest", summary="What happened since a cursor or watermark, summarised")
+async def get_digest(
+    since: str | None = Query(default=None, max_length=200,
+                              description="An event cursor or watermark:<name>"),
+    until: str | None = Query(default=None, max_length=200),
+    for_me_first: bool = Query(default=True),
+    max_items: int = Query(default=50, ge=1, le=200),
+    advance_watermark: str | None = Query(default=None, max_length=64),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await digest.get_digest(session, principal, since=since, until=until,
+                                   for_me_first=for_me_first, max_items=max_items,
+                                   advance_watermark=advance_watermark)
+
+
+@router.post("/peer-reviews", status_code=201,
+             summary="Ask for a peer review of one document version (AG-CO-06)")
+async def request_peer_review(
+    body: PeerReviewRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await reviews.request_peer_review(
+        session, principal, output=body.output, reviewer=body.reviewer, kind=body.kind,
+        rubric=body.rubric, independent=body.independent, due_at=body.due_at)
+
+
+@router.post("/peer-reviews/{task_key}/submit", summary="Submit your peer review")
+async def submit_peer_review(
+    task_key: str,
+    body: PeerReviewSubmitRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await reviews.submit_peer_review(
+        session, principal, task_key, verdict=body.verdict,
+        findings=[item.model_dump() for item in body.findings], summary=body.summary)
+
+
+@router.get("/resources", summary="Scarce resources, with holders and queue length (AG-CO-07)")
+async def list_resources(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await resources.list_resources(session, principal)
+
+
+@router.post("/resources", status_code=201, summary="Define a scarce resource (humans only)")
+async def define_resource(
+    body: ResourceDefineRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await resources.define_resource(
+        session, principal, resource_key=body.resource_key, capacity=body.capacity,
+        description=body.description, max_hold_seconds=body.max_hold_seconds)
+
+
+@router.post("/resources/acquire",
+             summary="Take a slot of a resource, or queue for one (confirm with queue_ticket)")
+async def acquire_resource(
+    body: ResourceAcquireRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await resources.acquire_resource(
+        session, principal, resource_key=body.resource_key, ttl_seconds=body.ttl_seconds,
+        wait_seconds=body.wait_seconds, queue=body.queue, queue_ticket=body.queue_ticket,
+        agent=body.agent)
+
+
+@router.post("/resources/release/{lease_id}", summary="Give a resource slot back")
+async def release_resource(
+    lease_id: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await resources.release_resource(session, principal, lease_id)
 
 
 @router.get("/alerts", summary="Situation alerts (people: all; agents: about themselves)")

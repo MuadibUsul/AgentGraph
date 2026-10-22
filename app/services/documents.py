@@ -100,8 +100,10 @@ from app.services import (
     budget,
     contention,
     indexer,
+    lifecycle,
     onboarding,
     provenance,
+    reviews,
     sharing,
     situation,
 )
@@ -635,6 +637,7 @@ async def list_documents(
     order: str | None = None,
     fields: list[str] | None = None,
     written_by_subtree: str | None = None,
+    review_verdict: str | None = None,
 ) -> DocumentListResponse:
     """Complete enumeration (PRD AG-ST-01).
 
@@ -730,6 +733,9 @@ async def list_documents(
             )
             .exists()
         )
+    if review_verdict:
+        # Documents with at least one peer review of this verdict (AG-CO-06).
+        conditions.append(SharedDocument.reviews.contains([{"verdict": review_verdict}]))
     if census:
         return await _census_page(
             session, principal, conditions,
@@ -740,7 +746,8 @@ async def list_documents(
                      include_unverified, include_tainted, verification_status, tainted,
                      updated_after.isoformat() if updated_after else None,
                      updated_before.isoformat() if updated_before else None,
-                     written_by_subtree, order],
+                     written_by_subtree, order]
+                    + ([review_verdict] if review_verdict else []),
                     sort_keys=True, default=str,
                 ).encode()
             ).hexdigest()[:32],
@@ -1116,7 +1123,9 @@ async def get_document(
         include_tainted=include_tainted,
     )
     await indexer.annotate(session, [document])
+    await reviews.check_sealed(session, principal, document)
     await provenance.note_reads(principal, [document])
+    lifecycle.touch_read([document])
     return provenance.apply_taint_mode(
         await _with_entries(session, document, document_out(document)),
         await _taint_mode(principal, taint_mode))
@@ -1149,6 +1158,7 @@ async def upsert_document(
     await budget.check_write(
         principal, document_id=existing.id if existing else None, doc_key=doc_key
     )
+    lifecycle.validate_frontmatter(request.frontmatter or {})
     if doc_key == onboarding.CONSTITUTION_KEY:
         from app.services import tree
 
@@ -1712,6 +1722,13 @@ async def query_documents(
         conditions.append(SharedDocument.tainted.is_(False))
     if not request.include_archived:
         conditions.append(SharedDocument.archived_at.is_(None))
+    if at_least(LATEST_VERSION):
+        hidden = lifecycle.exclusion(list(request.include_lifecycle))
+        if hidden is not None:
+            conditions.append(hidden)
+    if request.review_verdict:
+        conditions.append(SharedDocument.reviews.contains(
+            [{"verdict": request.review_verdict}]))
     limit = min(request.limit, settings.max_search_top_k)
 
     if not request.query:
@@ -1813,6 +1830,8 @@ def _query_hit(
 def _excluded_reason(principal: Principal, document: SharedDocument) -> str | None:
     if document.archived_at is not None:
         return "archived"
+    if at_least(LATEST_VERSION) and (state := lifecycle.lifecycle_of(document)) != "active":
+        return state
     if document.recall_severity == "block":
         return "recalled"
     if document.tainted:
@@ -1861,7 +1880,7 @@ async def _excluded_ranked(
 
 def _tally(principal: Principal, rows: list[SharedDocument]) -> dict[str, int]:
     counts = {"unverified_by_others": 0, "own_unverified": 0, "archived": 0, "tainted": 0,
-              "recalled": 0}
+              "recalled": 0, "superseded": 0, "expired": 0, "cold": 0}
     for row in rows:
         reason = _excluded_reason(principal, row)
         if reason is not None:
@@ -1945,7 +1964,9 @@ async def dereference(
         include_tainted=include_tainted,
     )
     await indexer.annotate(session, [document])
+    await reviews.check_sealed(session, principal, document)
     await provenance.note_reads(principal, [document])
+    lifecycle.touch_read([document])
     if expand_parts:
         expanded, parts = await address_service.expand_parts(session, principal, document)
         return DereferenceResponse(

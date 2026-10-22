@@ -541,6 +541,10 @@ class DocumentQueryRequest(StrictModel):
     include_archived: bool = False
     include_shared: bool = Field(
         default=False, description="Also search resources other nodes shared with you")
+    include_lifecycle: list[Literal["superseded", "expired", "cold"]] = Field(
+        default_factory=list,
+        description="Under 2026-11 these are left out unless named here (AG-ST-11)")
+    review_verdict: Literal["pass", "pass_with_notes", "fail"] | None = None
     mode: Literal["auto", "semantic", "keyword", "hybrid"] = "hybrid"
 
     @model_validator(mode="after")
@@ -1471,6 +1475,11 @@ class DocumentSummary(BaseModel):
     last_human_edit: dict[str, Any] | None = None
     tenant_alias: str | None = Field(
         default=None, description="Owning node, on results that may come from shares")
+    lifecycle: str = Field(default="active",
+                           description="active | superseded | expired | cold (computed)")
+    superseded_by: dict[str, Any] | None = None
+    reviews: list[Any] = Field(default_factory=list,
+                               description="Peer reviews bound to versions (AG-CO-06)")
     score: float | None = None
     archived_at: datetime | None = None
     archived_by: str | None = None
@@ -2230,6 +2239,8 @@ class WebhookRuleOut(BaseModel):
     name: str
     url: str
     secret_set: bool
+    secret: str | None = Field(
+        default=None, description="Only in the create response, when the server generated it")
     event_types: list[str]
     tables: list[str]
     namespaces: list[str]
@@ -2349,3 +2360,53 @@ class DocumentTaintRequest(StrictModel):
     sources: list[Any] = Field(default_factory=list)
     note: str | None = Field(default=None, max_length=4_000)
     expected_version: int | None = Field(default=None, ge=1)
+
+
+# ------------------------------------------------------------- v3.27 Phase 3
+
+
+class DocumentSupersedeRequest(StrictModel):
+    old: DocRef
+    new: DocRef
+    reason: str = Field(default="", max_length=2_000)
+
+
+class WatermarkSetRequest(StrictModel):
+    cursor: str = Field(min_length=1, max_length=200)
+
+
+class PeerReviewRequest(StrictModel):
+    output: DocRef
+    reviewer: str = Field(min_length=3, max_length=160)
+    kind: Literal["review", "red_team", "second_opinion"] = "review"
+    rubric: str = Field(default="", max_length=4_000)
+    independent: bool = True
+    due_at: datetime | None = None
+
+
+class PeerReviewFinding(StrictModel):
+    severity: Literal["info", "minor", "major", "critical"]
+    location: str = Field(default="", max_length=500)
+    note: str = Field(min_length=1, max_length=4_000)
+
+
+class PeerReviewSubmitRequest(StrictModel):
+    verdict: Literal["pass", "pass_with_notes", "fail"]
+    findings: list[PeerReviewFinding] = Field(default_factory=list, max_length=100)
+    summary: str = Field(default="", max_length=2_000)
+
+
+class ResourceDefineRequest(StrictModel):
+    resource_key: str = Field(min_length=1, max_length=128)
+    capacity: int = Field(default=1, ge=1, le=100)
+    description: str | None = Field(default=None, max_length=2_000)
+    max_hold_seconds: int = Field(default=900, ge=1, le=3600)
+
+
+class ResourceAcquireRequest(StrictModel):
+    resource_key: str = Field(min_length=1, max_length=128)
+    ttl_seconds: int = Field(default=300, ge=1, le=3600)
+    wait_seconds: int = Field(default=0, ge=0, le=25)
+    queue: bool = True
+    queue_ticket: str | None = Field(default=None, max_length=40)
+    agent: str | None = None

@@ -200,6 +200,12 @@ def _compact_frontmatter(value: dict[str, Any], limit: int = 8_192) -> dict[str,
     }
 
 
+def lifecycle_of(document: SharedDocument) -> str:
+    from app.services.lifecycle import lifecycle_of as compute
+
+    return compute(document)
+
+
 def document_summary(
     document: SharedDocument, *, compact_frontmatter: bool = False
 ) -> DocumentSummary:
@@ -230,6 +236,9 @@ def document_summary(
         recall_severity=document.recall_severity,
         doc_type=document.doc_type or "collaborative",
         last_human_edit=document.last_human_edit,
+        lifecycle=lifecycle_of(document),
+        superseded_by=(document.frontmatter or {}).get("superseded_by"),
+        reviews=document.reviews or [],
         archived_at=document.archived_at,
         archived_by=document.archived_by,
         archive_reason=document.archive_reason,

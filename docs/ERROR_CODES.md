@@ -161,6 +161,7 @@ do not edit by hand. Every error body is
 | `lease_lost` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
 | `link_exists` | 409 | `abandon` | `abandon_and_release_local_state` | The link already exists. |
 | `proposal_not_pending` | 409 | `abandon` | `abandon_and_release_local_state` | The proposal was already decided. |
+| `queue_ticket_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Call acquire_resource again to re-queue. |
 | `request_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `retention_not_met` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `stale_fencing_token` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |

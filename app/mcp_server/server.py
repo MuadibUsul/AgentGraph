@@ -1518,6 +1518,191 @@ async def get_metrics(
     return _compact(result)
 
 
+@mcp.tool(name="supersede_document")
+async def supersede_document(
+    old_doc_key: str,
+    new_doc_key: str,
+    reason: str = "",
+    old_namespace: str = "default",
+    new_namespace: str = "default",
+) -> dict[str, Any]:
+    """Mark old_doc_key superseded by new_doc_key: both get a new version, and
+    2026-11 queries hide the old one unless include_lifecycle names superseded."""
+    from app.services import lifecycle
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lifecycle.supersede(
+                session, principal, old={"namespace": old_namespace, "doc_key": old_doc_key},
+                new={"namespace": new_namespace, "doc_key": new_doc_key}, reason=reason)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="set_watermark")
+async def set_watermark(name: str, cursor: str) -> dict[str, Any]:
+    """Save an event cursor under a name you own; it survives token rotation and
+    handover to a successor. 'last_seen' moves on every get_orientation."""
+    from app.services import digest
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await digest.set_watermark(session, principal, name, cursor)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_watermark")
+async def get_watermark(name: str) -> dict[str, Any]:
+    """Read a named event cursor you own (404 when it was never set)."""
+    from app.services import digest
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await digest.get_watermark(session, principal, name)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_digest")
+async def get_digest(
+    since: str | None = None,
+    until: str | None = None,
+    for_me_first: bool = True,
+    max_items: Annotated[int, Field(ge=1, le=200)] = 50,
+    advance_watermark: str | None = None,
+) -> dict[str, Any]:
+    """What happened since an event cursor or 'watermark:<name>': counts by type,
+    namespace and actor, what needs attention, what was addressed to you and which
+    documents changed. Bounded to 64 KB (truncated=true when cut)."""
+    from app.services import digest
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await digest.get_digest(
+                session, principal, since=since, until=until, for_me_first=for_me_first,
+                max_items=max_items, advance_watermark=advance_watermark)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="request_peer_review")
+async def request_peer_review(
+    doc_key: str,
+    version: int,
+    reviewer: str,
+    kind: Literal["review", "red_team", "second_opinion"] = "review",
+    rubric: str = "",
+    independent: bool = True,
+    namespace: str = "default",
+    due_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Open a peer_review task on one version of a document for agent:<id>,
+    human:<id> or role:<role>. The author and its token subtree cannot review
+    (422 reviewer_conflict)."""
+    from app.schemas import DocRef
+    from app.services import reviews
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await reviews.request_peer_review(
+                session, principal,
+                output=DocRef(namespace=namespace, doc_key=doc_key, version=version),
+                reviewer=reviewer, kind=kind, rubric=rubric[:4000], independent=independent,
+                due_at=due_at)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="submit_peer_review")
+async def submit_peer_review(
+    task_key: str,
+    verdict: Literal["pass", "pass_with_notes", "fail"],
+    findings: list[dict[str, Any]] | None = None,
+    summary: str = "",
+) -> dict[str, Any]:
+    """Submit your review for a peer_review task: findings are
+    [{severity: info|minor|major|critical, location, note}] (at most 100). Writes
+    reviews/<ns>.<doc_key>.v<version>.<you> and records it on the reviewed document."""
+    from app.schemas import PeerReviewSubmitRequest
+    from app.services import reviews
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = PeerReviewSubmitRequest(verdict=verdict, findings=findings or [],
+                                           summary=summary)
+            result = await reviews.submit_peer_review(
+                session, principal, task_key, verdict=body.verdict,
+                findings=[item.model_dump() for item in body.findings], summary=body.summary)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_resources")
+async def list_resources() -> dict[str, Any]:
+    """Scarce resources defined by people, with how many slots are held and queued."""
+    from app.services import resources
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await resources.list_resources(session, principal)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="acquire_resource")
+async def acquire_resource(
+    resource_key: str,
+    ttl_seconds: Annotated[int, Field(ge=1, le=3600)] = 300,
+    wait_seconds: Annotated[int, Field(ge=0, le=25)] = 0,
+    queue: bool = True,
+    queue_ticket: str | None = None,
+) -> dict[str, Any]:
+    """Take a slot of a scarce resource as a lease (heartbeat it like a task lease).
+    When full and queue=true you get queue_position and queue_ticket; on your turn
+    a resource.granted event arrives and you must call again with queue_ticket
+    within 60 s, or the slot goes to the next in line."""
+    from app.services import resources
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await resources.acquire_resource(
+                session, principal, resource_key=resource_key, ttl_seconds=ttl_seconds,
+                wait_seconds=wait_seconds, queue=queue, queue_ticket=queue_ticket)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="release_resource")
+async def release_resource(lease_id: str) -> dict[str, Any]:
+    """Give a resource slot back; the next in the queue is offered it."""
+    from app.services import resources
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await resources.release_resource(session, principal, lease_id)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 @mcp.tool(name="clear_taint")
 async def clear_taint(
     doc_key: str,
@@ -2531,6 +2716,7 @@ async def list_documents(
     updated_after: datetime | None = None,
     updated_before: datetime | None = None,
     sort: Literal["updated_desc", "updated_asc"] | None = None,
+    review_verdict: Literal["pass", "pass_with_notes", "fail"] | None = None,
 ) -> dict[str, Any]:
     """Complete, cursor-paginated census of documents (not ranked, no vectors).
 
@@ -2561,6 +2747,7 @@ async def list_documents(
                 updated_before=updated_before,
                 sort=sort,
                 order=order,
+                review_verdict=review_verdict,
                 fields=fields,
             )
         except ApiError as exc:
