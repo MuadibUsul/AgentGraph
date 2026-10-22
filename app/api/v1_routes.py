@@ -476,17 +476,29 @@ async def get_slot(
 )
 async def list_documents(
     namespace: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100_000),
     cursor: str | None = Query(default=None),
     offset: int | None = Query(default=None, ge=0),
     include_archived: bool = Query(default=False),
-    include_unverified: bool = Query(default=False),
-    include_tainted: bool = Query(default=False),
+    include_unverified: bool | None = Query(
+        default=None, description="Default true for the census order, false for sort"
+    ),
+    include_tainted: bool | None = Query(default=None),
+    include_cold: bool = Query(default=True, description="Accepted; no cold tier yet"),
     verification_status: str | None = Query(default=None),
     tainted: bool | None = Query(default=None),
     updated_after: datetime | None = Query(default=None),
     updated_before: datetime | None = Query(default=None),
-    sort: str = Query(default="updated_desc"),
+    sort: str | None = Query(
+        default=None, description="Legacy listing: updated_desc | updated_asc"
+    ),
+    order: str | None = Query(
+        default=None,
+        description="Census: doc_key_asc | updated_at_asc (default under 2026-11)",
+    ),
+    fields: list[str] | None = Query(
+        default=None, description="Return only these fields (repeat or comma-separate)"
+    ),
     written_by_subtree: str | None = Query(
         default=None, description="tok_… id: documents written by this token or its subtree"
     ),
@@ -499,6 +511,8 @@ async def list_documents(
             "offset_not_supported",
             "offset pagination is not supported; pass next_cursor as cursor",
         )
+    if fields is not None:
+        fields = [item.strip() for value in fields for item in value.split(",") if item.strip()]
     return await services.list_documents(
         session,
         principal,
@@ -513,6 +527,8 @@ async def list_documents(
         updated_after=updated_after,
         updated_before=updated_before,
         sort=sort,
+        order=order,
+        fields=fields,
         written_by_subtree=written_by_subtree,
     )
 

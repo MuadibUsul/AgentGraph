@@ -1612,23 +1612,29 @@ async def draft_external_action(
 async def list_documents(
     namespace: str | None = None,
     cursor: str | None = None,
-    limit: int = 100,
+    limit: Annotated[int, Field(ge=1, le=500)] = 100,
+    order: Literal["doc_key_asc", "updated_at_asc"] | None = None,
     include_archived: bool = False,
-    include_unverified: bool = False,
-    include_tainted: bool = False,
+    include_unverified: bool | None = None,
+    include_tainted: bool | None = None,
+    include_cold: bool = True,
+    fields: list[str] | None = None,
     filters: dict[str, Any] | None = None,
     verification_status: str | None = None,
     tainted: bool | None = None,
     updated_after: datetime | None = None,
     updated_before: datetime | None = None,
-    sort: str = "updated_desc",
+    sort: Literal["updated_desc", "updated_asc"] | None = None,
 ) -> dict[str, Any]:
-    """Exhaustively enumerate documents in a namespace with an opaque cursor.
+    """Complete, cursor-paginated census of documents (not ranked, no vectors).
 
-    Order is stable by (updated_at, id). Pass the returned next_cursor back as
-    cursor; next_cursor=null means enumeration is complete. Archived documents
-    are excluded unless include_archived=true. filters supports frontmatter
-    equality and {eq, gte, lte, gt, lt, exists} operators.
+    With order (the default under API 2026-11) the walk is by doc_key_asc or
+    (updated_at, doc_key): every document appears exactly once, and the first
+    page's snapshot_count is the exact total. All trust states are included
+    unless include_unverified/include_tainted=false. Pass next_cursor back
+    unchanged with the same filters; next_cursor=null means done. Cursors last
+    24 h (cursor_expired). fields narrows each item; no content is returned.
+    Legacy sort=updated_desc|updated_asc keeps the 3.2.1 listing.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -1648,6 +1654,8 @@ async def list_documents(
                 updated_after=updated_after,
                 updated_before=updated_before,
                 sort=sort,
+                order=order,
+                fields=fields,
             )
         except ApiError as exc:
             raise _api_error(exc) from exc

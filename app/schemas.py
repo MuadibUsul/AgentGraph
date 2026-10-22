@@ -989,6 +989,10 @@ class DocumentSummary(BaseModel):
     archived_at: datetime | None = None
     archived_by: str | None = None
     archive_reason: str | None = None
+    trust: str | None = Field(
+        default=None, description="TRUSTED | UNTRUSTED (review state is verification_status)"
+    )
+    archived: bool = False
     updated_by: str
     updated_at: datetime
     updated_stamp: dict[str, Any] | None = None
@@ -1008,11 +1012,18 @@ class DocumentOut(DocumentSummary):
 
 
 class DocumentListResponse(BaseModel):
-    items: list[DocumentSummary]
+    items: list[dict[str, Any]] = Field(
+        description="Document metadata (DocumentSummary fields, or the requested fields)"
+    )
     next_cursor: str | None = None
     namespace: str | None = None
     count: int = 0
     total: int = 0
+    order: str | None = Field(default=None, description="doc_key_asc | updated_at_asc")
+    snapshot_count: int | None = Field(
+        default=None, description="Exact count for this filter when the first page was read"
+    )
+    as_of: datetime | None = Field(default=None, description="When the first page was read")
 
 
 class DocumentMutationResponse(BaseModel):
@@ -1049,7 +1060,6 @@ class MatchedChunk(BaseModel):
 
 class DocumentQueryHit(DocumentSummary):
     created_by: str | None = None
-    trust: str | None = None
     is_own: bool = False
     matched_chunks: list[MatchedChunk] = Field(default_factory=list)
 

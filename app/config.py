@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     token_chars_per_token: float = 4.0
     max_workspace_map_items: int = 300
     max_page_size: int = 500
+    # HMAC key for list cursors (AG-ST-01); derived from the database URL
+    # when unset, so cursors survive restarts of the same deployment.
+    cursor_signing_secret: str | None = None
+    list_cursor_ttl_hours: int = Field(default=24, ge=1, le=720)
 
     # ----------------------------------------------------- proposals / policy
     proposals_enabled: bool = True

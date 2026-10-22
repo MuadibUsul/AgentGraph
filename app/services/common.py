@@ -207,6 +207,8 @@ def document_summary(
         archived_at=document.archived_at,
         archived_by=document.archived_by,
         archive_reason=document.archive_reason,
+        trust=document.trust_level,
+        archived=document.archived_at is not None,
         updated_by=document.updated_by,
         updated_at=document.updated_at,
         updated_stamp=document.updated_stamp,

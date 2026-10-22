@@ -8,7 +8,7 @@ import hmac
 import json
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Numeric, case, func, select, tuple_, update
@@ -70,6 +70,7 @@ from app.schemas import (
     DocumentRenameRequest,
     DocumentSectionPatchRequest,
     DocumentStatusRequest,
+    DocumentSummary,
     DocumentTaintRequest,
     DocumentUpsertRequest,
     DocumentVerifyRequest,
@@ -85,6 +86,7 @@ from app.services import budget, indexer, onboarding
 from app.services.common import (
     PLATFORM_DOC_NAMESPACES,
     append_event,
+    db_now,
     document_out,
     document_snapshot,
     document_summary,
@@ -451,6 +453,62 @@ def _frontmatter_conditions(filters: dict[str, Any]) -> list[Any]:
     return conditions
 
 
+LIST_ORDERS = ("doc_key_asc", "updated_at_asc")
+LIST_LIMIT_MAX = 500
+_LIST_ALWAYS = ("id", "canonical_id", "namespace", "doc_key")
+
+
+def _cursor_key() -> bytes:
+    secret = settings.cursor_signing_secret or settings.database_url
+    return hashlib.sha256(f"agentgraph-list-cursor:{secret}".encode()).digest()
+
+
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _unb64(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def sign_list_cursor(payload: dict[str, Any]) -> str:
+    body = _b64(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
+    mac = hmac.new(_cursor_key(), body.encode(), hashlib.sha256).digest()[:16]
+    return f"{body}.{_b64(mac)}"
+
+
+def _open_list_cursor(cursor: str, filter_hash: str, now: datetime) -> dict[str, Any]:
+    invalid = ApiError(400, "cursor_invalid", "cursor is altered or not a list cursor",
+                       details={"field": "cursor"})
+    try:
+        body, mac = cursor.split(".")
+        expected = hmac.new(_cursor_key(), body.encode(), hashlib.sha256).digest()[:16]
+        if not hmac.compare_digest(_unb64(mac), expected):
+            raise invalid
+        payload = json.loads(_unb64(body))
+        issued = datetime.fromisoformat(payload["t"])
+    except ApiError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - any malformed cursor is the client's
+        raise invalid from exc
+    if payload.get("f") != filter_hash:
+        raise ApiError(400, "cursor_invalid",
+                       "cursor belongs to a different filter or order; start again",
+                       details={"field": "cursor", "reason": "filter_mismatch"})
+    if now - issued > timedelta(hours=settings.list_cursor_ttl_hours):
+        raise ApiError(410, "cursor_expired", "this enumeration is too old; start again",
+                       details={"issued_at": payload["t"],
+                                "max_age_hours": settings.list_cursor_ttl_hours})
+    return payload
+
+
+def _project(summary: dict[str, Any], fields: list[str] | None) -> dict[str, Any]:
+    if fields is None:
+        return summary
+    keep = dict.fromkeys([*_LIST_ALWAYS, *fields])
+    return {key: summary.get(key) for key in keep}
+
+
 async def list_documents(
     session: AsyncSession,
     principal: Principal,
@@ -460,30 +518,62 @@ async def list_documents(
     limit: int = 100,
     cursor: str | None = None,
     include_archived: bool = False,
-    include_unverified: bool = False,
-    include_tainted: bool = False,
+    include_unverified: bool | None = None,
+    include_tainted: bool | None = None,
     verification_status: str | None = None,
     tainted: bool | None = None,
     updated_after: datetime | None = None,
     updated_before: datetime | None = None,
-    sort: str = "updated_desc",
+    sort: str | None = None,
+    order: str | None = None,
+    fields: list[str] | None = None,
     written_by_subtree: str | None = None,
 ) -> DocumentListResponse:
+    """Complete enumeration (PRD AG-ST-01).
+
+    The census contract (``order``; the default under API 2026-11) pages by
+    keyset in doc_key or (updated_at, doc_key) order with a signed cursor that
+    carries the filter, the first page's exact ``snapshot_count`` and
+    ``as_of``; it includes every trust state by default. Baseline callers keep
+    the 3.2.1 (updated_at, id) listing.
+    """
     require_permission(principal, "doc:read")
-    if limit > settings.max_page_size:
-        raise ApiError(
-            422,
-            "limit_too_large",
-            f"limit must be <= {settings.max_page_size}",
-            details={"limit": settings.max_page_size},
-        )
-    if sort not in ("updated_desc", "updated_asc"):
-        raise ApiError(
-            422,
-            "invalid_sort",
-            "sort must be updated_desc or updated_asc",
-            details={"allowed": ["updated_desc", "updated_asc"]},
-        )
+    census = order is not None or (sort is None and at_least(LATEST_VERSION))
+    if census:
+        order = order or "doc_key_asc"
+        if order not in LIST_ORDERS:
+            raise ApiError(422, "validation_error", "order must be doc_key_asc or updated_at_asc",
+                           details={"field": "order", "allowed": list(LIST_ORDERS)})
+        if not 1 <= limit <= LIST_LIMIT_MAX:
+            raise ApiError(422, "validation_error", f"limit must be 1-{LIST_LIMIT_MAX}",
+                           details={"field": "limit", "limit": LIST_LIMIT_MAX})
+        include_unverified = True if include_unverified is None else include_unverified
+        include_tainted = True if include_tainted is None else include_tainted
+    else:
+        sort = sort or "updated_desc"
+        include_unverified = bool(include_unverified)
+        include_tainted = bool(include_tainted)
+        if limit > settings.max_page_size:
+            raise ApiError(
+                422,
+                "limit_too_large",
+                f"limit must be <= {settings.max_page_size}",
+                details={"limit": settings.max_page_size},
+            )
+        if sort not in ("updated_desc", "updated_asc"):
+            raise ApiError(
+                422,
+                "invalid_sort",
+                "sort must be updated_desc or updated_asc",
+                details={"allowed": ["updated_desc", "updated_asc"]},
+            )
+    if fields is not None:
+        allowed_fields = set(DocumentSummary.model_fields)
+        unknown = sorted(set(fields) - allowed_fields)
+        if unknown:
+            raise ApiError(422, "validation_error", "unknown fields requested",
+                           details={"field": "fields", "unknown": unknown,
+                                    "allowed": sorted(allowed_fields)})
     conditions: list[Any] = [SharedDocument.workspace_id == principal.workspace.id]
     if namespace:
         ensure_namespace(principal, namespace)
@@ -533,6 +623,21 @@ async def list_documents(
             )
             .exists()
         )
+    if census:
+        return await _census_page(
+            session, principal, conditions,
+            order=order, limit=limit, cursor=cursor, fields=fields, namespace=namespace,
+            filter_hash=hashlib.sha256(
+                json.dumps(
+                    [principal.agent_signature, namespace, filters or {}, include_archived,
+                     include_unverified, include_tainted, verification_status, tainted,
+                     updated_after.isoformat() if updated_after else None,
+                     updated_before.isoformat() if updated_before else None,
+                     written_by_subtree, order],
+                    sort_keys=True, default=str,
+                ).encode()
+            ).hexdigest()[:32],
+        )
     total = int(
         await session.scalar(
             select(func.count(SharedDocument.id)).where(*conditions)
@@ -570,12 +675,79 @@ async def list_documents(
     await indexer.annotate(session, list(rows))
     return DocumentListResponse(
         items=[
-            document_summary(row, compact_frontmatter=True) for row in rows
+            _project(document_summary(row, compact_frontmatter=True).model_dump(mode="json"),
+                     fields)
+            for row in rows
         ],
         next_cursor=next_cursor,
         namespace=namespace,
         count=len(rows),
         total=total,
+    )
+
+
+async def _census_page(
+    session: AsyncSession,
+    principal: Principal,
+    conditions: list[Any],
+    *,
+    order: str,
+    limit: int,
+    cursor: str | None,
+    fields: list[str] | None,
+    namespace: str | None,
+    filter_hash: str,
+) -> DocumentListResponse:
+    now = await db_now(session)
+    if order == "doc_key_asc":
+        columns = (SharedDocument.doc_key, SharedDocument.id)
+    else:
+        columns = (SharedDocument.updated_at, SharedDocument.doc_key, SharedDocument.id)
+    query = select(SharedDocument).where(*conditions)
+    if cursor:
+        payload = _open_list_cursor(cursor, filter_hash, now)
+        as_of = datetime.fromisoformat(payload["t"])
+        snapshot_count = int(payload["c"])
+        key = list(payload["k"])
+        if order == "updated_at_asc":
+            key[0] = datetime.fromisoformat(key[0])
+        key[-1] = uuid.UUID(key[-1])
+        query = query.where(tuple_(*columns) > tuple_(*key))
+    else:
+        as_of = now
+        snapshot_count = int(
+            await session.scalar(select(func.count(SharedDocument.id)).where(*conditions)) or 0
+        )
+    rows = (
+        await session.execute(query.order_by(*(column.asc() for column in columns))
+                              .limit(limit + 1))
+    ).scalars().all()
+    next_cursor = None
+    if len(rows) > limit:
+        rows = rows[:limit]
+        last = rows[-1]
+        key = (
+            [last.doc_key, str(last.id)] if order == "doc_key_asc"
+            else [last.updated_at.isoformat(), last.doc_key, str(last.id)]
+        )
+        next_cursor = sign_list_cursor(
+            {"v": 2, "o": order, "k": key, "f": filter_hash, "t": as_of.isoformat(),
+             "c": snapshot_count}
+        )
+    await indexer.annotate(session, list(rows))
+    return DocumentListResponse(
+        items=[
+            _project(document_summary(row, compact_frontmatter=True).model_dump(mode="json"),
+                     fields)
+            for row in rows
+        ],
+        next_cursor=next_cursor,
+        namespace=namespace,
+        count=len(rows),
+        total=snapshot_count,
+        order=order,
+        snapshot_count=snapshot_count,
+        as_of=as_of,
     )
 
 
@@ -1315,7 +1487,6 @@ def _query_hit(
     return DocumentQueryHit(
         **document_summary(document).model_dump(),
         created_by=document.created_by,
-        trust=document.trust_level,
         is_own=document.created_by == principal.agent_signature,
         matched_chunks=chunks,
     )
