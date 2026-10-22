@@ -212,6 +212,8 @@ REST、MCP、admin 和 human console 共用这一层。
 | `budget.py` | embedding 计量、令牌写入限制、循环熔断 |
 | `common.py` | 序列化、审计写入、事件写入、快照、数据库时钟 |
 | `documents.py` | 文档创建/更新、不可变版本、验证、信任、人类锁、L2 artifact、section patch、语义查询 |
+| `attestation.py` | 跨租户可验签谱系：租户 Ed25519 密钥与轮换、JWKS、成对假名、紧凑 JWS、实时吊销查询 |
+| `export_schedule.py` | 定期导出：每周全量、每日增量、30 天保留 |
 | `exports.py` | 租户/工作区导出、导入、往返一致性 |
 | `external_actions.py` | 审批式外部动作、幂等、尝试账本、补偿 |
 | `idempotency.py` | REST/MCP 写请求的幂等记录与 24h 重放 |
@@ -229,6 +231,7 @@ REST、MCP、admin 和 human console 共用这一层。
 | `reaper.py` | 过期任务/槽位/资源租约回收循环 |
 | `resources.py` | 稀缺资源：容量槽位租约、FIFO 队列、resource.granted 与 60 秒确认 |
 | `reviews.py` | 同行评审：peer_review 任务、reviews/ 评审文档、作者谱系冲突、独立评审封存 |
+| `retrieval_eval.py` | 检索评测：评测集、recall@k/MRR 历史、回归门禁（recall@50 下降 ≤ 3 个百分点）、每日 self_recall@50 探针 |
 | `retrieval.py` | Markdown 分块、HNSW + tsvector + trigram 混合检索、RRF |
 | `slots.py` | 状态网格、RFC 6902 JSON Patch、租约、人类主权 |
 | `taint.py` | 来源抽取、污点边、下游文档/槽位/任务传播、人工清除 |
@@ -894,7 +897,7 @@ OPENAI_BASE_URL=https://api.jina.ai/v1
   → v3_hardening.sql
   → v3_2_production.sql
   → v3_2_1_mcp_improvements.sql
-  → v3_3 ... v3_27
+  → v3_3 ... v3_29
 
 v2 库
   v2_to_v3_collab.sql
@@ -904,7 +907,7 @@ v2 库
   schema_migrations 中缺失的版本按顺序执行
 ```
 
-迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.27.0**。
+迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.29.0**。
 
 ### 9.5 备份与回滚
 
@@ -1010,6 +1013,7 @@ ruff check .
 - **溯源、召回与令牌预算**：`v3_24`，`provenance.py`、`recall.py`、`token_budget.py`。
 - **日志、争用与态势**：`v3_25`，`logs.py`、`contention.py`、`situation.py`。
 - **租户树**：`v3_26`，`tree.py`，子租户创建/移动/挂载/卸载。
+- **Phase 3 R3.2 与缺口**：`v3_28`/`v3_29`，`retrieval_eval.py`（`eval/retrieval/` 评测集与基线）、`attestation.py` 与 `/.well-known/agentgraph/…`（`scripts/verify_lineage.py` 验签）、`export_schedule.py`、`workspace_events` 按 `shard_key` 16 个哈希分区、索引队列按分片轮询、控制台待审核汇总与熔断器面板。
 - **Phase 3 R3.1**：`v3_27`，`lifecycle.py`、`digest.py`、`reviews.py`、`resources.py`，`/v1/webhooks`（`webhooks:manage` 范围）、预留 `room_id`、宪法修订规则展示。
 - **前端新增**：`dashboard/app/docs/` 公开文档站，`components/onboarding.tsx`、`components/situation.tsx`，以及成员/权限、备份与事故相关控制台入口。
 - **MCP 工具**：从 40 增至 **78**；完整名称见 `app/mcp_server/server.py`。

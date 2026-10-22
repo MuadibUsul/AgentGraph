@@ -1703,6 +1703,31 @@ async def release_resource(lease_id: str) -> dict[str, Any]:
     return _compact(result)
 
 
+@mcp.tool(name="get_lineage_attestation")
+async def get_lineage_attestation(
+    audience: str,
+    token_id: str | None = None,
+    doc_id: str | None = None,
+    version: int | None = None,
+    ttl_seconds: Annotated[int, Field(ge=1, le=900)] = 900,
+) -> dict[str, Any]:
+    """A signed JWS proving who issued a token (or the token that wrote a document
+    version) and what each link was granted, for one audience: links are
+    pairwise pseudonyms, never real ids or names. Verify with the tenant's
+    /.well-known/agentgraph/tenants/<alias>/jwks.json; valid at most 15 minutes."""
+    from app.services import attestation
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await attestation.attest(
+                session, principal, audience=audience, token_id=token_id, doc_id=doc_id,
+                version=version, ttl_seconds=ttl_seconds)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 @mcp.tool(name="clear_taint")
 async def clear_taint(
     doc_key: str,

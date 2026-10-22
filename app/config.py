@@ -205,6 +205,12 @@ class Settings(BaseSettings):
     index_worker_enabled: bool = True
     index_worker_interval_seconds: float = Field(default=1.0, ge=0.1, le=60)
     index_worker_batch: int = Field(default=20, ge=1, le=500)
+    # Scheduled exports (AG-ST-02 point 6): a weekly full baseline and daily
+    # increments per root tenant, kept this many days. Off by default.
+    scheduled_exports: bool = False
+    scheduled_export_keep_days: int = Field(default=30, ge=1, le=365)
+    # The daily self_recall@50 probe (AG-ST-12).
+    retrieval_probe_enabled: bool = True
     index_max_attempts: int = Field(default=5, ge=1, le=50)
 
     # ------------------------------------------------ cost control (AG-ST-15)

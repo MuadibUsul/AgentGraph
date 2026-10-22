@@ -1,0 +1,150 @@
+{"query": "how do I restart and roll back payments-gateway", "namespace": "default", "relevant": ["runbook/payments-gateway"]}
+{"query": "where does payments-gateway store job states and how does it scale", "namespace": "default", "relevant": ["design/payments-gateway"]}
+{"query": "why reports were empty on payments-gateway", "namespace": "default", "relevant": ["incident/payments-gateway"]}
+{"query": "why did we decide that payments-gateway should move to a managed queue", "namespace": "default", "relevant": ["decision/payments-gateway"]}
+{"query": "how do I restart and roll back search-indexer", "namespace": "default", "relevant": ["runbook/search-indexer"]}
+{"query": "where does search-indexer store image variants and how does it scale", "namespace": "default", "relevant": ["design/search-indexer"]}
+{"query": "why reports were empty on search-indexer", "namespace": "default", "relevant": ["incident/search-indexer"]}
+{"query": "why did we decide that search-indexer should run in two regions", "namespace": "default", "relevant": ["decision/search-indexer"]}
+{"query": "how do I restart and roll back billing-ledger", "namespace": "default", "relevant": ["runbook/billing-ledger"]}
+{"query": "where does billing-ledger store job states and how does it scale", "namespace": "default", "relevant": ["design/billing-ledger"]}
+{"query": "why search returned stale results on billing-ledger", "namespace": "default", "relevant": ["incident/billing-ledger"]}
+{"query": "why did we decide that billing-ledger should require idempotency keys", "namespace": "default", "relevant": ["decision/billing-ledger"]}
+{"query": "how do I restart and roll back auth-service", "namespace": "default", "relevant": ["runbook/auth-service"]}
+{"query": "where does auth-service store session tokens and how does it scale", "namespace": "default", "relevant": ["design/auth-service"]}
+{"query": "why emails were delivered twice on auth-service", "namespace": "default", "relevant": ["incident/auth-service"]}
+{"query": "why did we decide that auth-service should move to a managed queue", "namespace": "default", "relevant": ["decision/auth-service"]}
+{"query": "how do I restart and roll back mail-relay", "namespace": "default", "relevant": ["runbook/mail-relay"]}
+{"query": "where does mail-relay store audit events and how does it scale", "namespace": "default", "relevant": ["design/mail-relay"]}
+{"query": "why reports were empty on mail-relay", "namespace": "default", "relevant": ["incident/mail-relay"]}
+{"query": "why did we decide that mail-relay should move to a managed queue", "namespace": "default", "relevant": ["decision/mail-relay"]}
+{"query": "how do I restart and roll back image-resizer", "namespace": "default", "relevant": ["runbook/image-resizer"]}
+{"query": "where does image-resizer store job states and how does it scale", "namespace": "default", "relevant": ["design/image-resizer"]}
+{"query": "why reports were empty on image-resizer", "namespace": "default", "relevant": ["incident/image-resizer"]}
+{"query": "why did we decide that image-resizer should drop the legacy XML endpoint", "namespace": "default", "relevant": ["decision/image-resizer"]}
+{"query": "how do I restart and roll back report-builder", "namespace": "default", "relevant": ["runbook/report-builder"]}
+{"query": "where does report-builder store session tokens and how does it scale", "namespace": "default", "relevant": ["design/report-builder"]}
+{"query": "why logins failed for EU users on report-builder", "namespace": "default", "relevant": ["incident/report-builder"]}
+{"query": "why did we decide that report-builder should require idempotency keys", "namespace": "default", "relevant": ["decision/report-builder"]}
+{"query": "how do I restart and roll back feature-flags", "namespace": "default", "relevant": ["runbook/feature-flags"]}
+{"query": "where does feature-flags store session tokens and how does it scale", "namespace": "default", "relevant": ["design/feature-flags"]}
+{"query": "why reports were empty on feature-flags", "namespace": "default", "relevant": ["incident/feature-flags"]}
+{"query": "why did we decide that feature-flags should run in two regions", "namespace": "default", "relevant": ["decision/feature-flags"]}
+{"query": "how do I restart and roll back audit-trail", "namespace": "default", "relevant": ["runbook/audit-trail"]}
+{"query": "where does audit-trail store job states and how does it scale", "namespace": "default", "relevant": ["design/audit-trail"]}
+{"query": "why reports were empty on audit-trail", "namespace": "default", "relevant": ["incident/audit-trail"]}
+{"query": "why did we decide that audit-trail should drop the legacy XML endpoint", "namespace": "default", "relevant": ["decision/audit-trail"]}
+{"query": "how do I restart and roll back chat-bridge", "namespace": "default", "relevant": ["runbook/chat-bridge"]}
+{"query": "where does chat-bridge store session tokens and how does it scale", "namespace": "default", "relevant": ["design/chat-bridge"]}
+{"query": "why checkout requests timed out on chat-bridge", "namespace": "default", "relevant": ["incident/chat-bridge"]}
+{"query": "why did we decide that chat-bridge should move to a managed queue", "namespace": "default", "relevant": ["decision/chat-bridge"]}
+{"query": "how do I restart and roll back geo-router", "namespace": "default", "relevant": ["runbook/geo-router"]}
+{"query": "where does geo-router store audit events and how does it scale", "namespace": "default", "relevant": ["design/geo-router"]}
+{"query": "why reports were empty on geo-router", "namespace": "default", "relevant": ["incident/geo-router"]}
+{"query": "why did we decide that geo-router should drop the legacy XML endpoint", "namespace": "default", "relevant": ["decision/geo-router"]}
+{"query": "how do I restart and roll back price-engine", "namespace": "default", "relevant": ["runbook/price-engine"]}
+{"query": "where does price-engine store session tokens and how does it scale", "namespace": "default", "relevant": ["design/price-engine"]}
+{"query": "why search returned stale results on price-engine", "namespace": "default", "relevant": ["incident/price-engine"]}
+{"query": "why did we decide that price-engine should drop the legacy XML endpoint", "namespace": "default", "relevant": ["decision/price-engine"]}
+{"query": "how do I restart and roll back inventory-sync", "namespace": "default", "relevant": ["runbook/inventory-sync"]}
+{"query": "where does inventory-sync store price snapshots and how does it scale", "namespace": "default", "relevant": ["design/inventory-sync"]}
+{"query": "why search returned stale results on inventory-sync", "namespace": "default", "relevant": ["incident/inventory-sync"]}
+{"query": "why did we decide that inventory-sync should drop the legacy XML endpoint", "namespace": "default", "relevant": ["decision/inventory-sync"]}
+{"query": "how do I restart and roll back push-notifier", "namespace": "default", "relevant": ["runbook/push-notifier"]}
+{"query": "where does push-notifier store image variants and how does it scale", "namespace": "default", "relevant": ["design/push-notifier"]}
+{"query": "why logins failed for EU users on push-notifier", "namespace": "default", "relevant": ["incident/push-notifier"]}
+{"query": "why did we decide that push-notifier should require idempotency keys", "namespace": "default", "relevant": ["decision/push-notifier"]}
+{"query": "how do I restart and roll back export-worker", "namespace": "default", "relevant": ["runbook/export-worker"]}
+{"query": "where does export-worker store price snapshots and how does it scale", "namespace": "default", "relevant": ["design/export-worker"]}
+{"query": "why emails were delivered twice on export-worker", "namespace": "default", "relevant": ["incident/export-worker"]}
+{"query": "why did we decide that export-worker should shard by tenant", "namespace": "default", "relevant": ["decision/export-worker"]}
+{"query": "how do I restart and roll back rate-limiter", "namespace": "default", "relevant": ["runbook/rate-limiter"]}
+{"query": "where does rate-limiter store job states and how does it scale", "namespace": "default", "relevant": ["design/rate-limiter"]}
+{"query": "why checkout requests timed out on rate-limiter", "namespace": "default", "relevant": ["incident/rate-limiter"]}
+{"query": "why did we decide that rate-limiter should move to a managed queue", "namespace": "default", "relevant": ["decision/rate-limiter"]}
+{"query": "how do I restart and roll back session-store", "namespace": "default", "relevant": ["runbook/session-store"]}
+{"query": "where does session-store store audit events and how does it scale", "namespace": "default", "relevant": ["design/session-store"]}
+{"query": "why reports were empty on session-store", "namespace": "default", "relevant": ["incident/session-store"]}
+{"query": "why did we decide that session-store should drop the legacy XML endpoint", "namespace": "default", "relevant": ["decision/session-store"]}
+{"query": "how do I restart and roll back tax-calculator", "namespace": "default", "relevant": ["runbook/tax-calculator"]}
+{"query": "where does tax-calculator store image variants and how does it scale", "namespace": "default", "relevant": ["design/tax-calculator"]}
+{"query": "why logins failed for EU users on tax-calculator", "namespace": "default", "relevant": ["incident/tax-calculator"]}
+{"query": "why did we decide that tax-calculator should drop the legacy XML endpoint", "namespace": "default", "relevant": ["decision/tax-calculator"]}
+{"query": "how do I restart and roll back fraud-scorer", "namespace": "default", "relevant": ["runbook/fraud-scorer"]}
+{"query": "where does fraud-scorer store audit events and how does it scale", "namespace": "default", "relevant": ["design/fraud-scorer"]}
+{"query": "why emails were delivered twice on fraud-scorer", "namespace": "default", "relevant": ["incident/fraud-scorer"]}
+{"query": "why did we decide that fraud-scorer should drop the legacy XML endpoint", "namespace": "default", "relevant": ["decision/fraud-scorer"]}
+{"query": "how do I restart and roll back ledger-archive", "namespace": "default", "relevant": ["runbook/ledger-archive"]}
+{"query": "where does ledger-archive store image variants and how does it scale", "namespace": "default", "relevant": ["design/ledger-archive"]}
+{"query": "why logins failed for EU users on ledger-archive", "namespace": "default", "relevant": ["incident/ledger-archive"]}
+{"query": "why did we decide that ledger-archive should run in two regions", "namespace": "default", "relevant": ["decision/ledger-archive"]}
+{"query": "how do I restart and roll back media-cdn", "namespace": "default", "relevant": ["runbook/media-cdn"]}
+{"query": "where does media-cdn store audit events and how does it scale", "namespace": "default", "relevant": ["design/media-cdn"]}
+{"query": "why search returned stale results on media-cdn", "namespace": "default", "relevant": ["incident/media-cdn"]}
+{"query": "why did we decide that media-cdn should require idempotency keys", "namespace": "default", "relevant": ["decision/media-cdn"]}
+{"query": "how do I restart and roll back invoice-mailer", "namespace": "default", "relevant": ["runbook/invoice-mailer"]}
+{"query": "where does invoice-mailer store audit events and how does it scale", "namespace": "default", "relevant": ["design/invoice-mailer"]}
+{"query": "why search returned stale results on invoice-mailer", "namespace": "default", "relevant": ["incident/invoice-mailer"]}
+{"query": "why did we decide that invoice-mailer should move to a managed queue", "namespace": "default", "relevant": ["decision/invoice-mailer"]}
+{"query": "how do I restart and roll back partner-api", "namespace": "default", "relevant": ["runbook/partner-api"]}
+{"query": "where does partner-api store job states and how does it scale", "namespace": "default", "relevant": ["design/partner-api"]}
+{"query": "why search returned stale results on partner-api", "namespace": "default", "relevant": ["incident/partner-api"]}
+{"query": "why did we decide that partner-api should drop the legacy XML endpoint", "namespace": "default", "relevant": ["decision/partner-api"]}
+{"query": "how do I restart and roll back recommendation-ranker", "namespace": "default", "relevant": ["runbook/recommendation-ranker"]}
+{"query": "where does recommendation-ranker store price snapshots and how does it scale", "namespace": "default", "relevant": ["design/recommendation-ranker"]}
+{"query": "why reports were empty on recommendation-ranker", "namespace": "default", "relevant": ["incident/recommendation-ranker"]}
+{"query": "why did we decide that recommendation-ranker should require idempotency keys", "namespace": "default", "relevant": ["decision/recommendation-ranker"]}
+{"query": "how do I restart and roll back data-lake-loader", "namespace": "default", "relevant": ["runbook/data-lake-loader"]}
+{"query": "where does data-lake-loader store job states and how does it scale", "namespace": "default", "relevant": ["design/data-lake-loader"]}
+{"query": "why search returned stale results on data-lake-loader", "namespace": "default", "relevant": ["incident/data-lake-loader"]}
+{"query": "why did we decide that data-lake-loader should shard by tenant", "namespace": "default", "relevant": ["decision/data-lake-loader"]}
+{"query": "how do I restart and roll back sso-bridge", "namespace": "default", "relevant": ["runbook/sso-bridge"]}
+{"query": "where does sso-bridge store audit events and how does it scale", "namespace": "default", "relevant": ["design/sso-bridge"]}
+{"query": "why checkout requests timed out on sso-bridge", "namespace": "default", "relevant": ["incident/sso-bridge"]}
+{"query": "why did we decide that sso-bridge should shard by tenant", "namespace": "default", "relevant": ["decision/sso-bridge"]}
+{"query": "how do I restart and roll back webhook-dispatcher", "namespace": "default", "relevant": ["runbook/webhook-dispatcher"]}
+{"query": "where does webhook-dispatcher store price snapshots and how does it scale", "namespace": "default", "relevant": ["design/webhook-dispatcher"]}
+{"query": "why search returned stale results on webhook-dispatcher", "namespace": "default", "relevant": ["incident/webhook-dispatcher"]}
+{"query": "why did we decide that webhook-dispatcher should shard by tenant", "namespace": "default", "relevant": ["decision/webhook-dispatcher"]}
+{"query": "how do I restart and roll back metrics-collector", "namespace": "default", "relevant": ["runbook/metrics-collector"]}
+{"query": "where does metrics-collector store image variants and how does it scale", "namespace": "default", "relevant": ["design/metrics-collector"]}
+{"query": "why checkout requests timed out on metrics-collector", "namespace": "default", "relevant": ["incident/metrics-collector"]}
+{"query": "why did we decide that metrics-collector should require idempotency keys", "namespace": "default", "relevant": ["decision/metrics-collector"]}
+{"query": "how do I restart and roll back backup-runner", "namespace": "default", "relevant": ["runbook/backup-runner"]}
+{"query": "where does backup-runner store price snapshots and how does it scale", "namespace": "default", "relevant": ["design/backup-runner"]}
+{"query": "why reports were empty on backup-runner", "namespace": "default", "relevant": ["incident/backup-runner"]}
+{"query": "why did we decide that backup-runner should move to a managed queue", "namespace": "default", "relevant": ["decision/backup-runner"]}
+{"query": "how do I restart and roll back consent-manager", "namespace": "default", "relevant": ["runbook/consent-manager"]}
+{"query": "where does consent-manager store job states and how does it scale", "namespace": "default", "relevant": ["design/consent-manager"]}
+{"query": "why search returned stale results on consent-manager", "namespace": "default", "relevant": ["incident/consent-manager"]}
+{"query": "why did we decide that consent-manager should shard by tenant", "namespace": "default", "relevant": ["decision/consent-manager"]}
+{"query": "everything we know about report-builder", "namespace": "default", "relevant": ["runbook/report-builder", "design/report-builder", "incident/report-builder", "decision/report-builder"]}
+{"query": "everything we know about mail-relay", "namespace": "default", "relevant": ["runbook/mail-relay", "design/mail-relay", "incident/mail-relay", "decision/mail-relay"]}
+{"query": "everything we know about geo-router", "namespace": "default", "relevant": ["runbook/geo-router", "design/geo-router", "incident/geo-router", "decision/geo-router"]}
+{"query": "everything we know about backup-runner", "namespace": "default", "relevant": ["runbook/backup-runner", "design/backup-runner", "incident/backup-runner", "decision/backup-runner"]}
+{"query": "everything we know about recommendation-ranker", "namespace": "default", "relevant": ["runbook/recommendation-ranker", "design/recommendation-ranker", "incident/recommendation-ranker", "decision/recommendation-ranker"]}
+{"query": "everything we know about price-engine", "namespace": "default", "relevant": ["runbook/price-engine", "design/price-engine", "incident/price-engine", "decision/price-engine"]}
+{"query": "everything we know about tax-calculator", "namespace": "default", "relevant": ["runbook/tax-calculator", "design/tax-calculator", "incident/tax-calculator", "decision/tax-calculator"]}
+{"query": "everything we know about audit-trail", "namespace": "default", "relevant": ["runbook/audit-trail", "design/audit-trail", "incident/audit-trail", "decision/audit-trail"]}
+{"query": "everything we know about rate-limiter", "namespace": "default", "relevant": ["runbook/rate-limiter", "design/rate-limiter", "incident/rate-limiter", "decision/rate-limiter"]}
+{"query": "everything we know about media-cdn", "namespace": "default", "relevant": ["runbook/media-cdn", "design/media-cdn", "incident/media-cdn", "decision/media-cdn"]}
+{"query": "everything we know about sso-bridge", "namespace": "default", "relevant": ["runbook/sso-bridge", "design/sso-bridge", "incident/sso-bridge", "decision/sso-bridge"]}
+{"query": "everything we know about webhook-dispatcher", "namespace": "default", "relevant": ["runbook/webhook-dispatcher", "design/webhook-dispatcher", "incident/webhook-dispatcher", "decision/webhook-dispatcher"]}
+{"query": "everything we know about feature-flags", "namespace": "default", "relevant": ["runbook/feature-flags", "design/feature-flags", "incident/feature-flags", "decision/feature-flags"]}
+{"query": "everything we know about partner-api", "namespace": "default", "relevant": ["runbook/partner-api", "design/partner-api", "incident/partner-api", "decision/partner-api"]}
+{"query": "everything we know about invoice-mailer", "namespace": "default", "relevant": ["runbook/invoice-mailer", "design/invoice-mailer", "incident/invoice-mailer", "decision/invoice-mailer"]}
+{"query": "everything we know about fraud-scorer", "namespace": "default", "relevant": ["runbook/fraud-scorer", "design/fraud-scorer", "incident/fraud-scorer", "decision/fraud-scorer"]}
+{"query": "everything we know about search-indexer", "namespace": "default", "relevant": ["runbook/search-indexer", "design/search-indexer", "incident/search-indexer", "decision/search-indexer"]}
+{"query": "everything we know about inventory-sync", "namespace": "default", "relevant": ["runbook/inventory-sync", "design/inventory-sync", "incident/inventory-sync", "decision/inventory-sync"]}
+{"query": "everything we know about ledger-archive", "namespace": "default", "relevant": ["runbook/ledger-archive", "design/ledger-archive", "incident/ledger-archive", "decision/ledger-archive"]}
+{"query": "everything we know about consent-manager", "namespace": "default", "relevant": ["runbook/consent-manager", "design/consent-manager", "incident/consent-manager", "decision/consent-manager"]}
+{"query": "everything we know about billing-ledger", "namespace": "default", "relevant": ["runbook/billing-ledger", "design/billing-ledger", "incident/billing-ledger", "decision/billing-ledger"]}
+{"query": "everything we know about auth-service", "namespace": "default", "relevant": ["runbook/auth-service", "design/auth-service", "incident/auth-service", "decision/auth-service"]}
+{"query": "everything we know about chat-bridge", "namespace": "default", "relevant": ["runbook/chat-bridge", "design/chat-bridge", "incident/chat-bridge", "decision/chat-bridge"]}
+{"query": "everything we know about payments-gateway", "namespace": "default", "relevant": ["runbook/payments-gateway", "design/payments-gateway", "incident/payments-gateway", "decision/payments-gateway"]}
+{"query": "everything we know about push-notifier", "namespace": "default", "relevant": ["runbook/push-notifier", "design/push-notifier", "incident/push-notifier", "decision/push-notifier"]}
+{"query": "everything we know about data-lake-loader", "namespace": "default", "relevant": ["runbook/data-lake-loader", "design/data-lake-loader", "incident/data-lake-loader", "decision/data-lake-loader"]}
+{"query": "everything we know about export-worker", "namespace": "default", "relevant": ["runbook/export-worker", "design/export-worker", "incident/export-worker", "decision/export-worker"]}
+{"query": "everything we know about session-store", "namespace": "default", "relevant": ["runbook/session-store", "design/session-store", "incident/session-store", "decision/session-store"]}
+{"query": "everything we know about metrics-collector", "namespace": "default", "relevant": ["runbook/metrics-collector", "design/metrics-collector", "incident/metrics-collector", "decision/metrics-collector"]}
+{"query": "everything we know about image-resizer", "namespace": "default", "relevant": ["runbook/image-resizer", "design/image-resizer", "incident/image-resizer", "decision/image-resizer"]}

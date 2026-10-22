@@ -130,6 +130,8 @@ EPHEMERAL = frozenset({
     "tenant_policies", "tenant_confirmations", "tenant_shares", "admin_access_sessions",
     # Queue tickets live a minute past their turn (AG-CO-07).
     "resource_queue",
+    # Evaluation runs and probes are the operator's; signing keys never leave.
+    "retrieval_eval_runs", "retrieval_probes", "tenant_signing_keys",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
@@ -158,7 +160,8 @@ async def unclassified_tables(session: AsyncSession) -> list[str]:
     names = (
         await session.execute(
             text("SELECT table_name FROM information_schema.tables "
-                 "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")
+                 "WHERE table_schema = 'public' AND table_type = 'BASE TABLE' "
+                 "AND table_name NOT IN (SELECT relname FROM pg_class WHERE relispartition)")
         )
     ).scalars().all()
     known = set(EXPORTED) | DERIVED | EPHEMERAL

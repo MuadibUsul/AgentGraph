@@ -934,6 +934,28 @@ with `POST /v1/resources/release/{lease}`; when every slot is taken they
 queue in order, receive `resource.granted` on their turn and confirm within
 60 seconds.
 
+## Retrieval quality, attestations and operations
+
+**Retrieval baseline (AG-ST-12).** `POST /v1/admin/eval/retrieval` runs the
+evaluation set in `eval/retrieval/` through the production ranking and keeps
+every run; the test suite fails when recall@50 drops more than 3 points below
+`eval/retrieval/baseline.json`. A daily probe records `self_recall@50` per
+workspace (`GET /v1/admin/eval/self-recall`).
+
+**Proving lineage to another tenant (AG-ID-08).** `POST /v1/lineage/attestations`
+(MCP `get_lineage_attestation`) signs, for one audience, the chain of grants
+behind a token or a document version. The audience verifies it with
+`/.well-known/agentgraph/tenants/<alias>/jwks.json` and
+`scripts/verify_lineage.py`, sees pseudonyms instead of ids or names, and can
+ask `/.well-known/agentgraph/tenants/<alias>/revoked` whether a link was revoked.
+Attestations last at most 15 minutes.
+
+**Scheduled exports.** Set `SCHEDULED_EXPORTS=true` for a weekly full export
+and a daily increment per tenant, kept 30 days (`SCHEDULED_EXPORT_KEEP_DAYS`).
+
+**Event log partitions.** The event log is partitioned by shard (namespace),
+16 hash partitions on one Postgres; the index worker serves shards in turn.
+
 ## Backups, restores and incident response
 
 **Backups (AG-ST-10).** With `BACKUP_DIR` set, a scheduler takes a full backup

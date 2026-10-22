@@ -172,15 +172,30 @@ async def process_jobs(limit: int | None = None) -> int:
 
     done = 0
     async with async_session_factory() as session:
+        # Fair across shards (AG-EV-02 point 6): the oldest job of every
+        # (workspace, namespace) first, then the second of each, and so on.
+        rank = func.row_number().over(
+            partition_by=(DocumentIndex.workspace_id, SharedDocument.namespace),
+            order_by=DocumentIndex.next_attempt_at,
+        ).label("rank")
+        ranked = (
+            select(DocumentIndex.document_id, rank, DocumentIndex.next_attempt_at)
+            .join(SharedDocument, SharedDocument.id == DocumentIndex.document_id)
+            .where(
+                DocumentIndex.state.in_(("pending", "deferred")),
+                DocumentIndex.next_attempt_at <= _now(),
+            )
+            .subquery()
+        )
+        picked = (
+            select(ranked.c.document_id)
+            .order_by(ranked.c.rank, ranked.c.next_attempt_at)
+            .limit(limit or settings.index_worker_batch)
+        )
         rows = (
             await session.execute(
                 select(DocumentIndex)
-                .where(
-                    DocumentIndex.state.in_(("pending", "deferred")),
-                    DocumentIndex.next_attempt_at <= _now(),
-                )
-                .order_by(DocumentIndex.next_attempt_at)
-                .limit(limit or settings.index_worker_batch)
+                .where(DocumentIndex.document_id.in_(picked))
                 .with_for_update(skip_locked=True)
             )
         ).scalars().all()

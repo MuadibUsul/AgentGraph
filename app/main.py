@@ -28,6 +28,7 @@ from app.api.public_docs import router as public_docs_router
 from app.api.stream_routes import admin_router as admin_stream_router
 from app.api.stream_routes import router as stream_router
 from app.api.v1_routes import router as v1_router
+from app.api.wellknown_routes import router as wellknown_router
 from app.concurrency import ConcurrencyLimitMiddleware
 from app.config import get_settings
 from app.database import apply_schema, check_database, engine
@@ -239,6 +240,7 @@ app.include_router(org_router)
 app.include_router(stream_router)
 app.include_router(admin_router)
 app.include_router(admin_stream_router)
+app.include_router(wellknown_router)
 if mcp_http_app is not None:
     # Trailing slash is the canonical endpoint: /mcp/
     app.mount("/mcp", mcp_http_app, name="mcp")

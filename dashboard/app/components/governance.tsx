@@ -15,6 +15,7 @@ import type {
   WebhookRule,
 } from "../types";
 import { relativeTime } from "../types";
+import { BudgetCircuits } from "./circuits";
 import { Empty, IconCheck, IconClose, IconPulse, Modal, Spinner } from "./ui";
 
 type Section = "proposals" | "policies" | "operations" | "access";
@@ -591,6 +592,7 @@ export function GovernanceView({
             <button type="button" className="button primary" onClick={() => void saveBudget()}>
               {t("Save budget")}
             </button>
+            <BudgetCircuits request={request} />
 
             <div className="panel-toolbar spaced">
               <div>

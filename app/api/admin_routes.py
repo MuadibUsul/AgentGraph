@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import services
 from app.auth import principal_for_admin, require_admin
+from app.config import get_settings
 from app.database import get_db
 from app.errors import ApiError
 from app.models import TaskStatus
@@ -71,6 +72,8 @@ from app.schemas import (
     ProposalOut,
     ProposalRejectRequest,
     RestoreRequest,
+    RetrievalEvalRequest,
+    RetrievalGateRequest,
     RightsEraseRequest,
     RightsRequestCreate,
     SlotListResponse,
@@ -1666,3 +1669,69 @@ async def _rights_principal(session: AsyncSession, request_id: str):
         raise ApiError(404, "not_found", "rights request not found",
                        details={"request_id": request_id})
     return await _tenant_principal(session, tenant_id)
+
+
+# ------------------------------------------------------------------ R3.2
+
+
+@router.post("/eval/retrieval", summary="Run the retrieval evaluation set (AG-ST-12)")
+async def run_retrieval_eval(body: RetrievalEvalRequest) -> dict:
+    from app.services import retrieval_eval
+
+    return await retrieval_eval.run_eval(body.dataset, body.k)
+
+
+@router.get("/eval/retrieval/runs", summary="Earlier evaluation runs, newest first")
+async def retrieval_eval_runs(
+    dataset: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> dict:
+    from app.services import retrieval_eval
+
+    return await retrieval_eval.list_runs(dataset, limit)
+
+
+@router.post("/eval/retrieval/gate",
+             summary="Compare a run with a baseline (fails past the allowed drop)")
+async def retrieval_eval_gate(body: RetrievalGateRequest) -> dict:
+    from app.services import retrieval_eval
+
+    return retrieval_eval.compare(body.baseline, body.result, metric=body.metric,
+                                  max_drop=body.max_drop)
+
+
+@router.post("/eval/self-recall/run", summary="Run the self_recall@50 probe for a workspace now")
+async def run_self_recall(workspace_id: uuid.UUID = Query()) -> dict:
+    from app.services import retrieval_eval
+
+    result = await retrieval_eval.probe_workspace(workspace_id)
+    if result is None:
+        raise ApiError(409, "nothing_to_probe", "the workspace has no indexed documents",
+                       details={"workspace_id": str(workspace_id)})
+    return result
+
+
+@router.get("/eval/self-recall", summary="self_recall@50 probe results")
+async def self_recall_points(
+    workspace_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict:
+    from app.services import retrieval_eval
+
+    return await retrieval_eval.probes(workspace_id, limit)
+
+
+@router.post("/tenants/{tenant_id}/signing-keys/rotate",
+             summary="Rotate a tenant's attestation signing key (AG-ID-08)")
+async def rotate_signing_key(tenant_id: str) -> dict:
+    from app.services import attestation
+
+    return await attestation.rotate(None, tenant_id)
+
+
+@router.post("/exports/scheduled/run", summary="Start the scheduled exports that are due now")
+async def run_scheduled_exports() -> dict:
+    from app.services import export_schedule
+
+    return {"started": await export_schedule.run_due(),
+            "enabled": get_settings().scheduled_exports}

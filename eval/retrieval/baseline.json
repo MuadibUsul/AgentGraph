@@ -1,0 +1,9 @@
+{
+  "dataset": "v1",
+  "recall@10": 1.0,
+  "recall@50": 1.0,
+  "mrr": 0.9933,
+  "n_queries": 150,
+  "embedding_provider": "hash",
+  "note": "First run of v1 (2026-10-22). The gate fails when recall@50 drops more than 3 points."
+}

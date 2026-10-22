@@ -15,6 +15,30 @@ import { setFormatLanguage, type FormatLanguage } from "./types";
 export type Language = FormatLanguage;
 
 const ZH: Record<string, string> = {
+  // Budget circuit breakers (AG-ST-15 console panel)
+  "Circuit breakers": "熔断器",
+  "Tokens paused for a runaway write loop. Release one when you have checked the agent.":
+    "因失控写入循环而暂停的令牌。确认 agent 状态后可一键解除。",
+  "Embedding tokens today": "今日 embedding token",
+  "Writes today": "今日写入",
+  "mode {value}": "模式 {value}",
+  "Would have tripped": "本应触发",
+  "in shadow mode": "影子模式下",
+  "No open circuit breakers.": "没有打开的熔断器。",
+  "Rewrote one document in a loop": "循环重写同一篇文档",
+  "Wrote far above its usual rate": "写入远超平时速率",
+  "Kept retrying before Retry-After": "未等 Retry-After 就反复重试",
+  "Opened {when}; reopens {until}": "{when}打开，{until}恢复",
+  Release: "解除",
+  // Library noise reduction (AG-TC-04)
+  "{count} need review": "{count} 篇待审核",
+  "Nothing awaits review": "没有待审核的文档",
+  "Review filter": "审核筛选",
+  "Needs review": "待审核",
+  All: "全部",
+  Verified: "已验证",
+  "A person verified this version.": "此版本已由人工验证。",
+  "Written by an agent and not yet verified by a person.": "由 agent 写入，尚未经人工验证。",
   // Situation (AG-TC-05)
   Situation: "态势",
   "Anomalies across agents, tasks and documents, checked every minute. High severity alerts also notify the owners.":

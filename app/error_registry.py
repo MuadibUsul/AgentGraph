@@ -284,6 +284,8 @@ REGISTRY: dict[str, ErrorSpec] = {
     "invalid_state_transition": _spec(409, ABANDON, "Re-read the task; give up this action."),
     "lease_lost": _spec(409, ABANDON, "Drop local state and claim again."),
     "queue_ticket_expired": _spec(409, ABANDON, "Call acquire_resource again to re-queue."),
+    "lineage_unavailable": _spec(409, ABANDON, "This subject has no signed lineage; give up."),
+    "nothing_to_probe": _spec(409, ABANDON, "Write and index documents first."),
     "lease_conflict": _spec(409, ABANDON, "Another agent holds the lease; do not preempt."),
     "request_closed": _spec(409, ABANDON, "Give up this action."),
     "retention_not_met": _spec(409, ABANDON, "Give up this action."),

@@ -22,6 +22,7 @@ from app.schemas import (
     AgentUpdateRequest,
     AlertAckRequest,
     AppendEntriesRequest,
+    AttestationRequest,
     AuditListResponse,
     ClearTaintRequest,
     ConstitutionAckRequest,
@@ -1184,6 +1185,21 @@ async def delete_webhook(
 
 
 # ------------------------------------------------------------------ phase 3
+
+
+@router.post("/lineage/attestations",
+             summary="A signed, pseudonymous lineage chain for another tenant (AG-ID-08)")
+async def lineage_attestation(
+    body: AttestationRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import attestation
+
+    return await attestation.attest(
+        session, principal, audience=body.audience, token_id=body.subject.token_id,
+        doc_id=body.subject.doc_id, version=body.subject.version,
+        ttl_seconds=body.ttl_seconds)
 
 
 @router.post("/supersessions", summary="Mark a document superseded by another (AG-ST-11)")

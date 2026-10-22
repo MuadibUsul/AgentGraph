@@ -114,15 +114,36 @@ export function DocumentsView({
     setError(null);
   }, [selected?.doc_key, selected?.version]);
 
+  // AG-TC-04: one summary line instead of a review badge on every document;
+  // taint stays visible on each item (safety marks are never quietened).
+  const [review, setReview] = useState<ReviewFilter>("all");
+  const needsReview = useMemo(
+    () => documents.filter((doc) => awaitsReview(doc)).length,
+    [documents],
+  );
+  const visible = useMemo(
+    () =>
+      documents.filter((doc) =>
+        review === "review"
+          ? awaitsReview(doc)
+          : review === "verified"
+            ? doc.verification_status === "VERIFIED"
+            : review === "tainted"
+              ? doc.tainted
+              : true,
+      ),
+    [documents, review],
+  );
+
   const grouped = useMemo(() => {
     const groups = new Map<string, DocumentSummary[]>();
-    for (const doc of documents) {
+    for (const doc of visible) {
       const list = groups.get(doc.namespace) ?? [];
       list.push(doc);
       groups.set(doc.namespace, list);
     }
     return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [documents]);
+  }, [visible]);
 
   async function save() {
     if (!selected) return;
@@ -386,6 +407,27 @@ export function DocumentsView({
             aria-label={t("Updated before")}
           />
         </div>
+        <div className="review-summary">
+          {needsReview > 0 ? (
+            <button type="button" className="review-count" onClick={() => setReview("review")}>
+              {t("{count} need review", { count: needsReview })}
+            </button>
+          ) : (
+            <span className="muted">{t("Nothing awaits review")}</span>
+          )}
+          <div className="segmented small" role="group" aria-label={t("Review filter")}>
+            {(["all", "review", "verified", "tainted"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={review === value ? "active" : ""}
+                onClick={() => setReview(value)}
+              >
+                {t(REVIEW_LABELS[value])}
+              </button>
+            ))}
+          </div>
+        </div>
         {documents.length === 0 ? (
           <Empty
             title={t("No documents")}
@@ -406,7 +448,7 @@ export function DocumentsView({
             <div key={namespace} className="doc-group">
               <div className="doc-group-label">
                 <span>{namespace}</span>
-                <span>{namespaceCounts[namespace] ?? docs.length}</span>
+                <span>{review === "all" ? (namespaceCounts[namespace] ?? docs.length) : docs.length}</span>
               </div>
               {docs.map((doc) => (
                 <button
@@ -425,7 +467,6 @@ export function DocumentsView({
                   <span className="doc-item-side">
                     {doc.tainted && <span className="taint-dot" title={t("Tainted provenance")} />}
                     {doc.locked_by_human && <IconLock size={12} />}
-                    <span className={`verification-dot tone-${verificationTone(doc.verification_status)}`} />
                     <span>v{doc.version}</span>
                   </span>
                 </button>
@@ -465,16 +506,23 @@ export function DocumentsView({
             <div className="doc-editor-head">
               <div>
                 <div className="eyebrow">{selected.doc_key}</div>
-                <h2>{selected.title}</h2>
+                <h2 className="doc-title-row">
+                  {selected.title}
+                  <span
+                    className={`doc-status-icon tone-${verificationTone(selected.verification_status)}`}
+                    title={`${t(selected.verification_status)} · ${t(selected.trust_level)} — ${t(
+                      selected.verification_status === "VERIFIED"
+                        ? "A person verified this version."
+                        : "Written by an agent and not yet verified by a person.",
+                    )}`}
+                    aria-label={t(selected.verification_status)}
+                  >
+                    {selected.verification_status === "VERIFIED" ? <IconCheck size={11} /> : "?"}
+                  </span>
+                </h2>
                 <div className="doc-meta">
                   <span>v{selected.version}</span>
                   <span>{t("Updated")} {relativeTime(selected.updated_at)} {t("by")} {selected.updated_by}</span>
-                  <span className={`verification-pill tone-${verificationTone(selected.verification_status)}`}>
-                    {t(selected.verification_status)}
-                  </span>
-                  <span className={`trust-pill ${selected.trust_level === "TRUSTED" ? "trusted" : "untrusted"}`}>
-                    {t(selected.trust_level)}
-                  </span>
                   {selected.tainted && (
                     <span className="pill rose" title={t("Derived from tainted or untrusted sources")}>
                       {t("Tainted provenance")}
@@ -695,4 +743,17 @@ export function DocumentsView({
       )}
     </div>
   );
+}
+
+type ReviewFilter = "all" | "review" | "verified" | "tainted";
+
+const REVIEW_LABELS: Record<ReviewFilter, string> = {
+  all: "All",
+  review: "Needs review",
+  verified: "Verified",
+  tainted: "Tainted",
+};
+
+function awaitsReview(doc: DocumentSummary): boolean {
+  return doc.verification_status !== "VERIFIED" && doc.verification_status !== "DEPRECATED";
 }

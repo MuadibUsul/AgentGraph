@@ -277,7 +277,9 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `invalid_transition` | 409 | `abandon` |
 | `lease_conflict` | 409 | `abandon` |
 | `lease_lost` | 409 | `abandon` |
+| `lineage_unavailable` | 409 | `abandon` |
 | `link_exists` | 409 | `abandon` |
+| `nothing_to_probe` | 409 | `abandon` |
 | `proposal_not_pending` | 409 | `abandon` |
 | `queue_ticket_expired` | 409 | `abandon` |
 | `request_closed` | 409 | `abandon` |

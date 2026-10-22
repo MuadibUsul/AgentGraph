@@ -945,7 +945,10 @@ class WorkspaceEvent(Base):
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
     summary: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    shard_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    # The partition key of the event log (v3.29): never null.
+    shard_key: Mapped[str] = mapped_column(
+        String(160), nullable=False, server_default=text("'default'")
+    )
     stamp: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, server_default=FetchedValue()
     )

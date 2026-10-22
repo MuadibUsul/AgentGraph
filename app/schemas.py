@@ -2410,3 +2410,30 @@ class ResourceAcquireRequest(StrictModel):
     queue: bool = True
     queue_ticket: str | None = Field(default=None, max_length=40)
     agent: str | None = None
+
+
+# ------------------------------------------------------------- v3.28 R3.2
+
+
+class RetrievalEvalRequest(StrictModel):
+    dataset: str = Field(default="v1", max_length=64)
+    k: list[int] = Field(default_factory=lambda: [10, 50], min_length=1, max_length=5)
+
+
+class RetrievalGateRequest(StrictModel):
+    baseline: dict[str, Any]
+    result: dict[str, Any]
+    metric: str = Field(default="recall@50", max_length=32)
+    max_drop: float = Field(default=0.03, ge=0, le=1)
+
+
+class AttestationSubject(StrictModel):
+    token_id: str | None = Field(default=None, max_length=40)
+    doc_id: str | None = Field(default=None, max_length=256)
+    version: int | None = Field(default=None, ge=1)
+
+
+class AttestationRequest(StrictModel):
+    subject: AttestationSubject
+    audience: str = Field(min_length=1, max_length=256)
+    ttl_seconds: int = Field(default=900, ge=1, le=900)

@@ -159,7 +159,9 @@ do not edit by hand. Every error body is
 | `invalid_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `lease_conflict` | 409 | `abandon` | `abandon_and_release_local_state` | Another agent holds the lease; do not preempt. |
 | `lease_lost` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
+| `lineage_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | This subject has no signed lineage; give up. |
 | `link_exists` | 409 | `abandon` | `abandon_and_release_local_state` | The link already exists. |
+| `nothing_to_probe` | 409 | `abandon` | `abandon_and_release_local_state` | Write and index documents first. |
 | `proposal_not_pending` | 409 | `abandon` | `abandon_and_release_local_state` | The proposal was already decided. |
 | `queue_ticket_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Call acquire_resource again to re-queue. |
 | `request_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
