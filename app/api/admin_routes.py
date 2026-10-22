@@ -5,7 +5,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import Response
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import services
@@ -41,6 +43,7 @@ from app.schemas import (
     DocumentVerifyRequest,
     DocumentVersionListResponse,
     DocumentVersionOut,
+    ExportRequest,
     ExternalActionCompensateRequest,
     ExternalActionListResponse,
     ExternalActionOut,
@@ -86,6 +89,7 @@ from app.schemas import (
     WorkspaceStatsResponse,
 )
 from app.services import budget as budget_service
+from app.services import exports as export_service
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
 from app.services.timeline import list_timeline
@@ -1217,6 +1221,67 @@ async def set_budget_limits(
     scope_id = await _budget_scope(session, scope_kind, scope_id)
     return await budget_service.set_limits(
         scope_kind, scope_id, body.model_dump(), updated_by="admin"
+    )
+
+
+# ---------------------------------------------------------------- exports
+
+
+async def _tenant_principal(session: AsyncSession, tenant_id: str):
+    await tenant_service.describe_tenant(session, tenant_id)
+    workspace_id = await session.scalar(
+        text("SELECT id FROM workspaces WHERE tenant_id = :tenant ORDER BY created_at LIMIT 1"),
+        {"tenant": tenant_id},
+    )
+    if workspace_id is None:
+        raise ApiError(409, "invalid_transition", "the tenant has no workspace to export",
+                       details={"tenant": tenant_id})
+    return principal_for_admin(await services.get_workspace(session, workspace_id))
+
+
+@router.post(
+    "/tenants/{tenant_id}/exports",
+    status_code=202,
+    summary="Export a tenant (and its subtree) from the console (AG-ST-02)",
+)
+async def admin_create_export(
+    tenant_id: str, body: ExportRequest, session: AsyncSession = Depends(get_db)
+) -> dict:
+    principal = await _tenant_principal(session, tenant_id)
+    values = body.model_dump()
+    if values["scope"] == "tenant":
+        values["scope_ref"] = tenant_id
+    return await export_service.request_export(principal, **values)
+
+
+@router.get("/exports/{export_id}", summary="Any export's status")
+async def admin_get_export(export_id: str) -> dict:
+    return await export_service.get_export_any(export_id)
+
+
+@router.get("/exports/{export_id}/download", summary="Any export's archive")
+async def admin_download_export(export_id: str) -> Response:
+    data, row = await export_service.download(None, export_id)
+    return Response(content=data, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{export_id}.zip"',
+        "X-Manifest-SHA256": row["manifest_sha256"] or "",
+    })
+
+
+@router.post(
+    "/imports",
+    status_code=201,
+    summary="Import an archive as a new tenant, into a tenant, or as an increment",
+)
+async def admin_import(
+    request: Request,
+    target: str = Query(default="new_tenant", pattern="^(new_workspace|new_tenant|increment)$"),
+    verify: bool = Query(default=True),
+    into_tenant: str | None = Query(default=None, max_length=40),
+) -> dict:
+    data = await request.body()
+    return await export_service.import_archive(
+        None, data, target=target, verify=verify, into_tenant_id=into_tenant
     )
 
 

@@ -173,7 +173,8 @@ E:\Codes\AgentGraph\
 │       ├── v3_12_budget.sql              # embedding 计量、令牌桶、熔断（AG-ST-15 影子模式）
 │       ├── v3_13_async_index.sql         # 异步索引任务与状态（AG-ST-13）
 │       ├── v3_14_budget_enforce.sql      # 强制退避、配额覆盖（工作区/租户）（AG-ST-15 拦截）
-│       └── v3_15_leases.sql              # 统一租约、fencing token、孤儿计数、assignee（AG-CO-03）
+│       ├── v3_15_leases.sql              # 统一租约、fencing token、孤儿计数、assignee（AG-CO-03）
+│       └── v3_16_exports.sql             # 导出任务、导出包、导入记录（AG-ST-02）
 │
 ├── dashboard/
 │   ├── package.json                      # Next.js 14.2 / React 18 / react-markdown

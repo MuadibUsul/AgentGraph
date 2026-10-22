@@ -840,6 +840,21 @@ class TransferResponsibilitiesResponse(BaseModel):
     skipped: dict[str, str] = Field(default_factory=dict)
 
 
+class ExportRequest(StrictModel):
+    scope: Literal["tenant", "workspace", "namespace"] = "tenant"
+    scope_ref: str | None = Field(
+        default=None, max_length=256,
+        description="tenant id (tenant scope, default yours) or namespace (namespace scope)",
+    )
+    since_export_id: str | None = Field(
+        default=None, max_length=40, description="Export only what changed since this export"
+    )
+    include_history: bool = True
+    include_subtree: bool = True
+    include: list[Literal["documents", "versions", "doc_edges", "grants", "events",
+                          "audit_log"]] | None = None
+
+
 class TaskContextResponse(BaseModel):
     task: TaskOut
     lease: LeaseOut | None = None

@@ -224,7 +224,10 @@ _DELETING_ALLOWED = frozenset(
         "/v1/auth/logout",
     }
 )
-_SUSPENDED_ALLOWED_WRITES = frozenset({"/v1/auth/logout", "/v1/auth/password"})
+# A suspended tenant keeps reading and exporting (AG-ID-07 point 8).
+_SUSPENDED_ALLOWED_WRITES = frozenset(
+    {"/v1/auth/logout", "/v1/auth/password", "/v1/exports"}
+)
 
 
 def is_write_request(method: str, path: str) -> bool:

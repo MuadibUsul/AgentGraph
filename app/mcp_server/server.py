@@ -57,6 +57,7 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
+from app.services import exports as export_service
 from app.services import idempotency, indexer
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
@@ -1396,6 +1397,61 @@ async def list_leases(
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="export_workspace")
+async def export_workspace(
+    scope: Literal["tenant", "workspace", "namespace"] = "tenant",
+    scope_ref: str | None = None,
+    since_export_id: str | None = None,
+    include_history: bool = True,
+    include_subtree: bool = True,
+    include: list[Literal["documents", "versions", "doc_edges", "grants", "events",
+                          "audit_log"]] | None = None,
+) -> dict[str, Any]:
+    """Start an export in the agentgraph-export/1 storage format; poll get_export.
+
+    Needs the workspace key (workspace or namespace scope), a human owner or the
+    admin console: agent tokens are not granted export. since_export_id makes an
+    incremental export that, applied after its base, equals a full export.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        result = await export_service.request_export(
+            principal, scope=scope, scope_ref=scope_ref, since_export_id=since_export_id,
+            include_history=include_history, include_subtree=include_subtree, include=include,
+        )
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_export")
+async def get_export(export_id: str) -> dict[str, Any]:
+    """Export status, progress, counts, seq range, manifest_sha256 and download_url."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        result = await export_service.get_export(principal, export_id)
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_exports")
+async def list_exports(
+    scope: Literal["tenant", "workspace", "namespace"] | None = None,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """Exports of your tenant, newest first."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        result = await export_service.list_exports(principal, scope=scope, cursor=cursor)
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+    return _compact(result)
 
 
 @mcp.tool(name="get_usage")

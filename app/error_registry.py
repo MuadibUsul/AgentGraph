@@ -165,6 +165,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     ),
     "tenant_has_children": _spec(409, FIX_REQUEST, "Fix the request per details."),
     "batch_too_large": _spec(413, FIX_REQUEST, "Split the batch per details."),
+    "payload_too_large": _spec(413, FIX_REQUEST, "Send a smaller archive (details.limit_bytes)."),
     "content_too_large": _spec(
         413, FIX_REQUEST, "Split into parts (details.action).", "split_into_parts"
     ),
@@ -273,6 +274,9 @@ REGISTRY: dict[str, ErrorSpec] = {
     "already_registered": _spec(409, ABANDON, "Give up this action."),
     "document_archived": _spec(409, ABANDON, "Give up, or ask for restore_document."),
     "id_collision": _spec(409, ABANDON, "Abort the import or import into a new tenant."),
+    "increment_out_of_order": _spec(
+        409, FIX_REQUEST, "Import details.prev_export_id first, then this increment."
+    ),
     "invalid_transition": _spec(409, ABANDON, "Give up this action."),
     "invalid_state_transition": _spec(409, ABANDON, "Re-read the task; give up this action."),
     "lease_lost": _spec(409, ABANDON, "Drop local state and claim again."),
@@ -325,6 +329,7 @@ REGISTRY: dict[str, ErrorSpec] = {
 
 # Soft-constraint warnings (PRD §6 warnings[]): never errors, never rejections.
 WARNING_CODES: dict[str, str] = {
+    "secrets_not_imported": "Imported tokens must be rotated and users must reset passwords.",
     "alias_redirected": "Read through a renamed alias; use the current alias or id.",
     "legacy_alias": "Address predates the grammar; accepted, but 2026-11 rejects new ones.",
     "dangling_ref": "A $ref or part does not resolve; stored as written.",
