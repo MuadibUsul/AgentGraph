@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,7 @@ from app.models import (
     TaskStatus,
     TimelineStream,
     Workspace,
+    WorkspaceEvent,
 )
 from app.schemas import (
     AdminWorkspaceOut,
@@ -59,6 +60,7 @@ from app.services.common import (
 )
 from app.services.lineage import snapshot_token
 from app.stamp_context import current_stamp
+from app.versioning import LATEST_VERSION, at_least
 
 settings = get_settings()
 
@@ -139,9 +141,29 @@ async def workspace_map(
     since: str | None = None,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    namespaces: list[str] | None = None,
+    include_archived: bool = False,
+    limit: int | None = None,
+    page_cursor: str | None = None,
 ) -> WorkspaceMapResponse:
+    """L0 map, or (since=<event cursor>) the changes after it (PRD AG-EV-01 point 5).
+
+    ``sync_cursor`` is read before anything else, so a change that lands while
+    the map is built is reported again by the next ``since`` call rather than
+    lost. Event cursors from poll_events are accepted as ``since``.
+    """
+    from app.services import events as event_service
+
     require_permission(principal, "workspace:read")
     workspace_id = principal.workspace.id
+    head = await event_service.current_seq(session, workspace_id)
+    event_since = event_service.decode_cursor(since)
+    if event_since is not None:
+        return await _sync_changes(
+            session, principal, event_since, head,
+            namespaces=namespaces, include_archived=include_archived,
+        )
+    limit = min(limit or settings.max_workspace_map_items, 2_000)
     cursor_time = min(_decode_sync_cursor(since), utcnow()) if since else None
     allowed = (
         principal.allowed_namespaces
@@ -174,10 +196,19 @@ async def workspace_map(
         .group_by(SharedDocument.namespace),
         SharedDocument.namespace,
     )
-    if cursor_time is None:
+    if cursor_time is None and not include_archived:
         docs_query = docs_query.where(SharedDocument.archived_at.is_(None))
-    else:
+    elif cursor_time is not None:
         docs_query = docs_query.where(SharedDocument.updated_at > cursor_time)
+    if namespaces:
+        docs_query = docs_query.where(SharedDocument.namespace.in_(namespaces))
+    if page_cursor:
+        from app.services.documents import _decode_cursor
+
+        page_time, page_id = _decode_cursor(page_cursor)
+        docs_query = docs_query.where(
+            tuple_(SharedDocument.updated_at, SharedDocument.id) < tuple_(page_time, page_id)
+        )
     visibility = _document_visibility(
         principal,
         include_unverified=include_unverified,
@@ -189,11 +220,16 @@ async def workspace_map(
         doc_namespace_query = doc_namespace_query.where(condition)
     documents = (
         await session.execute(
-            docs_query.order_by(SharedDocument.updated_at.desc()).limit(
-                settings.max_workspace_map_items
-            )
+            docs_query.order_by(SharedDocument.updated_at.desc(), SharedDocument.id.desc())
+            .limit(limit + 1)
         )
     ).scalars().all()
+    next_page_cursor = None
+    if len(documents) > limit:
+        from app.services.documents import _encode_cursor
+
+        documents = documents[:limit]
+        next_page_cursor = _encode_cursor(documents[-1].updated_at, documents[-1].id)
     document_count = int(await session.scalar(doc_count_query) or 0)
     document_namespaces = {
         namespace: int(count)
@@ -336,15 +372,75 @@ async def workspace_map(
             for task in tasks
             if task.status in (TaskStatus.DONE, TaskStatus.FAILED)
         ],
-        namespace_counts={
-            "documents": document_namespaces,
-            "tasks": task_namespaces,
-            "slots": slot_namespaces,
-        },
+        namespace_counts=(
+            await event_service.namespace_counts(session, principal)
+            if at_least(LATEST_VERSION)
+            else {
+                "documents": document_namespaces,
+                "tasks": task_namespaces,
+                "slots": slot_namespaces,
+            }
+        ),
         incremental=cursor_time is not None,
         since=since,
         next_cursor=_encode_sync_cursor(cursor_point or utcnow()),
+        sync_cursor=event_service.encode_cursor(head),
+        next_page_cursor=next_page_cursor,
         timeline=timeline,
+    )
+
+
+async def _sync_changes(
+    session: AsyncSession,
+    principal: Principal,
+    since_seq: int,
+    head: int,
+    *,
+    namespaces: list[str] | None,
+    include_archived: bool,
+) -> WorkspaceMapResponse:
+    """Changes after an event cursor: each document once, at its latest state."""
+    from app.services import events as event_service
+
+    changes = await event_service.document_changes(
+        session, principal, since_seq, namespaces=namespaces, include_archived=include_archived,
+    )
+    changed_tasks = (
+        await session.execute(
+            select(CollabTask).where(
+                CollabTask.workspace_id == principal.workspace.id,
+                CollabTask.id.in_(
+                    select(WorkspaceEvent.record_id).where(
+                        WorkspaceEvent.workspace_id == principal.workspace.id,
+                        WorkspaceEvent.seq > since_seq,
+                        WorkspaceEvent.seq <= head,
+                        WorkspaceEvent.source_table == "collab_tasks",
+                    )
+                ),
+                *([CollabTask.namespace.in_(namespaces)] if namespaces else []),
+            )
+        )
+    ).scalars().all()
+    readable = (
+        None if principal.is_commander or "*" in principal.allowed_namespaces
+        else set(principal.allowed_namespaces)
+    )
+    tasks = [task for task in changed_tasks if readable is None or task.namespace in readable]
+    return WorkspaceMapResponse(
+        workspace=workspace_info(principal.workspace),
+        role=principal.role.value,
+        counts={"documents": len(changes), "tasks": len(tasks), "slots": 0},
+        task_statuses=[status.value for status in TaskStatus],
+        roles=[role.value for role in AgentRole],
+        tasks=[task_summary(task) for task in tasks],
+        slots=[],
+        documents=[],
+        changes=changes,
+        namespace_counts=await event_service.namespace_counts(session, principal),
+        incremental=True,
+        since=event_service.encode_cursor(since_seq),
+        next_cursor=event_service.encode_cursor(head),
+        sync_cursor=event_service.encode_cursor(head),
     )
 
 

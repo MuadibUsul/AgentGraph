@@ -65,6 +65,7 @@ from app.schemas import (
     SlotOut,
     SlotPatchRequest,
     SlotReplaceRequest,
+    SubscriptionRequest,
     TaskActionResponse,
     TaskClaimRequest,
     TaskContextResponse,
@@ -86,6 +87,7 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
+from app.services import events as event_service
 from app.services import exports as export_service
 from app.services import indexer
 from app.services import leases as lease_service
@@ -145,10 +147,19 @@ async def whoami(principal: Principal = Depends(get_principal)) -> WhoAmIRespons
     response_model=WorkspaceMapResponse,
     summary="L0 workspace map: tasks, slot/doc tree, enums (no raw payloads)",
 )
+@router.get(
+    "/sync",
+    response_model=WorkspaceMapResponse,
+    summary="Map (since=null) or changes after an event cursor (AG-EV-01)",
+)
 async def workspace_map(
     since: str | None = Query(default=None),
     include_unverified: bool = Query(default=False),
     include_tainted: bool = Query(default=False),
+    namespaces: list[str] | None = Query(default=None),
+    include_archived: bool = Query(default=False),
+    limit: int | None = Query(default=None, ge=1, le=2_000),
+    page_cursor: str | None = Query(default=None),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> WorkspaceMapResponse:
@@ -158,7 +169,67 @@ async def workspace_map(
         since=since,
         include_unverified=include_unverified,
         include_tainted=include_tainted,
+        namespaces=namespaces,
+        include_archived=include_archived,
+        limit=limit,
+        page_cursor=page_cursor,
     )
+
+
+@router.get(
+    "/events",
+    summary="poll_events: events after a cursor, optionally waiting up to 25 s (AG-EV-01)",
+)
+async def poll_events(
+    cursor: str | None = Query(default=None, max_length=256),
+    subscription_id: str | None = Query(default=None, max_length=40),
+    types: list[str] | None = Query(default=None),
+    namespaces: list[str] | None = Query(default=None),
+    for_me: bool = Query(default=False),
+    written_by_subtree: str | None = Query(default=None, max_length=40),
+    wait_seconds: int = Query(default=0, ge=0, le=100),
+    limit: int = Query(default=100, ge=1, le=100_000),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    # A long poll must not hold this request's connection while it waits.
+    await session.close()
+    return await event_service.poll_events(
+        principal, cursor=cursor, subscription_id=subscription_id, types=types,
+        namespaces=namespaces, for_me=for_me, written_by_subtree=written_by_subtree,
+        wait_seconds=wait_seconds, limit=limit,
+    )
+
+
+@router.post("/subscriptions", status_code=201,
+             summary="Subscribe to namespace/doc_key prefixes (AG-EV-02)")
+async def subscribe(
+    body: SubscriptionRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await event_service.subscribe(
+        session, principal, prefixes=body.prefixes, types=body.types, name=body.name
+    )
+
+
+@router.get("/subscriptions", summary="Your subscriptions")
+async def list_subscriptions(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await event_service.list_subscriptions(session, principal)
+
+
+@router.delete("/subscriptions/{subscription_id}", status_code=204,
+               summary="Remove a subscription")
+async def delete_subscription(
+    subscription_id: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    await event_service.delete_subscription(session, principal, subscription_id)
+    return Response(status_code=204)
 
 
 @router.get(

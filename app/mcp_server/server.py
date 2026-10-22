@@ -57,6 +57,7 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
+from app.services import events as event_service
 from app.services import exports as export_service
 from app.services import idempotency, indexer
 from app.services import leases as lease_service
@@ -565,8 +566,17 @@ async def workspace_sync(
     since: str | None = None,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    namespaces: list[str] | None = None,
+    include_archived: bool = False,
+    limit: Annotated[int | None, Field(ge=1, le=2_000)] = None,
+    page_cursor: str | None = None,
 ) -> dict[str, Any]:
     """Load the L0 blackboard map without raw document/state payloads.
+
+    For humans and cold starts. Agents normally subscribe + poll_events instead.
+    Every response carries sync_cursor (an event cursor). since=<sync_cursor or a
+    poll_events cursor> returns only changes: each changed document once, at
+    its latest version, as {op: upsert|archive|restore|purge, ...}.
 
     Returns workspace counts, task cards (IDs/status/role/lease), an ``outputs``
     list with completed task artifact URIs and handoff summaries, slot keys and
@@ -588,6 +598,10 @@ async def workspace_sync(
                 since=since,
                 include_unverified=include_unverified,
                 include_tainted=include_tainted,
+                namespaces=namespaces,
+                include_archived=include_archived,
+                limit=limit,
+                page_cursor=page_cursor,
             )
         except ApiError as exc:
             raise _api_error(exc) from exc
@@ -1452,6 +1466,82 @@ async def list_exports(
     except ApiError as exc:
         raise _api_error(exc) from exc
     return _compact(result)
+
+
+@mcp.tool(name="poll_events")
+async def poll_events(
+    cursor: str | None = None,
+    subscription_id: str | None = None,
+    types: list[str] | None = None,
+    namespaces: list[str] | None = None,
+    for_me: bool = False,
+    written_by_subtree: str | None = None,
+    wait_seconds: Annotated[int, Field(ge=0, le=25)] = 0,
+    limit: Annotated[int, Field(ge=1, le=500)] = 100,
+) -> dict[str, Any]:
+    """Events after cursor (pointers only, no bodies), waiting up to wait_seconds.
+
+    cursor=null starts at the current position (no replay). Pass next_cursor
+    back each time. Delivery is at least once: deduplicate by event_id. seq is
+    gap-free per workspace. types accepts prefixes (doc.*). for_me returns events
+    whose targets include you. With subscription_id the subscription's prefixes
+    apply, plus every event addressed to you. A cursor older than retention
+    returns cursor_expired: resync with workspace_sync(since=null).
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        result = await event_service.poll_events(
+            principal, cursor=cursor, subscription_id=subscription_id, types=types,
+            namespaces=namespaces, for_me=for_me, written_by_subtree=written_by_subtree,
+            wait_seconds=wait_seconds, limit=limit,
+        )
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="subscribe")
+async def subscribe(
+    prefixes: Annotated[list[str], Field(max_length=50)],
+    types: list[str] | None = None,
+    name: str = "default",
+) -> dict[str, Any]:
+    """Subscribe to namespace/ or namespace/doc_key_prefix; returns subscription_id and
+    a cursor for poll_events(subscription_id=..., cursor=...). Same name replaces."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await event_service.subscribe(
+                session, principal, prefixes=prefixes, types=types, name=name
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_subscriptions")
+async def list_subscriptions() -> dict[str, Any]:
+    """Your subscriptions, including the default one from get_orientation."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await event_service.list_subscriptions(session, principal)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="unsubscribe")
+async def unsubscribe(subscription_id: str) -> dict[str, Any]:
+    """Remove one of your subscriptions."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            await event_service.delete_subscription(session, principal, subscription_id)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return {"ok": True, "subscription_id": subscription_id}
 
 
 @mcp.tool(name="get_usage")

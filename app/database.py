@@ -203,6 +203,7 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.14.0", _MIGRATIONS_DIR / "v3_14_budget_enforce.sql"),
     ("3.15.0", _MIGRATIONS_DIR / "v3_15_leases.sql"),
     ("3.16.0", _MIGRATIONS_DIR / "v3_16_exports.sql"),
+    ("3.17.0", _MIGRATIONS_DIR / "v3_17_events.sql"),
 ]
 
 
@@ -347,6 +348,9 @@ async def apply_schema() -> None:
                 "ON CONFLICT (version) DO NOTHING",
                 version,
             )
+        # Current function definitions win over the ones older migrations set.
+        for path in sorted((root / "sql" / "functions").glob("*.sql")):
+            await conn.execute(path.read_text(encoding="utf-8"))
         logger.info(
             "database schema is up to date (v%s)", _INCREMENTAL_MIGRATIONS[-1][0]
         )

@@ -402,6 +402,7 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
     RoleScope.COMMANDER: {"*"},
     RoleScope.VIEWER: {
         "workspace:read",
+        "events:read",
         "state:read",
         "task:read",
         "doc:read",
@@ -412,6 +413,7 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
     },
     RoleScope.SCOUT: {
         "workspace:read",
+        "events:read",
         "task:read",
         "doc:read",
         "doc:create",
@@ -422,6 +424,7 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
     },
     RoleScope.ANALYST: {
         "workspace:read",
+        "events:read",
         "state:read",
         "task:read",
         "task:create",
@@ -443,6 +446,7 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
     },
     RoleScope.AUDITOR: {
         "workspace:read",
+        "events:read",
         "state:read",
         "task:read",
         "task:claim",
@@ -464,6 +468,7 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
     },
     RoleScope.EXECUTOR: {
         "workspace:read",
+        "events:read",
         "state:read",
         "state:write",
         "task:read",

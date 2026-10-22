@@ -42,7 +42,8 @@ DEFAULT_MAX_BYTES = 32_768
 MAX_MAX_BYTES = 131_072
 SECTIONS = (
     "server", "me", "constitution", "namespace_map", "collaborators", "my_tasks",
-    "claimable_tasks", "required_reading", "inbox", "conventions", "next_calls", "warnings",
+    "claimable_tasks", "required_reading", "inbox", "conventions", "events", "next_calls",
+    "warnings",
 )
 _OPEN = (TaskStatus.DONE, TaskStatus.FAILED)
 
@@ -434,6 +435,15 @@ async def build(
         "claimable_tasks": claimable,
         "inbox": await _inbox(session, principal),
         "conventions": _conventions(principal),
+    }
+    # AG-EV-02 point 3: every principal starts subscribed to what it may read.
+    from app.services import events as event_service
+
+    subscription = await event_service.default_subscription(session, principal)
+    pack["events"] = {
+        "default_subscription": subscription,
+        "how": "poll_events(subscription_id, cursor, wait_seconds=25); "
+               "dedupe by event_id; pass next_cursor back",
     }
     pack["required_reading"] = _required_reading(constitution, namespace_map, my_tasks)
     writable = [

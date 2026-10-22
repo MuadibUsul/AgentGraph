@@ -174,7 +174,9 @@ E:\Codes\AgentGraph\
 │       ├── v3_13_async_index.sql         # 异步索引任务与状态（AG-ST-13）
 │       ├── v3_14_budget_enforce.sql      # 强制退避、配额覆盖（工作区/租户）（AG-ST-15 拦截）
 │       ├── v3_15_leases.sql              # 统一租约、fencing token、孤儿计数、assignee（AG-CO-03）
-│       └── v3_16_exports.sql             # 导出任务、导出包、导入记录（AG-ST-02）
+│       ├── v3_16_exports.sql             # 导出任务、导出包、导入记录（AG-ST-02）
+│       └── v3_17_events.sql              # 事件 seq（提交时分配）、类型化事件、订阅（AG-EV-01/02）
+│   └── functions/                        # 每次启动在迁移之后应用的当前函数定义（如 notify_workspace_change）
 │
 ├── dashboard/
 │   ├── package.json                      # Next.js 14.2 / React 18 / react-markdown

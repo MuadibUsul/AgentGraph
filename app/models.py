@@ -821,11 +821,59 @@ class WorkspaceEvent(Base):
         DateTime(timezone=True), nullable=False, default=utcnow,
         server_default=func.now(),
     )
+    # AG-EV-01: per-workspace gap-free seq, assigned at commit (commit order).
+    seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    event_id: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=FetchedValue()
+    )
+    type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    targets: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    refs: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    summary: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    shard_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue()
+    )
 
     __table_args__ = (
         Index("idx_workspace_events_cursor", "workspace_id", "id"),
         Index("idx_workspace_events_time", "created_at"),
     )
+
+
+class EventSubscription(Base):
+    """Server-side prefix subscription (PRD AG-EV-02)."""
+
+    __tablename__ = "event_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, server_default=FetchedValue())
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=FetchedValue()
+    )
+    owner: Mapped[str] = mapped_column(String(128), nullable=False)
+    owner_token_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    prefixes: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    types: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+    last_polled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class DocumentChunk(Base):

@@ -50,6 +50,10 @@ Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.
 - `export_workspace`: Export in the storage format (owner/workspace key; agents need a grant).
 - `get_export`: Export status and download link.
 - `list_exports`: Exports of your tenant.
+- `poll_events`: Events after a cursor; long-poll up to 25 s; dedupe by event_id.
+- `subscribe`: Subscribe to namespace/doc_key prefixes for poll_events.
+- `list_subscriptions`: Your subscriptions (one default from get_orientation).
+- `unsubscribe`: Remove a subscription.
 - `get_api_docs`: This guide by section.
 
 ## Which read to use

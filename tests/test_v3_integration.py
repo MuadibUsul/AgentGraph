@@ -713,6 +713,10 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         "export_workspace",
                         "get_export",
                         "list_exports",
+                        "poll_events",
+                        "subscribe",
+                        "list_subscriptions",
+                        "unsubscribe",
                         "get_api_docs",
                     }
                     sync = await session.call_tool("workspace_sync", {})
@@ -1103,6 +1107,10 @@ async def test_dashboard_root_and_openapi(client):
         "export_workspace",
         "get_export",
         "list_exports",
+        "poll_events",
+        "subscribe",
+        "list_subscriptions",
+        "unsubscribe",
         "propose_document_change",
         "vote_on_proposal",
         "list_document_proposals",

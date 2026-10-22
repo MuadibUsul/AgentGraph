@@ -19,6 +19,7 @@ from app.schemas import (
     REVIEW_APPROVE_STATUSES,
     REVIEW_REJECT_STATUSES,
 )
+from app.services.events import event_type_catalog
 
 settings = get_settings()
 
@@ -63,6 +64,10 @@ PRIMITIVES: dict[str, str] = {
     "export_workspace": "Export in the storage format (owner/workspace key; agents need a grant).",
     "get_export": "Export status and download link.",
     "list_exports": "Exports of your tenant.",
+    "poll_events": "Events after a cursor; long-poll up to 25 s; dedupe by event_id.",
+    "subscribe": "Subscribe to namespace/doc_key prefixes for poll_events.",
+    "list_subscriptions": "Your subscriptions (one default from get_orientation).",
+    "unsubscribe": "Remove a subscription.",
     "get_api_docs": "This guide by section.",
 }
 
@@ -207,7 +212,9 @@ def sections() -> dict[str, Any]:
         "retry": RETRY_POLICY,
         "errors": registry_table(),
         "events": {
-            "delivery": "at least once; deduplicate by event_id; resume with seq",
+            **event_type_catalog(),
+            "poll": "poll_events / GET /v1/events (long-poll up to 25 s)",
+            "subscribe": "subscribe / POST /v1/subscriptions (namespace/ prefixes)",
             "stream": "GET /v1/stream (SSE), replay with Last-Event-ID",
             "actor_stamp": "each event carries the writer's lineage stamp",
         },

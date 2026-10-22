@@ -840,6 +840,16 @@ class TransferResponsibilitiesResponse(BaseModel):
     skipped: dict[str, str] = Field(default_factory=dict)
 
 
+class SubscriptionRequest(StrictModel):
+    prefixes: list[str] = Field(
+        default_factory=list, max_length=50,
+        description="namespace/ or namespace/doc_key_prefix; empty means all you can read",
+    )
+    types: list[str] | None = Field(default=None, max_length=50,
+                                    description="Event types, prefix with * (doc.*)")
+    name: str = Field(default="default", min_length=1, max_length=128)
+
+
 class ExportRequest(StrictModel):
     scope: Literal["tenant", "workspace", "namespace"] = "tenant"
     scope_ref: str | None = Field(
@@ -1172,10 +1182,25 @@ class WorkspaceMapResponse(BaseModel):
     documents: list[DocumentSummary]
     outputs: list[WorkspaceOutput] = Field(default_factory=list)
     artifact_uri_scheme: str = "doc://<doc_key>"
-    namespace_counts: dict[str, dict[str, int]] = Field(default_factory=dict)
+    namespace_counts: dict[str, dict[str, int]] | list[dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Under 2026-11 a list of {namespace, documents, archived, unverified, "
+        "tainted, last_updated_at} (exact counts)",
+    )
     incremental: bool = False
     since: str | None = None
     next_cursor: str | None = None
+    sync_cursor: str | None = Field(
+        default=None, description="Event cursor (seq) for since= or poll_events(cursor=)"
+    )
+    next_page_cursor: str | None = Field(
+        default=None, description="More documents in the map; pass as page_cursor"
+    )
+    changes: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="since=<event cursor>: each changed document once, latest state, op "
+        "upsert|archive|restore|purge",
+    )
     timeline: list[dict[str, Any]] = Field(default_factory=list)
 
 
