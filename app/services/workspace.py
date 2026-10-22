@@ -554,7 +554,7 @@ SELECT
 
 
 async def create_workspace(
-    session: AsyncSession, *, name: str, tier: str
+    session: AsyncSession, *, name: str, tier: str, tenant_id: str | None = None
 ) -> WorkspaceCreatedResponse:
     raw_key = generate_api_key()
     workspace = Workspace(
@@ -562,8 +562,12 @@ async def create_workspace(
         api_key_hash=hash_api_key(raw_key),
         tier=tier,
     )
+    if tenant_id is not None:
+        workspace.tenant_id = tenant_id
     session.add(workspace)
     await session.flush()
+    # The tenant (and canonical id) are assigned by database triggers.
+    await session.refresh(workspace)
     from app.services.onboarding import scaffold_new_workspace
 
     await scaffold_new_workspace(session, workspace.id)

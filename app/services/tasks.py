@@ -59,8 +59,8 @@ from app.schemas import (
     TaskRenewRequest,
     TaskReviewRequest,
 )
+from app.services import access_log, agent_onboarding
 from app.services import addresses as address_service
-from app.services import agent_onboarding
 from app.services import leases as lease_service
 from app.services.common import (
     append_event,
@@ -507,6 +507,7 @@ async def list_tasks(
     return TaskListResponse(items=[task_summary(task) for task in tasks])
 
 
+@access_log.reads("task")
 async def get_task(
     session: AsyncSession, principal: Principal, task_key: str
 ) -> TaskOut:
@@ -516,6 +517,7 @@ async def get_task(
     return task_out(task)
 
 
+@access_log.reads("task")
 @agent_onboarding.records("task_claim")
 @_task_failure_event("CLAIM")
 async def claim_task(

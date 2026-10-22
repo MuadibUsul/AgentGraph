@@ -299,6 +299,11 @@ async def get_principal(
     from app.stamp_context import set_current_stamp
 
     set_current_stamp(await stamp_for(principal))
+    from app.services.access_log import note_request
+    from app.stamp_context import current_stamp
+
+    note_request(principal.workspace.id, current_stamp(),
+                 write=is_write_request(request.method, request.url.path))
     await activate_tenant(session, principal.workspace.id, principal.tenant_scope)
     from app.services.common import set_audit_actor
     from app.services.usage import enforce_rate_limit

@@ -86,6 +86,21 @@ async def lifespan(app: FastAPI):
         external_action_loop(), name="agentgraph-external-action-dispatcher"
     )
     index_task = asyncio.create_task(index_worker_loop(), name="agentgraph-index-worker")
+    from app.services.access_log import flush as flush_access_log
+    from app.services.access_log import flush_loop as access_log_loop
+    from app.services.backups import backup_scheduler_loop
+    from app.services.incidents import incident_check_loop
+    from app.services.mailer import mail_worker_loop
+
+    background = [
+        asyncio.create_task(access_log_loop(), name="agentgraph-access-log"),
+        asyncio.create_task(mail_worker_loop(), name="agentgraph-mailer"),
+        asyncio.create_task(incident_check_loop(), name="agentgraph-incident-sla"),
+    ]
+    if settings.backup_dir and settings.backup_scheduler_enabled:
+        background.append(
+            asyncio.create_task(backup_scheduler_loop(), name="agentgraph-backups")
+        )
     try:
         if settings.mcp_enabled:
             async with mcp.session_manager.run():
@@ -98,11 +113,14 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
-        for task in (reaper_task, webhook_task, action_task, index_task):
+        tasks = (reaper_task, webhook_task, action_task, index_task, *background)
+        for task in tasks:
             task.cancel()
-        for task in (reaper_task, webhook_task, action_task, index_task):
+        for task in tasks:
             with suppress(asyncio.CancelledError):
                 await task
+        with suppress(Exception):
+            await flush_access_log()
         await event_bus.stop()
         await close_embedding_provider()
         await engine.dispose()
@@ -414,8 +432,17 @@ async def root(request: Request) -> Any:
 
 
 @app.get("/healthz", tags=["Health"], summary="Liveness probe")
-async def healthz() -> dict[str, str]:
-    return {"status": "ok", "version": settings.app_version}
+async def healthz() -> dict[str, Any]:
+    payload: dict[str, Any] = {"status": "ok", "version": settings.app_version}
+    # AG-ST-10: timestamps only (no backup details without authentication).
+    from app.services.backups import health_timestamps
+
+    try:
+        stamps = await asyncio.wait_for(health_timestamps(), timeout=2)
+    except Exception:  # noqa: BLE001 - liveness never fails on this
+        stamps = {"last_backup_at": None, "last_restore_drill_at": None}
+    payload.update({key: value.isoformat() if value else None for key, value in stamps.items()})
+    return payload
 
 
 @app.get("/readyz", tags=["Health"], summary="Readiness probe")

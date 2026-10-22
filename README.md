@@ -740,6 +740,49 @@ docs/PROJECT_ARCHITECTURE.md  Chinese project architecture & path guide
 scripts/smoke_test.py      deployment smoke test
 ```
 
+## Backups, restores and incident response
+
+**Backups (AG-ST-10).** With `BACKUP_DIR` set, a scheduler takes a full backup
+daily and an incremental every 15 minutes (`BACKUP_INTERVAL_MINUTES`), one
+archive per root tenant in the export format, plus a manifest, kept 30 days.
+Every run is re-read and hash-checked (`verified_at`). Put `BACKUP_DIR` on
+storage other than the database disk, or set `BACKUP_UPLOAD_COMMAND` (for
+example `rclone copy {path} remote:agentgraph`). PostgreSQL WAL archiving
+(`PG_ARCHIVE_MODE=on` in the production compose) adds physical PITR; its state
+is reported with the backups.
+
+| Endpoint (admin) | Purpose |
+|---|---|
+| `GET/POST /v1/admin/backups` | List (with WAL state) / take a backup now |
+| `POST /v1/admin/restore` | `backup_id` or `point_in_time` → `staging` (default), `new_workspace`, or `in_place` with `confirm=<tenant_id>` |
+| `GET /v1/admin/restores/{id}` | Restore status and result |
+| `GET/POST /v1/admin/restore-drills` | Drills restore the latest chain into `STAGING_DATABASE_URL` and compare document counts and a sha256 sample of 100 |
+
+Restores never overwrite production by default: staging is a separate database
+(refused if it points at production), `new_workspace` keeps ids and fails with
+`id_collision` next to a live copy, and `in_place` takes a pre-restore export,
+keeps existing passwords and needs explicit confirmation. A drill runs monthly;
+a failed drill raises a critical operator alert. `GET /healthz` reports
+`last_backup_at` and `last_restore_drill_at` (timestamps only).
+
+**Security incidents (AG-TC-06).** Platform admins open an incident, resolve its
+scope from the per-token access log (reads), lineage stamps (writes) and object
+ownership, confirm it (the 72-hour clock starts), and send notices:
+
+`POST /v1/admin/incidents` → `/{id}/scope` → `/{id}/confirm` → `/{id}/notices`
+(`dry_run` previews to the operator only) → `/{id}/updates` → `GET /{id}/record`.
+
+Notices go to every affected node's owners (inherited from ancestors), the
+root's owners and the root's security contacts (`PUT /v1/human/tenant/security-contacts`),
+by email, a `security.incident_notice` event and the console banner
+(`GET /v1/human/incident-notices`). Each node's notice covers only that node and
+its subtree. Sending is refused with 409 `incident_not_confirmed` before
+confirmation and 422 `notice_template_incomplete` when a required field is
+missing. Notices are append-only (403, and a database trigger). Alerts fire 24,
+48 and 60 hours after confirmation while nodes are unnotified; at 72 hours they
+are marked `sla_breached`. Mail is queued in an outbox and sent when `SMTP_HOST`
+is configured; `SECURITY_CONTACT` is printed in every notice.
+
 ## Operations & Security
 
 - Terminate TLS at a reverse proxy; do not expose Postgres publicly.

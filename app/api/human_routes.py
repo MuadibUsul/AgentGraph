@@ -48,6 +48,7 @@ from app.schemas import (
     ProposalListResponse,
     ProposalOut,
     ProposalRejectRequest,
+    SecurityContactsRequest,
     SlotMutationResponse,
     TaskActionResponse,
     TaskEscalateRequest,
@@ -69,6 +70,7 @@ from app.services import agent_onboarding as agent_onboarding_service
 from app.services import budget as budget_service
 from app.services import exports as export_service
 from app.services import human_onboarding as onboarding_service
+from app.services import incidents as incident_service
 from app.services import leases as lease_service
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
@@ -860,3 +862,29 @@ async def clear_circuit(
 ) -> dict:
     return await budget_service.clear_circuit(session, principal, principal_key)
 
+
+
+# ------------------------------------------------- security incidents (AG-TC-06)
+
+
+@router.get(
+    "/incident-notices",
+    summary="Security incident notices sent to your organisation (owners and admins)",
+)
+async def incident_notices(principal: Principal = Depends(get_human_account)) -> dict:
+    return await incident_service.notices_for(principal)
+
+
+@router.get("/tenant/security-contacts", summary="Extra recipients of incident notices")
+async def get_security_contacts(principal: Principal = Depends(get_human_account)) -> dict:
+    return await incident_service.get_security_contacts(principal)
+
+
+@router.put(
+    "/tenant/security-contacts",
+    summary="Set the root organisation's security contacts (owners only)",
+)
+async def set_security_contacts(
+    body: SecurityContactsRequest, principal: Principal = Depends(get_human_account)
+) -> dict:
+    return await incident_service.set_security_contacts(principal, body.emails)

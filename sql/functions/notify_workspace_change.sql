@@ -113,6 +113,7 @@ BEGIN
             WHEN 'PROPOSAL_VOTED' THEN 'proposal.voted'
             WHEN 'BUDGET_CIRCUIT_OPEN' THEN 'budget.circuit_open'
             WHEN 'RESPONSIBILITIES_TRANSFERRED' THEN 'responsibilities.transferred'
+            WHEN 'SECURITY_INCIDENT_NOTICE' THEN 'security.incident_notice'
             ELSE 'timeline.' || lower(COALESCE(NULLIF(row_data->>'event_type', ''), 'event'))
         END;
         IF jsonb_typeof(row_data->'payload'->'targets') = 'array' THEN

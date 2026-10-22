@@ -71,6 +71,7 @@ def workspace_info(workspace: Workspace) -> WorkspaceInfo:
         canonical_id=workspace.canonical_id,
         name=workspace.name,
         tier=workspace.tier,
+        tenant_id=workspace.tenant_id,
         created_at=workspace.created_at,
     )
 

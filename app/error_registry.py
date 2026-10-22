@@ -109,6 +109,7 @@ REGISTRY: dict[str, ErrorSpec] = {
         429, RETRY_AFTER, "Embedding byte budget for this minute is spent; wait."
     ),
     "sse_capacity": _spec(429, RETRY_AFTER, "Too many event streams; reconnect later."),
+    "backup_in_progress": _spec(409, RETRY_AFTER, "Another backup is running; retry later."),
     # --- retry_backoff
     "internal_error": _spec(
         500, RETRY_BACKOFF, "Back off and retry at most 5 times, then escalate_human."
@@ -305,6 +306,15 @@ REGISTRY: dict[str, ErrorSpec] = {
         409, ESCALATE_HUMAN, "Wait for details.pending_confirmations."
     ),
     "incident_not_confirmed": _spec(409, ESCALATE_HUMAN, "Confirm the incident first."),
+    "backup_chain_broken": _spec(
+        409, ESCALATE_HUMAN, "Restore from an older full backup or take a new one."
+    ),
+    "backups_not_configured": _spec(
+        409, ESCALATE_HUMAN, "An operator must configure backup storage."
+    ),
+    "staging_not_configured": _spec(
+        409, ESCALATE_HUMAN, "An operator must configure a separate staging database."
+    ),
     "tree_quota_exceeded": _spec(
         409, ESCALATE_HUMAN, "Revoke unused child tokens or ask a human for more quota."
     ),
@@ -330,6 +340,7 @@ REGISTRY: dict[str, ErrorSpec] = {
 # Soft-constraint warnings (PRD §6 warnings[]): never errors, never rejections.
 WARNING_CODES: dict[str, str] = {
     "secrets_not_imported": "Imported tokens must be rotated and users must reset passwords.",
+    "keys_rotated": "A restored workspace has new keys; rotate them and re-issue agent tokens.",
     "alias_redirected": "Read through a renamed alias; use the current alias or id.",
     "legacy_alias": "Address predates the grammar; accepted, but 2026-11 rejects new ones.",
     "dangling_ref": "A $ref or part does not resolve; stored as written.",

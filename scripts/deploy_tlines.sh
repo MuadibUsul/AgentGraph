@@ -20,7 +20,7 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 API_CONTAINER="${API_CONTAINER:-agentgraph-api}"
 PUBLIC_URL="${PUBLIC_URL:-https://agentgraph.fusionpropulsion.space}"
 BACKUP_DIR="${BACKUP_DIR:-backups}"
-EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.19.0}"
+EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.20.0}"
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 log() { printf '\033[1m[deploy]\033[0m %s\n' "$*"; }
@@ -119,6 +119,8 @@ def check(name, ok, detail=""):
 
 code, body = status("/readyz")
 check("readyz 200", code == 200, str(code))
+code, body = status("/healthz")
+check("healthz reports backup timestamps", code == 200 and "last_backup_at" in body, str(code))
 code, body = status("/docs/")
 check("public /docs/ 200", code == 200 and "AgentGraph" in body, str(code))
 code, _ = status("/docs/quickstart/")
@@ -186,6 +188,24 @@ restore_db() {
   gzip -dc "$file" | compose exec -T db psql -v ON_ERROR_STOP=1 -q -U "$user" -d "$db" >/dev/null
 }
 
+prepare_storage() {
+  # Backup archives are written by the container user (uid 10001).
+  log "preparing backup storage"
+  compose run --rm --no-deps --user root --entrypoint sh api \
+    -c 'mkdir -p /backups && chown app:app /backups && chmod 700 /backups' >/dev/null
+  # Restores and drills need their own database (never production).
+  if [ -n "$(env_value STAGING_DATABASE_URL)" ]; then
+    local user name
+    user="$(env_value POSTGRES_USER)"; user="${user:-agentgraph}"
+    name="$(env_value STAGING_DATABASE_URL | sed -E 's#.*/([^/?]+)(\?.*)?$#\1#')"
+    if [ -z "$(compose exec -T db psql -U "$user" -d postgres -tAc \
+        "SELECT 1 FROM pg_database WHERE datname = '$name'")" ]; then
+      log "creating staging database $name"
+      compose exec -T db psql -U "$user" -d postgres -qc "CREATE DATABASE \"$name\""
+    fi
+  fi
+}
+
 deploy() {
   preflight
   local stamp
@@ -194,6 +214,7 @@ deploy() {
   tag_current_image "$stamp"
   log "building image"
   compose build api
+  prepare_storage
   log "restarting api (migrations run on start under an advisory lock)"
   compose up -d api
   if ! wait_ready || ! verify; then

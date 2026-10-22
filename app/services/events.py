@@ -69,6 +69,8 @@ EVENT_TYPES: dict[str, str] = {
     "action.updated": "An external action changed state.",
     "budget.circuit_open": "Writes from a token are paused by a circuit breaker.",
     "responsibilities.transferred": "Open work moved to a successor.",
+    "security.incident_notice": "A security incident notice for this organisation "
+                                "(targets: the notified owners).",
     "timeline.*": "Application event that repeats a row change (e.g. timeline.task_claimed).",
 }
 

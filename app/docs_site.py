@@ -607,7 +607,11 @@ def api_reference(openapi: dict[str, Any]) -> list[dict[str, Any]]:
 
 # Raised only when the deployment itself is misconfigured: operator matters
 # that name server settings, so they are left out of the public reference.
-OPERATOR_ONLY_CODES = frozenset({"admin_disabled", "mcp_not_configured"})
+OPERATOR_ONLY_CODES = frozenset({
+    "admin_disabled", "mcp_not_configured", "backups_not_configured", "staging_not_configured",
+    "backup_in_progress", "backup_chain_broken", "incident_not_confirmed",
+    "notice_template_incomplete",
+})
 
 
 def errors() -> dict[str, Any]:

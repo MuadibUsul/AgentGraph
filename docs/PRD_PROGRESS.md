@@ -32,6 +32,13 @@ implemented with acceptance tests in `tests/`; deviations are listed.
 | AG-EV-02 prefix subscriptions | Done (logical) | `subscribe` / `POST /v1/subscriptions` with up to 50 `namespace/` or `namespace/doc_key_prefix` prefixes and optional types; `poll_events(subscription_id=…)` returns events in scope plus every event addressed to the caller. `get_orientation` creates and returns the default subscription (the token's readable namespaces). Every event and document carries its `shard_key` (namespace). **Gaps:** tables are not physically partitioned by shard and the index queue is not shard-fair yet (single Postgres, per the PRD's default); task sub-spaces (`tasks/<root>/`) wait for AG-CO-08. |
 | AG-ST-06 write semantics | Done | Identical writes are a `noop` (no version bump); connection-pool exhaustion returns 503 `overloaded` with `Retry-After` instead of a 500. |
 
+## Phase 1 R1.3
+
+| ID | Status | Notes |
+|---|---|---|
+| AG-ST-10 backups and restore | Done | Scheduled backups to `BACKUP_DIR` (separate storage): daily full + 15-minute incrementals per root tenant in the AG-ST-02 format, manifest + sha256, re-read verification, 30-day retention by chain, optional upload command. `GET/POST /v1/admin/backups`, `POST /v1/admin/restore` (`backup_id` or `point_in_time`; `staging` / `new_workspace` / `in_place` with `confirm` and a pre-restore export), restore drills into `STAGING_DATABASE_URL` comparing document set and a 100-document sha256 sample, results in `restore_drills`, failures alert the operator; `/healthz` carries `last_backup_at` / `last_restore_drill_at`. **Notes:** the logical RPO is the incremental interval (15 min); physical PITR is PostgreSQL WAL archiving (`PG_ARCHIVE_MODE=on`), reported with the backups but restored by the operator with PostgreSQL tools. In-place restore of a tenant tree is refused (restore to staging). |
+| AG-TC-06 incident notices | Done | `incidents`, `incident_nodes`, append-only `incident_notices` (trigger), `incident_timeline`; scope from the new per-token `token_access_log` (reads, buffered per minute), lineage stamps (writes), object ids, shards, tables and components; recipients = owners of the node and its ancestors, root owners, root `security_contacts`; email outbox + `security.incident_notice` event + console banner; dry run to the operator; follow-up updates supersede earlier notices; 24/48/60-hour alerts and `sla_breached` at 72 hours; full record export. Child tenants can be created by the admin (`POST /v1/admin/tenants/{id}/children`, groundwork for AG-ID-09). **Notes:** `may_include_personal_info` is conservative (true whenever documents, tasks or principals are affected) until AG-TC-07 provides a personal-data inventory; quarterly drills are a runbook item (`dry_run=true`). |
+
 ## Docs and onboarding (outside the PRD numbering)
 
 | Item | Status | Notes |
@@ -41,5 +48,5 @@ implemented with acceptance tests in `tests/`; deviations are listed.
 | Agent MCP onboarding | Done | `initialize` instructions and tool order put `get_orientation` first; `onboarding` block with state/step/next_call/required_reading/do_not; light hints on later responses until `active`, never a gate; role-specific first actions; `agent_onboarding` (migration `v3_19`, RLS, backfilled from existing activity); `agent.*` audit events once each; `GET /v1/human/agent-onboarding` and the admin equivalent with orientation/ack/first-action rates and average onboarding time. |
 
 Not started yet:
-R1.3 (ST-10, TC-06), R1.4 (ID-01/02/04/05/06/10, TC-07,
+R1.4 (ID-01/02/04/05/06/10, TC-07,
 OB-01 full), Phase 2 and Phase 3.

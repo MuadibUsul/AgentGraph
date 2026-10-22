@@ -138,6 +138,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 
 | code | HTTP | class |
 |---|---|---|
+| `backup_in_progress` | 409 | `retry_after` |
 | `contention` | 409 | `retry_after` |
 | `export_in_progress` | 409 | `retry_after` |
 | `idempotency_in_progress` | 409 | `retry_after` |
@@ -284,9 +285,12 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` |
 | `tenant_deleting` | 403 | `escalate_human` |
 | `tenant_suspended` | 403 | `escalate_human` |
+| `backup_chain_broken` | 409 | `escalate_human` |
+| `backups_not_configured` | 409 | `escalate_human` |
 | `confirmation_required` | 409 | `escalate_human` |
 | `escalated_to_human` | 409 | `escalate_human` |
 | `incident_not_confirmed` | 409 | `escalate_human` |
+| `staging_not_configured` | 409 | `escalate_human` |
 | `taint_blocked` | 409 | `escalate_human` |
 | `tree_quota_exceeded` | 409 | `escalate_human` |
 | `budget_exhausted` | 429 | `escalate_human` |

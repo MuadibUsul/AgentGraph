@@ -177,7 +177,8 @@ E:\Codes\AgentGraph\
 │       ├── v3_16_exports.sql             # 导出任务、导出包、导入记录（AG-ST-02）
 │       ├── v3_17_events.sql              # 事件 seq（提交时分配）、类型化事件、订阅（AG-EV-01/02）
 │       ├── v3_18_onboarding_progress.sql # 控制台“开始使用”清单进度（按用户 + 工作区，RLS）
-│       └── v3_19_agent_onboarding.sql    # Agent MCP 引导状态机（agent_onboarding，RLS，历史回填）
+│       ├── v3_19_agent_onboarding.sql    # Agent MCP 引导状态机（agent_onboarding，RLS，历史回填）
+│       └── v3_20_durability_incidents.sql # 备份/恢复/演练、平台告警、邮件外发、安全事件与通知、令牌访问记录
 │   └── functions/                        # 每次启动在迁移之后应用的当前函数定义（如 notify_workspace_change）
 │
 ├── dashboard/
@@ -662,6 +663,10 @@ ruff check .
 | `app/services/human_onboarding.py` | 控制台 6 步“开始使用”清单：自动检测、跳过、关闭、重新打开 |
 | `app/services/agent_onboarding.py` | Agent 引导：状态机、`next_call`、轻量提示、角色首个动作、`agent.*` 审计、指标概览 |
 | `dashboard/app/components/onboarding.tsx` | 清单卡片、铸造令牌后的 MCP 配置与连接测试、Agent 引导状态徽章 |
+| `app/services/backups.py` | 备份链（全量 + 15 分钟增量，导出格式）、恢复到 staging/新工作区/原地、恢复演练、调度 |
+| `app/services/incidents.py` | 安全事件：影响范围计算、72 小时通知（邮件/事件/横幅）、只追加通知记录、时限检查、记录导出 |
+| `app/services/access_log.py` | 按令牌/分钟聚合的访问记录（读到的文档与任务），供事件范围计算 |
+| `app/services/alerts.py`、`app/services/mailer.py` | 平台告警与邮件外发队列（配置 SMTP 后发送） |
 | `scripts/deploy_tlines.sh` | Tlines 部署：数据库备份、旧镜像打标签、构建重启、校验、自动/手动回滚 |
 | `scripts/webhook_receiver.py` | Bot 侧签名 Webhook 接收器：校验时间戳/HMAC，写入 JSONL outbox |
 | `app/services/tasks.py` | 失败认领/续租/释放/交接/审核/升级写入 `TASK_*_FAILED` 时间线 |

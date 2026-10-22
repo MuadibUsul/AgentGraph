@@ -206,10 +206,11 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.17.0", _MIGRATIONS_DIR / "v3_17_events.sql"),
     ("3.18.0", _MIGRATIONS_DIR / "v3_18_onboarding_progress.sql"),
     ("3.19.0", _MIGRATIONS_DIR / "v3_19_agent_onboarding.sql"),
+    ("3.20.0", _MIGRATIONS_DIR / "v3_20_durability_incidents.sql"),
 ]
 
 
-async def apply_schema() -> None:
+async def apply_schema(dsn: str | None = None) -> None:
     """Apply the canonical schema, run pending migrations, and backfill data.
 
     A session advisory lock prevents multiple API replicas from racing DDL.
@@ -241,7 +242,8 @@ async def apply_schema() -> None:
         if not path.exists():
             raise RuntimeError(f"migration file not found: {path}")
 
-    conn = await asyncpg.connect(asyncpg_dsn(), timeout=settings.db_pool_timeout)
+    target = (dsn or settings.database_url).replace("postgresql+asyncpg://", "postgresql://", 1)
+    conn = await asyncpg.connect(target, timeout=settings.db_pool_timeout)
     try:
         await conn.execute(
             "SELECT pg_advisory_lock(hashtext('agentgraph_schema_v3')::bigint)"

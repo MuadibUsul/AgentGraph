@@ -93,6 +93,7 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "workspace_events": ("events.jsonl", ()),
     "state_audit_diffs": ("audit_log.jsonl", ()),
     "access_audit": ("audit_log.jsonl", ()),
+    "token_access_log": ("audit_log.jsonl", ()),
 }
 # Rebuilt from exported state after an import.
 DERIVED = frozenset({"document_chunks", "document_index"})
@@ -101,6 +102,10 @@ EPHEMERAL = frozenset({
     "budget_backoff", "budget_buckets", "budget_circuits", "budget_limits",
     "human_sessions", "idempotency_records", "rate_limit_windows", "schema_migrations",
     "webhook_deliveries", "exports", "export_archives", "imports",
+    # Platform records (R1.3): backups, drills, incidents and their notices
+    # belong to the operator, not to a tenant's data.
+    "backups", "restore_runs", "restore_drills", "platform_alerts", "email_outbox",
+    "incidents", "incident_nodes", "incident_notices", "incident_timeline",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
@@ -246,6 +251,7 @@ async def request_export(
     include: list[str] | None = None,
     purpose: str = "manual",
     requested_by: str | None = None,
+    start: bool = True,
 ) -> dict[str, Any]:
     if scope not in ("tenant", "workspace", "namespace"):
         raise ApiError(422, "validation_error", "scope must be tenant, workspace or namespace",
@@ -325,7 +331,8 @@ async def request_export(
             )
         ).mappings().one()
         await session.commit()
-    start_export(row["id"])
+    if start:
+        start_export(row["id"])
     return export_out(dict(row))
 
 
@@ -845,9 +852,16 @@ async def _disable_triggers(session: AsyncSession, tables: list[str]) -> list[st
 
 async def import_archive(
     principal: Principal | None, data: bytes, *, target: str, verify: bool = True,
-    into_tenant_id: str | None = None,
+    into_tenant_id: str | None = None, session_factory: Any = None,
+    actor: str | None = None,
 ) -> dict[str, Any]:
-    """Import an archive; ``principal=None`` is the admin console."""
+    """Import an archive; ``principal=None`` is the admin console.
+
+    ``session_factory`` lets a restore import into another database (staging).
+    An increment imported with ``into_tenant_id`` is moved into that tenant,
+    like the ``new_workspace`` import it continues.
+    """
+    factory = session_factory or async_session_factory
     if principal is not None and not (
         principal.auth_kind is AuthKind.HUMAN_ADMIN
         or (principal.auth_kind is AuthKind.HUMAN and principal.human_role == "OWNER")
@@ -871,14 +885,14 @@ async def import_archive(
         _verify(manifest, archive)
     rows = _rows_from(manifest, archive)
     manifest_sha = _sha(archive.read("manifest.json"))
-    actor = principal.agent_signature if principal is not None else "admin"
+    actor = actor or (principal.agent_signature if principal is not None else "admin")
     tenant_id = into_tenant_id or (principal.tenant_id if principal is not None else None)
     if target == "new_workspace" and tenant_id is None:
         raise ApiError(422, "validation_error", "name the tenant that receives the workspace",
                        details={"field": "into_tenant"})
     record_tenant = tenant_id or manifest["tenant_id"]
     import_id = None
-    async with async_session_factory() as session:
+    async with factory() as session:
         import_id = await session.scalar(
             text("INSERT INTO imports (tenant_id, requested_by, target, verify, "
                  "source_export_id, source_kind, manifest_sha256) VALUES (:tenant, :by, "
@@ -889,27 +903,30 @@ async def import_archive(
         )
         await session.commit()
     try:
-        async with async_session_factory() as session:
+        async with factory() as session:
             result = await _apply(
                 session, actor, manifest, archive, rows, target, tenant_id,
+                rewrite_tenant=into_tenant_id if target == "increment" else None,
             )
             await session.commit()
     except ApiError as exc:
-        await _finish_import(import_id, "failed", error=exc.body()["error"])
+        await _finish_import(import_id, "failed", error=exc.body()["error"], factory=factory)
         raise
     except Exception as exc:
-        await _finish_import(import_id, "failed", error={"message": str(exc)[:2_000]})
+        await _finish_import(import_id, "failed", error={"message": str(exc)[:2_000]},
+                             factory=factory)
         raise
     await _finish_import(import_id, "done", counts=result["counts"],
-                         workspace_ids=[item["id"] for item in result["workspaces"]])
+                         workspace_ids=[item["id"] for item in result["workspaces"]],
+                         factory=factory)
     return {"import_id": import_id, "status": "done", **result}
 
 
 async def _finish_import(
     import_id: str, status: str, *, error: dict | None = None, counts: dict | None = None,
-    workspace_ids: list[str] | None = None,
+    workspace_ids: list[str] | None = None, factory: Any = None,
 ) -> None:
-    async with async_session_factory() as session:
+    async with (factory or async_session_factory)() as session:
         await session.execute(
             text("UPDATE imports SET status = :status, error = CAST(:error AS jsonb), "
                  "counts = CAST(:counts AS jsonb), workspace_ids = CAST(:ws AS jsonb), "
@@ -928,6 +945,8 @@ async def _apply(
     rows: dict[str, list[dict[str, Any]]],
     target: str,
     into_tenant_id: str | None,
+    *,
+    rewrite_tenant: str | None = None,
 ) -> dict[str, Any]:
     pks = await _primary_keys(session)
     workspaces = rows.get("workspaces", [])
@@ -942,6 +961,15 @@ async def _apply(
             raise ApiError(409, "increment_out_of_order",
                            "apply the previous export of this chain first",
                            details={"prev_export_id": manifest["prev_export_id"]})
+        if rewrite_tenant:
+            rows.pop("tenants", None)
+            rows.pop("memberships", None)
+            for table_rows in rows.values():
+                for row in table_rows:
+                    if "tenant_id" in row:
+                        row["tenant_id"] = rewrite_tenant
+                    if "root_tenant_id" in row:
+                        row["root_tenant_id"] = rewrite_tenant
     else:
         if not workspaces:
             raise ApiError(422, "validation_error", "the archive holds no workspace",

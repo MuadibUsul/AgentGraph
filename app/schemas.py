@@ -654,6 +654,7 @@ class WorkspaceInfo(BaseModel):
     )
     name: str
     tier: str
+    tenant_id: str | None = Field(default=None, description="The tenant node that owns it")
     created_at: datetime
 
 
@@ -875,6 +876,88 @@ class ExportRequest(StrictModel):
     include_subtree: bool = True
     include: list[Literal["documents", "versions", "doc_edges", "grants", "events",
                           "audit_log"]] | None = None
+
+
+class BackupRunRequest(StrictModel):
+    type: Literal["full", "incremental"] | None = Field(
+        default=None, description="Omit to follow the schedule (full when due)"
+    )
+    tenant_ids: list[str] | None = Field(
+        default=None, max_length=1_000, description="Only these root tenants (default: all)"
+    )
+
+
+class RestoreRequest(StrictModel):
+    backup_id: str | None = Field(default=None, max_length=40)
+    point_in_time: datetime | None = Field(
+        default=None, description="Restore the newest backup taken at or before this time"
+    )
+    target: Literal["staging", "new_workspace", "in_place"] = "staging"
+    tenant_id: str | None = Field(default=None, max_length=40)
+    confirm: str | None = Field(
+        default=None, max_length=40, description="in_place only: repeat the tenant id"
+    )
+
+
+class ChildTenantCreateRequest(StrictModel):
+    display_name: str = Field(min_length=1, max_length=256)
+    tenant_type: Literal["organization", "personal"] = "organization"
+    alias: str | None = Field(default=None, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    workspace_name: str | None = Field(default=None, max_length=256)
+    tier: str = Field(default="free", max_length=32)
+
+
+class IncidentScopeInputs(StrictModel):
+    time_from: datetime | None = None
+    time_to: datetime | None = None
+    token_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    principal_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    object_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    shard_keys: list[str] = Field(default_factory=list, max_length=1_000)
+    tables: list[str] = Field(default_factory=list, max_length=20)
+    components: list[str] = Field(default_factory=list, max_length=20)
+
+
+class IncidentCreateRequest(StrictModel):
+    title: str = Field(min_length=1, max_length=512)
+    severity: Literal["low", "medium", "high", "critical"]
+    detected_at: datetime | None = None
+    summary: str | None = Field(default=None, max_length=20_000)
+    measures_taken: str | None = Field(default=None, max_length=20_000)
+    recommended_actions: str | None = Field(default=None, max_length=20_000)
+    contact: str | None = Field(default=None, max_length=1_000)
+    owner_admin: str | None = Field(default=None, max_length=256)
+    scope_inputs: IncidentScopeInputs | None = None
+
+
+class IncidentUpdateRequest(StrictModel):
+    title: str | None = Field(default=None, min_length=1, max_length=512)
+    severity: Literal["low", "medium", "high", "critical"] | None = None
+    summary: str | None = Field(default=None, max_length=20_000)
+    measures_taken: str | None = Field(default=None, max_length=20_000)
+    recommended_actions: str | None = Field(default=None, max_length=20_000)
+    contact: str | None = Field(default=None, max_length=1_000)
+    owner_admin: str | None = Field(default=None, max_length=256)
+
+
+class IncidentScopeRequest(StrictModel):
+    scope_inputs: IncidentScopeInputs | None = Field(
+        default=None, description="Omit to reuse the incident's stored inputs"
+    )
+
+
+class IncidentNoticeRequest(StrictModel):
+    dry_run: bool = False
+
+
+class IncidentFollowUpRequest(StrictModel):
+    message: str = Field(min_length=1, max_length=20_000)
+    measures_taken: str | None = Field(default=None, max_length=20_000)
+    recommended_actions: str | None = Field(default=None, max_length=20_000)
+
+
+class SecurityContactsRequest(StrictModel):
+    emails: list[str] = Field(default_factory=list, max_length=10)
 
 
 class TaskContextResponse(BaseModel):

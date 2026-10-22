@@ -25,6 +25,7 @@ do not edit by hand. Every error body is
 
 | code | HTTP | class | action | rule |
 |---|---|---|---|---|
+| `backup_in_progress` | 409 | `retry_after` | `wait_retry_after_then_retry_same_request` | Another backup is running; retry later. |
 | `contention` | 409 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After, then retry. |
 | `export_in_progress` | 409 | `retry_after` | `wait_retry_after_then_retry_same_request` | Poll details.export_id instead of starting another export. |
 | `idempotency_in_progress` | 409 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After and query the result with the same key. |
@@ -171,9 +172,12 @@ do not edit by hand. Every error body is
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` | `stop_and_escalate_to_human` | A human locked this resource; ask a human to change it. |
 | `tenant_deleting` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop; only an owner can cancel deletion or fetch the export. |
 | `tenant_suspended` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop writing and notify a human; reads and export still work. |
+| `backup_chain_broken` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Restore from an older full backup or take a new one. |
+| `backups_not_configured` | 409 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure backup storage. |
 | `confirmation_required` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for details.pending_confirmations. |
 | `escalated_to_human` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for the human decision. |
 | `incident_not_confirmed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Confirm the incident first. |
+| `staging_not_configured` | 409 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure a separate staging database. |
 | `taint_blocked` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A human must verify tainted content. |
 | `tree_quota_exceeded` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Revoke unused child tokens or ask a human for more quota. |
 | `budget_exhausted` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Wait for resets_at or ask the issuer for more budget. |
@@ -189,6 +193,7 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 | code | meaning |
 |---|---|
 | `secrets_not_imported` | Imported tokens must be rotated and users must reset passwords. |
+| `keys_rotated` | A restored workspace has new keys; rotate them and re-issue agent tokens. |
 | `alias_redirected` | Read through a renamed alias; use the current alias or id. |
 | `legacy_alias` | Address predates the grammar; accepted, but 2026-11 rejects new ones. |
 | `dangling_ref` | A $ref or part does not resolve; stored as written. |

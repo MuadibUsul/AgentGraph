@@ -27,10 +27,12 @@ from app.schemas import (
     AgentTokenUpdateRequest,
     ApiKeyRotatedResponse,
     AuditListResponse,
+    BackupRunRequest,
     BatchUndoResponse,
     BudgetLimitsUpdate,
     BudgetOut,
     BudgetUpdateRequest,
+    ChildTenantCreateRequest,
     CreateWorkspaceRequest,
     DocumentHumanUpdateRequest,
     DocumentListResponse,
@@ -54,6 +56,11 @@ from app.schemas import (
     HumanUserListResponse,
     HumanUserOut,
     HumanUserUpdateRequest,
+    IncidentCreateRequest,
+    IncidentFollowUpRequest,
+    IncidentNoticeRequest,
+    IncidentScopeRequest,
+    IncidentUpdateRequest,
     PolicyCreateRequest,
     PolicyListResponse,
     PolicyOut,
@@ -63,6 +70,7 @@ from app.schemas import (
     ProposalListResponse,
     ProposalOut,
     ProposalRejectRequest,
+    RestoreRequest,
     SlotListResponse,
     SlotMutationResponse,
     TaskActionResponse,
@@ -89,8 +97,11 @@ from app.schemas import (
     WorkspaceStatsResponse,
 )
 from app.services import agent_onboarding as agent_onboarding_service
+from app.services import alerts as alert_service
+from app.services import backups as backup_service
 from app.services import budget as budget_service
 from app.services import exports as export_service
+from app.services import incidents as incident_service
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
 from app.services.timeline import list_timeline
@@ -1354,3 +1365,178 @@ async def restore_tenant(
     tenant_id: str, session: AsyncSession = Depends(get_db)
 ) -> TenantOut:
     return await tenant_service.restore_tenant(session, tenant_id)
+
+
+@router.post(
+    "/tenants/{tenant_id}/children",
+    status_code=201,
+    summary="Create a child tenant with its first workspace (the key is shown once)",
+)
+async def create_child_tenant(
+    tenant_id: str, body: ChildTenantCreateRequest, session: AsyncSession = Depends(get_db)
+) -> dict:
+    return await tenant_service.create_child_tenant(session, tenant_id, **body.model_dump())
+
+
+# ---------------------------------------------------------------- backups (AG-ST-10)
+
+
+@router.get("/backups", summary="Backups, newest first, plus WAL archiving state")
+async def list_backups(limit: int = Query(default=100, ge=1, le=1_000)) -> dict:
+    return await backup_service.list_backups(limit)
+
+
+@router.post("/backups", status_code=201, summary="Take a backup now")
+async def run_backup(body: BackupRunRequest | None = None) -> dict:
+    return await backup_service.run_backup(
+        type=body.type if body else None, trigger="manual",
+        tenant_ids=body.tenant_ids if body else None,
+    )
+
+
+@router.get("/backups/{backup_id}", summary="One backup with its per-tenant archives")
+async def get_backup(backup_id: str) -> dict:
+    return await backup_service.get_backup(backup_id)
+
+
+@router.post(
+    "/restore",
+    status_code=202,
+    summary="Restore a backup or a point in time to staging, a new workspace, or in place",
+)
+async def restore(body: RestoreRequest) -> dict:
+    return await backup_service.request_restore(**body.model_dump())
+
+
+@router.get("/restores/{restore_id}", summary="A restore's status and result")
+async def get_restore(restore_id: str) -> dict:
+    return await backup_service.get_restore(restore_id)
+
+
+@router.get("/restore-drills", summary="Restore drills, newest first")
+async def list_restore_drills(limit: int = Query(default=50, ge=1, le=500)) -> dict:
+    return await backup_service.list_drills(limit)
+
+
+@router.post("/restore-drills", status_code=201, summary="Run a restore drill now (staging)")
+async def run_restore_drill() -> dict:
+    return await backup_service.run_drill(trigger="manual")
+
+
+# ------------------------------------------------------------ alerts
+
+
+@router.get("/alerts", summary="Platform alerts for the operator")
+async def list_alerts(
+    open_only: bool = Query(default=False), kind: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=100, ge=1, le=1_000),
+) -> dict:
+    return await alert_service.list_alerts(open_only=open_only, kind=kind, limit=limit)
+
+
+@router.post("/alerts/{alert_id}/ack", summary="Acknowledge an alert")
+async def acknowledge_alert(alert_id: str) -> dict:
+    alert = await alert_service.acknowledge(alert_id)
+    if alert is None:
+        raise ApiError(404, "not_found", "alert not found", details={"alert_id": alert_id})
+    return alert
+
+
+# --------------------------------------------------------- incidents (AG-TC-06)
+
+
+@router.get("/incidents", summary="Security incidents, newest first")
+async def list_incidents(limit: int = Query(default=100, ge=1, le=1_000)) -> dict:
+    return await incident_service.list_incidents(limit)
+
+
+@router.post("/incidents", status_code=201, summary="Open a security incident")
+async def create_incident(body: IncidentCreateRequest) -> dict:
+    return await incident_service.create_incident(body.model_dump(mode="json"))
+
+
+@router.get("/incidents/{incident_id}", summary="An incident with its affected nodes")
+async def get_incident(incident_id: str) -> dict:
+    return await incident_service.get_incident(incident_id)
+
+
+@router.patch("/incidents/{incident_id}", summary="Edit an incident's fields")
+async def update_incident(incident_id: str, body: IncidentUpdateRequest) -> dict:
+    return await incident_service.update_incident(incident_id, body.model_dump())
+
+
+@router.post(
+    "/incidents/{incident_id}/confirm",
+    summary="Confirm the incident: the 72-hour notification clock starts",
+)
+async def confirm_incident(incident_id: str) -> dict:
+    return await incident_service.confirm_incident(incident_id)
+
+
+@router.post("/incidents/{incident_id}/close", summary="Close the incident")
+async def close_incident(incident_id: str) -> dict:
+    return await incident_service.close_incident(incident_id)
+
+
+@router.post(
+    "/incidents/{incident_id}/scope",
+    summary="Resolve the affected tenant nodes from audit, lineage and access records",
+)
+async def resolve_incident_scope(
+    incident_id: str, body: IncidentScopeRequest | None = None
+) -> dict:
+    inputs = body.scope_inputs.model_dump() if body and body.scope_inputs else None
+    return await incident_service.resolve_scope(incident_id, inputs)
+
+
+@router.post(
+    "/incidents/{incident_id}/notices",
+    summary="Notify affected nodes (dry_run previews to the operator only)",
+)
+async def send_incident_notices(
+    incident_id: str, body: IncidentNoticeRequest | None = None
+) -> dict:
+    return await incident_service.send_notices(incident_id, dry_run=bool(body and body.dry_run))
+
+
+@router.post("/incidents/{incident_id}/updates", summary="Send a follow-up to notified nodes")
+async def send_incident_update(incident_id: str, body: IncidentFollowUpRequest) -> dict:
+    return await incident_service.send_update(
+        incident_id, body.message, measures_taken=body.measures_taken,
+        recommended_actions=body.recommended_actions,
+    )
+
+
+@router.get(
+    "/incidents/{incident_id}/record",
+    summary="The full incident record: timeline, scope, notices and delivery",
+)
+async def incident_record(incident_id: str) -> dict:
+    return await incident_service.export_record(incident_id)
+
+
+_NOTICE_PATH = "/incidents/{incident_id}/notices/{notice_id}"
+_APPEND_ONLY = "Notices are append-only: always 403"
+
+
+@router.put(_NOTICE_PATH, summary=_APPEND_ONLY)
+async def replace_incident_notice(incident_id: str, notice_id: str) -> dict:
+    incident_service.refuse_notice_change()
+    return {}
+
+
+@router.patch(_NOTICE_PATH, summary=_APPEND_ONLY)
+async def edit_incident_notice(incident_id: str, notice_id: str) -> dict:
+    incident_service.refuse_notice_change()
+    return {}
+
+
+@router.delete(_NOTICE_PATH, summary=_APPEND_ONLY)
+async def delete_incident_notice(incident_id: str, notice_id: str) -> dict:
+    incident_service.refuse_notice_change()
+    return {}
+
+
+@router.post("/incidents/check-sla", summary="Run the 24/48/60/72-hour checks now")
+async def check_incident_slas() -> dict:
+    return await incident_service.check_slas()

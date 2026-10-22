@@ -81,8 +81,8 @@ from app.schemas import (
     RegisterPartsRequest,
     TombstoneOut,
 )
+from app.services import access_log, agent_onboarding, budget, indexer, onboarding
 from app.services import addresses as address_service
-from app.services import agent_onboarding, budget, indexer, onboarding
 from app.services.common import (
     PLATFORM_DOC_NAMESPACES,
     append_event,
@@ -509,6 +509,7 @@ def _project(summary: dict[str, Any], fields: list[str] | None) -> dict[str, Any
     return {key: summary.get(key) for key in keep}
 
 
+@access_log.reads("document")
 @agent_onboarding.records("read")
 async def list_documents(
     session: AsyncSession,
@@ -893,6 +894,7 @@ async def batch_dereference(
     return DereferenceBatchResponse(items=items)
 
 
+@access_log.reads("document")
 @agent_onboarding.records_read
 async def get_document(
     session: AsyncSession,
@@ -1375,6 +1377,7 @@ async def patch_document_section(
     return await _mutation_response(session, document, batch)
 
 
+@access_log.reads("document")
 @agent_onboarding.records("read")
 async def query_documents(
     session: AsyncSession,
@@ -1595,6 +1598,7 @@ def _snippet(text: str, needle: str, width: int = 240) -> str:
     return text[start : start + width]
 
 
+@access_log.reads("document")
 @agent_onboarding.records_read
 async def dereference(
     session: AsyncSession,
@@ -2146,6 +2150,7 @@ async def list_document_versions(
     )
 
 
+@access_log.reads("document")
 async def get_document_version(
     session: AsyncSession,
     principal: Principal,
