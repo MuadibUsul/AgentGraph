@@ -98,6 +98,8 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------- human auth
     human_session_hours: int = Field(default=12, ge=1, le=720)
+    # PRD AG-ID-07 point 8 / D21: deletion grace period before physical purge.
+    tenant_deletion_grace_days: int = Field(default=30, ge=1, le=365)
     password_hash_n: int = Field(default=2**14, ge=2**12, le=2**18)
     password_hash_r: int = 8
     password_hash_p: int = 1
@@ -140,15 +142,43 @@ class Settings(BaseSettings):
     developer_max_slots: int = 100
     pro_max_documents: int = 500_000
     pro_max_slots: int = 1_000
-    max_document_content_chars: int = 100_000
+    # PRD AG-ST-03: documents up to 1 MiB of UTF-8; larger content uses parts.
+    max_document_content_bytes: int = 1_048_576
+    # Character ceiling for request validation only; the byte limit decides.
+    max_document_content_chars: int = 4_194_304
     max_state_bytes: int = 100_000
     max_brief_bytes: int = 32_768
-    max_artifact_chars: int = 200_000
+    max_artifact_chars: int = 4_194_304
+
+    # ------------------------------------------------ async index (AG-ST-13)
+    index_worker_enabled: bool = True
+    index_worker_interval_seconds: float = Field(default=1.0, ge=0.1, le=60)
+    index_worker_batch: int = Field(default=20, ge=1, le=500)
+    index_max_attempts: int = Field(default=5, ge=1, le=50)
+
+    # ------------------------------------------------ cost control (AG-ST-15)
+    # "shadow" records would-be limits without blocking (run ~14 days to
+    # calibrate); "enforce" returns 429 rate_limited / circuit_open.
+    budget_mode: str = Field(default="shadow", pattern="^(shadow|enforce)$")
+    write_rate_per_minute: int = Field(default=60, ge=1, le=100_000)
+    write_burst: int = Field(default=20, ge=1, le=100_000)
+    query_rate_per_minute: int = Field(default=120, ge=1, le=100_000)
+    hot_key_writes_per_minute: int = Field(default=20, ge=2, le=10_000)
+    circuit_open_minutes: int = Field(default=10, ge=1, le=1_440)
+    embedding_tokens_per_day: int = Field(default=2_000_000, ge=1)
+
+    # ------------------------------------------- failure-semantics protocol
+    # PRD AG-ST-18: 24 h idempotency window; an in-progress record older than
+    # the stale limit is treated as abandoned (crashed worker) and reclaimed.
+    idempotency_window_hours: int = Field(default=24, ge=1, le=168)
+    idempotency_stale_seconds: int = Field(default=300, ge=10, le=3_600)
 
     # -------------------------------------------------------------- realtime
     sse_heartbeat_seconds: int = Field(default=15, ge=5, le=120)
     sse_max_connections: int = Field(default=200, ge=1, le=10_000)
     sse_max_connections_per_principal: int = Field(default=5, ge=1, le=100)
+    sse_revalidate_seconds: int = Field(default=30, ge=5, le=600)
+    sse_max_lifetime_seconds: int = Field(default=3_600, ge=60, le=86_400)
     embedding_bytes_per_minute: int = Field(default=5_000_000, ge=100_000)
     sse_replay_limit: int = Field(default=500, ge=1, le=5_000)
     event_retention_days: int = Field(default=7, ge=1, le=365)

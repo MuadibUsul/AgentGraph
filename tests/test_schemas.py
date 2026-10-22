@@ -62,10 +62,20 @@ def test_artifact_uri_must_be_doc_uri():
 
 
 def test_review_decision_constraints():
-    with pytest.raises(ValidationError):
-        TaskReviewRequest(decision="approve", next_status="IN_PROGRESS")
-    with pytest.raises(ValidationError):
-        TaskReviewRequest(decision="reject", next_status="DONE")
+    # One validator serves REST and MCP (PRD AG-CO-01): it lives in the service.
+    from app.errors import ApiError
+    from app.services.tasks import validate_review_next_status
+
+    with pytest.raises(ApiError) as approve_rework:
+        validate_review_next_status("approve", "IN_PROGRESS")
+    assert approve_rework.value.details["allowed"] == ["DONE", "HANDOFF", "READY"]
+    with pytest.raises(ApiError):
+        validate_review_next_status("reject", "DONE")
+    with pytest.raises(ApiError) as unknown:
+        validate_review_next_status("reject", "FOO")
+    assert "IN_PROGRESS" in unknown.value.details["allowed"]
+    validate_review_next_status("reject", "IN_PROGRESS")
+    validate_review_next_status("approve", None)
     assert TaskReviewRequest(decision="approve").decision == "approve"
 
 

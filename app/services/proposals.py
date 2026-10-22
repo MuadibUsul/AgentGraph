@@ -309,6 +309,7 @@ async def vote_proposal(
             "doc_key": proposal.doc_key,
             "score": request.score,
         },
+        namespace=proposal.namespace,
     )
     await session.commit()
     votes = (await _votes(session, [proposal.id])).get(proposal.id, [])
@@ -519,6 +520,7 @@ async def reject_proposal(
             "doc_key": proposal.doc_key,
             "note": request.note,
         },
+        namespace=proposal.namespace,
     )
     await session.commit()
     votes = (await _votes(session, [proposal.id])).get(proposal.id, [])

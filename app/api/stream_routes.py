@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -16,6 +17,7 @@ from sqlalchemy import select
 from app.auth import (
     Principal,
     can,
+    ensure_tenant_usable,
     extract_bearer_token,
     principal_for_admin,
     require_admin,
@@ -26,7 +28,7 @@ from app.database import async_session_factory
 from app.errors import ApiError
 from app.events import event_bus
 from app.models import WorkspaceEvent
-from app.services.common import domain_event_type
+from app.services.common import domain_event_type, event_identity
 from app.services.usage import enforce_rate_limit
 from app.services.workspace import get_workspace
 from app.tenant import set_session_tenant
@@ -92,6 +94,7 @@ async def get_stream_principal(request: Request) -> Principal:
         )
         if principal is None:
             raise ApiError(401, "unauthorized", "invalid or inactive API key")
+        ensure_tenant_usable(principal, write=False, path=request.url.path)
         from app.services.common import set_audit_actor
 
         set_audit_actor(principal)
@@ -153,6 +156,7 @@ def _orm_event(row: WorkspaceEvent) -> dict[str, Any]:
         "namespace": row.namespace,
         "assigned_role": row.assigned_role,
         "locked_by_human": row.locked_by_human,
+        "actor_stamp": (row.payload or {}).get("actor_stamp"),
         "event_type": domain_event_type(
             row.source_table, row.action, row.payload
         ),
@@ -181,7 +185,7 @@ async def _replay(
     last_event_id: int,
 ) -> list[dict[str, Any]]:
     async with async_session_factory() as session:
-        set_session_tenant(session, principal.workspace.id)
+        set_session_tenant(session, principal.workspace.id, principal.tenant_scope)
         rows = (
             await session.execute(
                 select(WorkspaceEvent)
@@ -201,6 +205,7 @@ async def _replay(
 
 
 def _frame(event: dict[str, Any]) -> str:
+    event = {**event, **event_identity(event["id"])}
     return (
         f"id: {event['id']}\n"
         "event: workspace\n"
@@ -242,13 +247,40 @@ def _release_sse(principal: Principal) -> None:
             _sse_by_principal.pop(key, None)
 
 
+Revalidator = Callable[[], Awaitable[Principal | None]]
+
+
+def _key_revalidator(raw_key: str, original: Principal) -> Revalidator:
+    """Re-resolve the stream's credential so revocation ends the stream."""
+
+    async def _check() -> Principal | None:
+        async with async_session_factory() as session:
+            principal = await resolve_principal(
+                session, raw_key, agent_hint=original.agent_signature
+            )
+        if principal is None or principal.workspace.id != original.workspace.id:
+            return None
+        if principal.tenant is not None and principal.tenant.status == "deleting":
+            return None
+        return principal
+
+    return _check
+
+
+def _closing_frame(reason: str) -> str:
+    return f"event: closed\ndata: {json.dumps({'reason': reason})}\n\n"
+
+
 async def _event_stream(
     principal: Principal,
     filters: StreamFilters,
     last_event_id: int | None,
+    revalidate: Revalidator | None = None,
 ) -> AsyncIterator[str]:
     try:
-        async for frame in _stream_events(principal, filters, last_event_id, 0):
+        async for frame in _stream_events(
+            principal, filters, last_event_id, 0, revalidate
+        ):
             yield frame
     finally:
         _release_sse(principal)
@@ -259,7 +291,10 @@ async def _stream_events(
     filters: StreamFilters,
     last_event_id: int | None,
     cursor: int,
+    revalidate: Revalidator | None = None,
 ) -> AsyncIterator[str]:
+    started = time.monotonic()
+    checked = started
     async with event_bus.subscribe() as queue:
         yield (
             "retry: 3000\n"
@@ -273,9 +308,24 @@ async def _stream_events(
                 yield _frame(event)
 
         while True:
+            now = time.monotonic()
+            if now - started >= settings.sse_max_lifetime_seconds:
+                yield _closing_frame("max_lifetime")
+                return
+            if revalidate is not None and now - checked >= settings.sse_revalidate_seconds:
+                checked = now
+                refreshed = await revalidate()
+                if refreshed is None:
+                    yield _closing_frame("credential_revoked")
+                    return
+                # Role or namespace changes apply to the rest of the stream.
+                principal = refreshed
             try:
                 payload = await asyncio.wait_for(
-                    queue.get(), timeout=settings.sse_heartbeat_seconds
+                    queue.get(),
+                    timeout=min(
+                        settings.sse_heartbeat_seconds, settings.sse_revalidate_seconds
+                    ),
                 )
             except asyncio.TimeoutError:
                 yield ": keep-alive\n\n"
@@ -299,9 +349,10 @@ def _streaming_response(
     principal: Principal,
     filters: StreamFilters,
     last_event_id: int | None,
+    revalidate: Revalidator | None = None,
 ) -> StreamingResponse:
     return StreamingResponse(
-        _event_stream(principal, filters, last_event_id),
+        _event_stream(principal, filters, last_event_id, revalidate),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -329,6 +380,7 @@ async def stream(
         principal,
         StreamFilters(tables, status, assigned_role, namespace),
         _parse_last_event_id(request, last_event_id),
+        _key_revalidator(extract_bearer_token(request) or "", principal),
     )
 
 

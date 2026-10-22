@@ -62,7 +62,8 @@ const components: Components = {
     );
   },
   img: ({ src, alt }) => {
-    const safe = typeof src === "string" && src.startsWith("/");
+    // Same-origin paths only: "//host" and "/\host" are protocol-relative.
+    const safe = typeof src === "string" && /^\/(?![/\\])/.test(src);
     if (!safe) {
       return (
         <a href={typeof src === "string" ? src : undefined} target="_blank" rel="noopener noreferrer">

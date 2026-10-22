@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections import OrderedDict
 from typing import Any
 
 from sqlalchemy import delete, select, text
@@ -36,6 +37,12 @@ async def reindex_document_chunks(
         for chunk in chunks
     ]
     vectors = await provider.embed(texts)
+    from app.services.budget import meter_embedding
+
+    await meter_embedding(
+        document.workspace_id, sum(len(item) for item in texts), kind="chunks",
+        model=provider.model,
+    )
     for chunk, vector in zip(chunks, vectors, strict=True):
         session.add(
             DocumentChunk(
@@ -89,8 +96,7 @@ async def _vector_doc_ids(
     limit: int,
     threshold: float = 0.0,
 ) -> list[uuid.UUID]:
-    provider = get_embedding_provider()
-    vector = await provider.embed_one(query)
+    vector = await query_vector(query, workspace_id)
     await session.execute(
         text(f"SET LOCAL hnsw.ef_search = {max(settings.hnsw_ef_search, 10)}")
     )
@@ -148,6 +154,29 @@ async def _keyword_doc_ids(
     )
     rows = (await session.execute(statement)).scalars().all()
     return list(dict.fromkeys(rows))
+
+
+_QUERY_VECTORS: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
+_QUERY_VECTOR_CACHE_SIZE = 256
+
+
+async def query_vector(query: str, workspace_id: uuid.UUID | None = None) -> list[float]:
+    """Embed a search query once; ranking and chunk matching reuse the vector."""
+    provider = get_embedding_provider()
+    key = (provider.model, query)
+    cached = _QUERY_VECTORS.get(key)
+    if cached is not None:
+        _QUERY_VECTORS.move_to_end(key)
+        return cached
+    vector = await provider.embed_one(query)
+    if workspace_id is not None:
+        from app.services.budget import meter_embedding
+
+        await meter_embedding(workspace_id, len(query), kind="query", model=provider.model)
+    _QUERY_VECTORS[key] = vector
+    if len(_QUERY_VECTORS) > _QUERY_VECTOR_CACHE_SIZE:
+        _QUERY_VECTORS.popitem(last=False)
+    return vector
 
 
 async def hybrid_document_ids(

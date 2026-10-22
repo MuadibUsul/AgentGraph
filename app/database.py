@@ -188,6 +188,21 @@ async def _ensure_vector_dimension(conn: asyncpg.Connection) -> None:
         )
 
 
+_MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "sql" / "migrations"
+# Applied in order after the 3.4 baseline; append new migrations here.
+_INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
+    ("3.5.0", _MIGRATIONS_DIR / "v3_5_artifact_binding.sql"),
+    ("3.6.0", _MIGRATIONS_DIR / "v3_6_failure_protocol.sql"),
+    ("3.7.0", _MIGRATIONS_DIR / "v3_7_tenants.sql"),
+    ("3.8.0", _MIGRATIONS_DIR / "v3_8_addresses.sql"),
+    ("3.9.0", _MIGRATIONS_DIR / "v3_9_lineage.sql"),
+    ("3.10.0", _MIGRATIONS_DIR / "v3_10_review_rounds.sql"),
+    ("3.11.0", _MIGRATIONS_DIR / "v3_11_onboarding.sql"),
+    ("3.12.0", _MIGRATIONS_DIR / "v3_12_budget.sql"),
+    ("3.13.0", _MIGRATIONS_DIR / "v3_13_async_index.sql"),
+]
+
+
 async def apply_schema() -> None:
     """Apply the canonical schema, run pending migrations, and backfill data.
 
@@ -216,6 +231,9 @@ async def apply_schema() -> None:
         raise RuntimeError(f"migration file not found: {feedback_path}")
     if not security_path.exists():
         raise RuntimeError(f"migration file not found: {security_path}")
+    for _, path in _INCREMENTAL_MIGRATIONS:
+        if not path.exists():
+            raise RuntimeError(f"migration file not found: {path}")
 
     conn = await asyncpg.connect(asyncpg_dsn(), timeout=settings.db_pool_timeout)
     try:
@@ -313,7 +331,22 @@ async def apply_schema() -> None:
                 "INSERT INTO schema_migrations(version) VALUES ('3.4.0') "
                 "ON CONFLICT (version) DO NOTHING"
             )
-        logger.info("database schema is up to date (v3.4.0)")
+        for version, path in _INCREMENTAL_MIGRATIONS:
+            applied = await conn.fetchval(
+                "SELECT 1 FROM schema_migrations WHERE version = $1", version
+            )
+            if applied:
+                continue
+            logger.info("applying %s migration (%s)", version, path.name)
+            await conn.execute(path.read_text(encoding="utf-8"))
+            await conn.execute(
+                "INSERT INTO schema_migrations(version) VALUES ($1) "
+                "ON CONFLICT (version) DO NOTHING",
+                version,
+            )
+        logger.info(
+            "database schema is up to date (v%s)", _INCREMENTAL_MIGRATIONS[-1][0]
+        )
     finally:
         await conn.close()
 

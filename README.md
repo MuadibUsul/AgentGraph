@@ -143,6 +143,51 @@ The response contains the new key exactly once; the old key is invalid
 immediately. Rotate during a maintenance window because the runtime must store
 the new key before its next request.
 
+### Tenants, protocol and versions
+
+Every workspace belongs to a **tenant** (`ten_…`), a node of a tenant tree
+(`personal` / `organization` / `company`, depth ≤ 3). `tenant_id` is derived by
+the server on every row and must never be sent by clients (400
+`tenant_id_not_allowed`); row security requires both the tenant scope and the
+workspace. Operators manage tenants under `/v1/admin/tenants` (suspend/resume,
+two-party deletion with a 30-day grace period, restore); owners see
+`GET /v1/human/tenant` and confirm or cancel deletion there.
+
+Every object has an opaque **canonical id** (`doc_…`, `task_…`, `ws_…`,
+`tok_…`, `prn_…`, `slot_…`) next to its alias (`doc_key`, `task_key`); every
+reference accepts either. `POST /v1/documents/{ref}/rename` keeps the id and
+redirects the old alias forever; owners purge archived documents with
+`POST /v1/human/documents/{ref}/purge`, leaving a tombstone (410 `gone`, alias
+never reused). Register namespaces with `POST /v1/namespaces`; frontmatter
+`{"$ref": …}` values are stored as canonical ids; `dereference(expand_parts)`
+joins `frontmatter.parts`. Under API version `2026-11` the address grammar and
+register-before-use are enforced; the baseline accepts legacy keys with
+`legacy_alias` / `namespace_auto_registered` warnings.
+
+Every write carries an immutable **lineage stamp** (`created_stamp`,
+`updated_stamp`, version `stamp`, event `actor_stamp`): the token, principal,
+chain from the workspace root token (`tok_…`) and the grant snapshot it held.
+`GET /v1/documents/{ref}/explain` answers who wrote a version, who issued
+their token and what it could do; `GET /v1/tokens/self[/lineage|/tree]`
+inspect tokens; `list_documents(written_by_subtree=tok_…)` shows a subtree's
+blast radius.
+
+**Agents start with `get_orientation`** (`GET /v1/orientation`): identity,
+the workspace constitution (`system/constitution`), the namespace map,
+collaborators, open and claimable tasks, required reading and ready-to-run
+`next_calls`. `system/*` is human-written; agents propose changes. Each
+namespace has a readme (`system/namespaces/<ns>`) whose `required_frontmatter`
+/ `doc_key_pattern` produce warnings (or 422 in strict mode). The agent guide
+is generated from code: [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md), also at
+`GET /v1/agent-docs?format=markdown`, `GET /v1/openapi.json` and MCP resources
+`agentgraph://docs/*`.
+
+All errors carry `class` / `action` / `retryable` / `retry_after_ms`
+(registry: [docs/ERROR_CODES.md](docs/ERROR_CODES.md)). Writes accept an
+`Idempotency-Key` header (REST) or `idempotency_key` argument (MCP) with a 24 h
+replay window. Declare semantics with `AgentGraph-Version` (default
+`2026-10-21`, latest `2026-11`).
+
 ### Self-service accounts
 
 Email registration is public when `HUMAN_SIGNUP_ENABLED=true`:
@@ -552,6 +597,8 @@ Copy [`.env.example`](.env.example) to `.env`. Important settings:
 | `DEFAULT_MAX_RETRIES` | `3` | Ping-pong threshold for new tasks |
 | `SSE_HEARTBEAT_SECONDS` | `15` | SSE keep-alive interval |
 | `SSE_REPLAY_LIMIT` | `500` | Max missed events replayed per reconnect |
+| `SSE_REVALIDATE_SECONDS` | `30` | Re-check a stream's credential; revoked/expired keys are disconnected |
+| `SSE_MAX_LIFETIME_SECONDS` | `3600` | Max stream duration; clients reconnect with `Last-Event-ID` |
 | `EVENT_RETENTION_DAYS` | `7` | Outbox / replay retention window |
 | `MAX_SEARCH_TOP_K` | `50` | Semantic query cap |
 | `FREE_MAX_DOCUMENTS` / `FREE_MAX_SLOTS` | `5000` / `20` | Free tier caps |

@@ -6,15 +6,18 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import services
-from app.auth import Principal, get_principal, require_permission
+from app import agent_guide, services
+from app.auth import Principal, ensure_namespace, get_principal, require_permission
 from app.database import get_db
+from app.error_registry import protocol_docs
 from app.errors import ApiError
 from app.models import TaskStatus
 from app.schemas import (
     AuditListResponse,
+    ConstitutionAckRequest,
     DereferenceBatchRequest,
     DereferenceBatchResponse,
     DereferenceRequest,
@@ -27,6 +30,7 @@ from app.schemas import (
     DocumentOut,
     DocumentQueryRequest,
     DocumentQueryResponse,
+    DocumentRenameRequest,
     DocumentSectionPatchRequest,
     DocumentStatusRequest,
     DocumentTaintRequest,
@@ -40,6 +44,7 @@ from app.schemas import (
     LinkCreateRequest,
     LinkListResponse,
     LinkOut,
+    NamespaceRegisterRequest,
     PolicyListResponse,
     ProposalApplyRequest,
     ProposalApplyResponse,
@@ -48,6 +53,7 @@ from app.schemas import (
     ProposalOut,
     ProposalRejectRequest,
     ProposalVoteRequest,
+    RegisterPartsRequest,
     SlotListResponse,
     SlotMutationResponse,
     SlotOut,
@@ -72,6 +78,11 @@ from app.schemas import (
     WorkspaceMapResponse,
     WorkspaceStatsResponse,
 )
+from app.services import addresses as address_service
+from app.services import budget as budget_service
+from app.services import indexer
+from app.services import lineage as lineage_service
+from app.services import orientation as orientation_service
 
 router = APIRouter(prefix="/v1", tags=["AgentGraph v3"])
 
@@ -89,6 +100,31 @@ def _statuses(value: str | None) -> list[str] | None:
             f"unknown task status: {', '.join(invalid)}",
         )
     return items or None
+
+
+@router.get(
+    "/orientation",
+    summary="First call: identity, constitution, namespaces, tasks and next calls",
+)
+async def orientation(
+    sections: str | None = Query(default=None, description="Comma-separated section names"),
+    max_bytes: int = Query(default=orientation_service.DEFAULT_MAX_BYTES),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    wanted = [item.strip() for item in sections.split(",") if item.strip()] if sections else None
+    return await orientation_service.build(
+        session, principal, sections=wanted, max_bytes=max_bytes
+    )
+
+
+@router.post("/orientation/ack", summary="Record that you read this constitution version")
+async def ack_constitution(
+    body: ConstitutionAckRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await orientation_service.ack_constitution(session, principal, body.version)
 
 
 @router.get("/whoami", response_model=WhoAmIResponse, summary="Principal identity")
@@ -123,15 +159,14 @@ async def workspace_map(
 )
 async def agent_docs(
     request: Request,
+    format: str = Query(default="json", pattern="^(json|markdown)$"),
     principal: Principal = Depends(get_principal),
-) -> dict:
+):
     """Read-only API/MCP documentation available to every workspace token."""
+    if format == "markdown":
+        return PlainTextResponse(agent_guide.render(), media_type="text/markdown")
     openapi = request.app.openapi()
-    paths = {
-        path: operation
-        for path, operation in openapi.get("paths", {}).items()
-        if path.startswith("/v1") and not path.startswith("/v1/admin")
-    }
+    paths = _agent_paths(openapi)
     base = str(request.base_url).rstrip("/")
     return {
         "name": "AgentGraph",
@@ -157,7 +192,9 @@ async def agent_docs(
             "Poll incrementally with GET /v1/workspace/map?since=<next_cursor>.",
         ],
         "conventions": {
-            "errors": {"error": {"code": "string", "message": "string", "details": "optional"}},
+            "errors": protocol_docs("summary")["error_shape"],
+            "protocol": protocol_docs("summary"),
+            "error_codes": protocol_docs("errors")["codes"],
             "pagination": (
                 "Pass next_cursor back as cursor; "
                 "next_cursor=null means the listing is complete."
@@ -165,6 +202,9 @@ async def agent_docs(
             "version_conflict": "The 409 details include current_version, current_hash and latest.",
             "batch_limits": {"upsert": 25, "dereference": 25},
         },
+        "guide": agent_guide.render(),
+        "limits": agent_guide.limits(),
+        "trust_defaults": agent_guide.trust_defaults(),
         "openapi": {
             "openapi": openapi.get("openapi"),
             "info": openapi.get("info"),
@@ -172,6 +212,26 @@ async def agent_docs(
             "paths": paths,
         },
     }
+
+
+def _agent_paths(openapi: dict) -> dict:
+    return {
+        path: operation
+        for path, operation in openapi.get("paths", {}).items()
+        if path.startswith("/v1") and not path.startswith("/v1/admin")
+    }
+
+
+@router.get(
+    "/openapi.json",
+    summary="Read-only OpenAPI document for agents (admin endpoints removed)",
+)
+async def agent_openapi(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    openapi = request.app.openapi()
+    return {**openapi, "paths": _agent_paths(openapi)}
 
 
 # ------------------------------------------------------------------ tasks
@@ -373,6 +433,9 @@ async def list_documents(
     updated_after: datetime | None = Query(default=None),
     updated_before: datetime | None = Query(default=None),
     sort: str = Query(default="updated_desc"),
+    written_by_subtree: str | None = Query(
+        default=None, description="tok_… id: documents written by this token or its subtree"
+    ),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentListResponse:
@@ -396,6 +459,7 @@ async def list_documents(
         updated_after=updated_after,
         updated_before=updated_before,
         sort=sort,
+        written_by_subtree=written_by_subtree,
     )
 
 
@@ -442,6 +506,57 @@ async def deprecate_document(
 ) -> DocumentMutationResponse:
     return await services.set_document_status(
         session, principal, doc_key, body, action="deprecate"
+    )
+
+
+@router.get(
+    "/documents/{doc_key:path}/explain",
+    summary="Who wrote a version, who issued their token and what it could do then",
+)
+async def explain_write(
+    doc_key: str,
+    version: int | None = Query(default=None, ge=1),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "doc:read")
+    return await lineage_service.explain_write(session, principal, doc_key, version)
+
+
+@router.get("/tokens/{ref}", summary="Inspect a token (self, an ancestor or a descendant)")
+async def get_token(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await lineage_service.get_token(session, principal, ref)
+
+
+@router.get("/tokens/{ref}/lineage", summary="Token chain from the root token")
+async def get_lineage(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await lineage_service.get_lineage(session, principal, ref)
+
+
+@router.get("/tokens/{ref}/tree", summary="Descendant tokens (own subtree only)")
+async def list_token_tree(
+    ref: str,
+    include_inactive: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=500),
+    cursor: str | None = Query(default=None),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await lineage_service.list_token_tree(
+        session,
+        principal,
+        ref,
+        include_inactive=include_inactive,
+        limit=limit,
+        cursor=cursor,
     )
 
 
@@ -662,6 +777,33 @@ async def workspace_usage(
     )
 
 
+@router.get(
+    "/index/status",
+    summary="Indexing backlog: pending, failed, oldest pending age, p95 lag (AG-ST-13)",
+)
+async def index_status(
+    namespace: str | None = Query(default=None),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "doc:read")
+    if namespace:
+        ensure_namespace(principal, namespace)
+    return await indexer.index_status(session, principal.workspace.id, namespace)
+
+
+@router.get(
+    "/usage/embedding",
+    summary="Embedding tokens, writes, would-be limits and open circuits (AG-ST-15)",
+)
+async def embedding_usage(
+    window: str = Query(default="day", pattern="^(day|week|month)$"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await budget_service.get_usage(session, principal, window)
+
+
 # ----------------------------------------------------- external actions
 
 
@@ -757,6 +899,58 @@ async def archive_document(
 
 
 @router.post(
+    "/documents/{doc_key:path}/rename",
+    response_model=DocumentMutationResponse,
+    summary="Change a document alias; the canonical id stays and the old alias redirects",
+)
+async def rename_document(
+    doc_key: str,
+    body: DocumentRenameRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> DocumentMutationResponse:
+    return await services.rename_document(session, principal, doc_key, body)
+
+
+@router.post(
+    "/documents/{doc_key:path}/parts",
+    summary="Register existing documents as ordered parts of this document",
+)
+async def register_parts(
+    doc_key: str,
+    body: RegisterPartsRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await services.register_parts(session, principal, doc_key, body)
+
+
+@router.get("/namespaces", summary="List registered namespaces")
+async def list_namespaces(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "workspace:read")
+    return await address_service.list_namespaces(session, principal)
+
+
+@router.post("/namespaces", status_code=201, summary="Register a namespace before writing to it")
+async def register_namespace(
+    body: NamespaceRegisterRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await address_service.register_namespace(
+        session,
+        principal,
+        namespace=body.namespace,
+        purpose=body.purpose,
+        doc_type_default=body.doc_type_default,
+        write_policy=body.write_policy,
+    )
+
+
+@router.post(
     "/documents/{doc_key:path}/restore",
     response_model=DocumentMutationResponse,
     summary="Restore a soft-archived shared document (creator or commander)",
@@ -834,6 +1028,9 @@ async def dereference(
         body.uri,
         include_unverified=body.include_unverified,
         include_tainted=body.include_tainted,
+        expand_parts=body.expand_parts,
+        content_offset=body.content_offset,
+        content_limit=body.content_limit,
     )
 
 
@@ -953,4 +1150,12 @@ async def stats(
     session: AsyncSession = Depends(get_db),
 ) -> WorkspaceStatsResponse:
     require_permission(principal, "workspace:read")
-    return await services.workspace_stats(session, principal.workspace)
+    return await services.workspace_stats(
+        session,
+        principal.workspace,
+        allowed_namespaces=(
+            None
+            if principal.is_commander or "*" in principal.allowed_namespaces
+            else principal.allowed_namespaces
+        ),
+    )

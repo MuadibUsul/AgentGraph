@@ -14,6 +14,7 @@ from sqlalchemy import (
     Computed,
     DateTime,
     Enum,
+    FetchedValue,
     Float,
     ForeignKey,
     Index,
@@ -74,6 +75,11 @@ def _enum_values(members: type[enum.Enum]) -> list[str]:
 class Workspace(Base):
     __tablename__ = "workspaces"
 
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
         server_default=text("uuid_generate_v4()"),
@@ -84,7 +90,109 @@ class Workspace(Base):
         String(32), nullable=False, default="developer_5usd",
         server_default=text("'developer_5usd'"),
     )
+    # The workspace key is this workspace's root token (PRD AG-ID-03).
+    root_token_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    # Server-derived: a trigger creates a root tenant when none is supplied.
+    tenant_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("tenants.id"), nullable=False,
+        server_default=FetchedValue(),
+    )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow,
+        server_default=func.now(),
+    )
+
+    __mapper_args__ = {"eager_defaults": True}
+
+
+class Tenant(Base):
+    """A node of the tenant tree (PRD AG-ID-07); path/root/depth are trigger-maintained."""
+
+    __tablename__ = "tenants"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    alias: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    tenant_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    parent_tenant_id: Mapped[str | None] = mapped_column(
+        String(40), ForeignKey("tenants.id"), nullable=True
+    )
+    root_tenant_id: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=FetchedValue()
+    )
+    path: Mapped[list[str]] = mapped_column(
+        ARRAY(String(40)), nullable=False, server_default=FetchedValue()
+    )
+    depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=FetchedValue()
+    )
+    billing_owner_tenant_id: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=FetchedValue()
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default=text("'active'")
+    )
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deletion_admin_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deletion_owner_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deletion_owner_confirmed_by: Mapped[str | None] = mapped_column(
+        String(256), nullable=True
+    )
+    purge_after: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    final_export_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    signing_key_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default=FetchedValue()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow,
+        server_default=func.now(),
+    )
+
+    __mapper_args__ = {"eager_defaults": True}
+
+
+class Membership(Base):
+    """A human's role on a tenant node (PRD AG-ID-10)."""
+
+    __tablename__ = "memberships"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    principal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("human_users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow,
         server_default=func.now(),
     )
@@ -92,6 +200,19 @@ class Workspace(Base):
 
 class AgentToken(Base):
     __tablename__ = "agent_tokens"
+
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    parent_token_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    root_token_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
+    issued_by_agent_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
@@ -145,6 +266,22 @@ class AgentToken(Base):
 
 class SharedDocument(Base):
     __tablename__ = "shared_documents"
+
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    alias_legacy: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    # Lineage stamps are set by database triggers from app.lineage_stamp.
+    created_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
+    updated_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
@@ -242,6 +379,19 @@ class SharedDocument(Base):
 class ContextSlot(Base):
     __tablename__ = "context_slots"
 
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    # Lineage stamps are set by database triggers from app.lineage_stamp.
+    created_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
+    updated_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
+    __mapper_args__ = {"eager_defaults": True}
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
         server_default=text("uuid_generate_v4()"),
@@ -302,6 +452,19 @@ class ContextSlot(Base):
 class CollabTask(Base):
     __tablename__ = "collab_tasks"
 
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    # Lineage stamps are set by database triggers from app.lineage_stamp.
+    created_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
+    updated_stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
+    __mapper_args__ = {"eager_defaults": True}
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
         server_default=text("uuid_generate_v4()"),
@@ -346,6 +509,18 @@ class CollabTask(Base):
     )
     handoff_brief: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     artifact_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    artifact_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    artifact_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    handed_off_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    review_round: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    review_history: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    handoff_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     human_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     review_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -551,6 +726,11 @@ class StateAuditDiff(Base):
 
 class DocumentVersion(Base):
     __tablename__ = "document_versions"
+
+    stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue()
+    )
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
@@ -858,6 +1038,12 @@ class PathPolicy(Base):
 
 class HumanUser(Base):
     __tablename__ = "human_users"
+
+    # Canonical address (PRD AG-ST-17): <prefix>_<ULID>, assigned by the database.
+    canonical_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -1276,3 +1462,193 @@ class WebhookDelivery(Base):
         UniqueConstraint("rule_id", "event_id", name="uq_webhook_delivery_event"),
         Index("idx_webhook_deliveries_pending", "status", "next_attempt_at"),
     )
+
+
+class AliasRedirect(Base):
+    """A renamed alias that keeps resolving to the same object forever."""
+
+    __tablename__ = "alias_redirects"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    object_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    old_alias: Mapped[str] = mapped_column(String(512), nullable=False)
+    target_canonical_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    renamed_by: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+
+
+class Tombstone(Base):
+    """Content-free record of a purged object; id and alias are never reused."""
+
+    __tablename__ = "tombstones"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    object_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    canonical_id: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    alias: Mapped[str] = mapped_column(String(512), nullable=False)
+    namespace: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    purged_by: Mapped[str] = mapped_column(String(256), nullable=False)
+    purged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class NamespaceRecord(Base):
+    """Register-before-use namespace registry (PRD AG-ST-17 point 7)."""
+
+    __tablename__ = "namespaces"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    namespace: Mapped[str] = mapped_column(String(64), nullable=False)
+    purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    doc_type_default: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="collaborative",
+        server_default=text("'collaborative'"),
+    )
+    write_policy: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="open", server_default=text("'open'")
+    )
+    auto_registered: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    created_by: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+
+
+class DocumentRef(Base):
+    """A declared {"$ref"} edge from a document version's frontmatter."""
+
+    __tablename__ = "document_refs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shared_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    field_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    target_canonical_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    target_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="declared", server_default=text("'declared'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+
+
+class GrantSnapshot(Base):
+    """Immutable record of what a token was granted when issued (PRD AG-ID-03)."""
+
+    __tablename__ = "grant_snapshots"
+
+    id: Mapped[str] = mapped_column(
+        String(40), primary_key=True, server_default=FetchedValue()
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    token_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    token_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    parent_token_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    principal_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    role_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    scopes: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    namespaces: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    can_issue: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    max_descendants: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    budget_limits: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ttl_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+    issuer_stamp: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    parent_effective_grant_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    grant_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    backfilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    __mapper_args__ = {"eager_defaults": True}
+
+
+class ConstitutionAck(Base):
+    """The constitution version a principal has confirmed reading (AG-OB-01)."""
+
+    __tablename__ = "constitution_acks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    principal_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    acked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+
+
+class AccessAudit(Base):
+    """Append-only audit of reads such as agent.oriented."""
+
+    __tablename__ = "access_audit"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+
+
+class DocumentIndex(Base):
+    """Index status and embedding job of one document (PRD AG-ST-13)."""
+
+    __tablename__ = "document_index"
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shared_documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    pending_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    indexed_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    superseded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_lag_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+

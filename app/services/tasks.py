@@ -38,11 +38,13 @@ from app.models import (
     CollabTask,
     ContextSlot,
     LinkType,
-    SharedDocument,
     TaskStatus,
     WorkspaceLink,
 )
 from app.schemas import (
+    REVIEW_APPROVE_STATUSES,
+    REVIEW_NEXT_STATUSES,
+    REVIEW_REJECT_STATUSES,
     DocumentSummary,
     SlotOut,
     TaskActionResponse,
@@ -57,6 +59,7 @@ from app.schemas import (
     TaskRenewRequest,
     TaskReviewRequest,
 )
+from app.services import addresses as address_service
 from app.services.common import (
     append_event,
     db_now,
@@ -68,7 +71,11 @@ from app.services.common import (
     task_summary,
     utcnow,
 )
-from app.services.documents import create_artifact, verify_artifact_for_review
+from app.services.documents import (
+    bind_task_artifact,
+    create_artifact,
+    verify_artifact_for_review,
+)
 from app.services.links import add_link
 from app.services.policies import enforce_policy
 from app.services.taint import refresh_task_taint
@@ -94,7 +101,9 @@ async def _record_task_failure(
     """
     try:
         async with async_session_factory() as log_session:
-            await activate_tenant(log_session, principal.workspace.id)
+            await activate_tenant(
+                log_session, principal.workspace.id, principal.tenant_scope
+            )
             task = await log_session.scalar(
                 select(CollabTask).where(
                     CollabTask.workspace_id == principal.workspace.id,
@@ -149,13 +158,10 @@ async def _get_task(
     *,
     for_update: bool = False,
 ) -> CollabTask:
-    query = select(CollabTask).where(
-        CollabTask.workspace_id == workspace_id,
-        CollabTask.task_key == task_key,
+    # Accepts a canonical id (task_…), the task_key or a redirected key.
+    task = await address_service.find_task(
+        session, workspace_id, task_key, for_update=for_update
     )
-    if for_update:
-        query = query.with_for_update()
-    task = (await session.execute(query)).scalar_one_or_none()
     if task is None:
         raise NotFound("collab_task", f"task '{task_key}' not found")
     return task
@@ -195,6 +201,34 @@ def _require_claim_owner(task: CollabTask, principal: Principal, agent: str) -> 
             "only the agent that claimed this task may hand it off",
             details={"task_key": task.task_key, "claimed_by": task.claimed_by},
         )
+
+
+def validate_review_next_status(decision: str, next_status: str | None) -> None:
+    """Single validator for REST and MCP review targets (PRD AG-CO-01 #1)."""
+    if next_status is None:
+        return
+    allowed = REVIEW_APPROVE_STATUSES if decision == "approve" else REVIEW_REJECT_STATUSES
+    if next_status not in allowed:
+        raise ApiError(
+            422,
+            "validation_error",
+            f"next_status '{next_status}' is not valid for decision '{decision}'",
+            details={
+                "field": "next_status",
+                "allowed": list(allowed),
+                "all": list(REVIEW_NEXT_STATUSES),
+            },
+        )
+
+
+def _resolve_review_history(history: list[Any] | None) -> list[Any]:
+    resolved = []
+    now = utcnow().isoformat()
+    for entry in history or []:
+        if isinstance(entry, dict) and entry.get("resolved_at") is None:
+            entry = {**entry, "resolved_at": now}
+        resolved.append(entry)
+    return resolved
 
 
 def _clear_lease(task: CollabTask) -> None:
@@ -282,14 +316,16 @@ async def _context_documents(
         keys.extend(str(item) for item in many if isinstance(item, str))
     if not keys:
         return []
-    docs = (
-        await session.execute(
-            select(SharedDocument).where(
-                SharedDocument.workspace_id == task.workspace_id,
-                SharedDocument.doc_key.in_(keys),
-            )
-        )
-    ).scalars().all()
+    # Resolve each pointer by id, alias or redirect so renames never break
+    # a task's context (PRD AG-ST-17 acceptance 1).
+    docs = []
+    for key in dict.fromkeys(keys):
+        try:
+            document = await address_service.find_document(session, task.workspace_id, key)
+        except ApiError:
+            document = None
+        if document is not None:
+            docs.append(document)
     allowed = (
         None
         if principal.is_commander or "*" in principal.allowed_namespaces
@@ -312,6 +348,7 @@ async def _create_task_core(
     require_permission(principal, "task:create")
     namespace = request.namespace or "default"
     ensure_namespace(principal, namespace, write=True)
+    await address_service.ensure_namespace_registered(session, principal, namespace)
     task_key = request.task_key or f"TASK-{uuid.uuid4().hex[:8].upper()}"
     await enforce_policy(
         session,
@@ -723,17 +760,33 @@ async def handoff_task(
             "ambiguous_artifact",
             "provide artifact_text or artifact_uri, not both",
         )
+    artifact_version: int | None = None
+    artifact_hash: str | None = None
     if request.artifact_text:
-        _, artifact_uri = await create_artifact(
+        # Handoff artifacts are new documents: the same create permission and
+        # path policy as a direct document write apply.
+        require_permission(principal, "doc:create")
+        artifact_doc, artifact_uri = await create_artifact(
             session,
             workspace=principal.workspace,
+            principal=principal,
             task=task,
             agent=agent,
             artifact_text=request.artifact_text,
             risk_flag=bool(brief.get("risk_flag")) if brief else False,
             batch_id=batch,
         )
+        artifact_version = artifact_doc.version
+        artifact_hash = artifact_doc.content_hash
+    elif artifact_uri:
+        artifact_version, artifact_hash = await bind_task_artifact(
+            session, principal, task, artifact_uri.removeprefix("doc://")
+        )
 
+    if request.next_status == "REVIEWING":
+        # Resubmission resolves the outstanding feedback (PRD AG-CO-01 #3).
+        task.review_history = _resolve_review_history(task.review_history)
+        task.handoff_lease_expires_at = task.lease_expires_at
     if request.next_status == "REVIEWING" and (
         task.review_feedback is not None or task.reviewed_by is not None
     ):
@@ -761,6 +814,9 @@ async def handoff_task(
     task.status = TaskStatus(request.next_status)
     task.handoff_brief = brief
     task.artifact_uri = artifact_uri
+    task.artifact_version = artifact_version
+    task.artifact_hash = artifact_hash
+    task.handed_off_by = agent
     task.output_artifact = request.output_artifact
     task.human_feedback = request.human_feedback if principal.is_human else None
     _clear_lease(task)
@@ -839,6 +895,7 @@ async def review_task(
 ) -> TaskActionResponse:
     if not (principal.is_commander or can(principal, "task:review")):
         require_permission(principal, "task:review")
+    validate_review_next_status(request.decision, request.next_status)
     agent = effective_agent(principal, request.agent)
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
@@ -853,16 +910,30 @@ async def review_task(
             raise Forbidden(
                 "a human account is required to resolve a task awaiting human review"
             )
+    if (
+        request.decision == "approve"
+        and not principal.is_human
+        and task.handed_off_by in (agent, principal.agent_signature)
+    ):
+        # Rejecting one's own work is harmless; approving it is self-certification.
+        raise Forbidden(
+            "an agent cannot approve a task it handed off; another reviewer "
+            "or a human must decide"
+        )
     _check_version(task, request.expected_version)
     _check_lease(task, agent)
     before = task_snapshot(task)
     human_decision = principal.is_human and principal.is_commander
     escalated = False
 
-    task.review_feedback = request.feedback
     task.reviewed_by = principal.agent_signature
     artifact_verified = False
+    effective_status: TaskStatus | None = None
+    reassigned: bool | None = None
     if request.decision == "approve":
+        # review_feedback means "not yet addressed"; an approval leaves none.
+        task.review_feedback = None
+        task.review_history = _resolve_review_history(task.review_history)
         next_status = request.next_status or "DONE"
         task.status = TaskStatus(next_status)
         if human_decision:
@@ -885,10 +956,27 @@ async def review_task(
                     batch=batch,
                     task_key=task.task_key,
                     note=request.feedback,
+                    expected_version=task.artifact_version,
+                    expected_hash=task.artifact_hash,
                 )
             except ApiError:
                 artifact_verified = False
     else:
+        task.review_feedback = request.feedback
+        task.review_round += 1
+        history = list(task.review_history or [])
+        history.append(
+            {
+                "round": task.review_round,
+                "reviewer": principal.agent_signature,
+                "decision": request.decision,
+                "next_status": request.next_status or "READY",
+                "review_feedback": request.feedback,
+                "created_at": utcnow().isoformat(),
+                "resolved_at": None,
+            }
+        )
+        task.review_history = history[-settings.max_reject_history :]
         task.ping_pong_count += 1
         entry = {
             "by": agent,
@@ -900,6 +988,7 @@ async def review_task(
         history = list(task.reject_history or [])
         history.append(entry)
         task.reject_history = history[-settings.max_reject_history :]
+        rework = request.next_status == "IN_PROGRESS"
         if human_decision:
             task.human_feedback = request.feedback
             task.status = TaskStatus.READY
@@ -912,6 +1001,18 @@ async def review_task(
             task.status = TaskStatus.READY
             event_type = "TASK_REJECTED"
         _clear_lease(task)
+        if rework and not escalated:
+            now = await db_now(session)
+            expiry = task.handoff_lease_expires_at
+            if task.handed_off_by and expiry is not None and expiry > now:
+                # Back to the same executor under the lease it still had.
+                task.status = TaskStatus.IN_PROGRESS
+                task.claimed_by = task.handed_off_by
+                task.lease_owner = task.handed_off_by
+                task.lease_expires_at = expiry
+            reassigned = False
+            effective_status = task.status
+            event_type = "TASK_RETURNED_FOR_REWORK"
         task.version += 1
         task.updated_at = utcnow()
 
@@ -947,6 +1048,8 @@ async def review_task(
     return TaskActionResponse(
         task=task_out(task),
         escalated=escalated,
+        effective_status=effective_status,
+        reassigned=reassigned,
         session_batch_id=batch,
         status=task.status,
         version=task.version,

@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.admin_routes import router as admin_router
@@ -28,11 +29,13 @@ from app.api.v1_routes import router as v1_router
 from app.config import get_settings
 from app.database import apply_schema, check_database, engine
 from app.engine.embeddings import close_embedding_provider, configured_embedding_model
-from app.errors import ApiError
+from app.errors import ApiError, error_body
 from app.events import event_bus
 from app.mcp_server.server import create_http_app, mcp
 from app.middleware import RequestContextMiddleware
+from app.protocol_middleware import ProtocolMiddleware
 from app.services.external_actions import external_action_loop
+from app.services.indexer import index_worker_loop
 from app.services.reaper import lease_reaper_loop
 from app.services.webhooks import webhook_delivery_loop
 
@@ -62,6 +65,14 @@ async def lifespan(app: FastAPI):
             )
     if settings.auto_init_db:
         await apply_schema()
+        # One-time, idempotent: constitution + namespace readme stubs (AG-OB-02).
+        from app.database import async_session_factory
+        from app.services.onboarding import backfill_all_workspaces
+
+        async with async_session_factory() as session:
+            scaffolded = await backfill_all_workspaces(session)
+        if scaffolded:
+            logger.info("scaffolded conventions for %s workspace(s)", scaffolded)
     await event_bus.start()
     reaper_task = asyncio.create_task(
         lease_reaper_loop(), name="agentgraph-lease-reaper"
@@ -72,6 +83,7 @@ async def lifespan(app: FastAPI):
     action_task = asyncio.create_task(
         external_action_loop(), name="agentgraph-external-action-dispatcher"
     )
+    index_task = asyncio.create_task(index_worker_loop(), name="agentgraph-index-worker")
     try:
         if settings.mcp_enabled:
             async with mcp.session_manager.run():
@@ -84,9 +96,9 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
-        for task in (reaper_task, webhook_task, action_task):
+        for task in (reaper_task, webhook_task, action_task, index_task):
             task.cancel()
-        for task in (reaper_task, webhook_task, action_task):
+        for task in (reaper_task, webhook_task, action_task, index_task):
             with suppress(asyncio.CancelledError):
                 await task
         await event_bus.stop()
@@ -165,13 +177,15 @@ async def security_headers(request: Request, call_next):
 
 
 app.add_middleware(RequestContextMiddleware)
+# Inside CORS so protocol errors (unsupported_api_version) still carry CORS headers.
+app.add_middleware(ProtocolMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID", "AgentGraph-Version", "Idempotent-Replayed", "Retry-After"],
 )
 
 app.include_router(v1_router)
@@ -216,13 +230,9 @@ async def validation_error_handler(
     ]
     return JSONResponse(
         status_code=422,
-        content={
-            "error": {
-                "code": "validation_error",
-                "message": "request validation failed",
-                "details": details,
-            }
-        },
+        content=error_body(
+            "validation_error", "request validation failed", 422, details=details
+        ),
     )
 
 
@@ -232,10 +242,29 @@ async def http_error_handler(
 ) -> JSONResponse:
     message = str(exc.detail) if exc.detail else "HTTP error"
     code = "not_found" if exc.status_code == 404 else "http_error"
+    headers = getattr(exc, "headers", None) or {}
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": {"code": code, "message": message}},
-        headers=getattr(exc, "headers", None) or {},
+        content=error_body(code, message, exc.status_code, headers=headers),
+        headers=headers,
+    )
+
+
+@app.exception_handler(SQLAlchemyTimeoutError)
+async def overload_handler(request: Request, exc: SQLAlchemyTimeoutError) -> JSONResponse:
+    """Connection pool exhausted: a distinguishable, retryable 503 (AG-ST-06)."""
+    logger.warning("database pool exhausted on %s", request.url.path)
+    headers = {"Retry-After": "1"}
+    return JSONResponse(
+        status_code=503,
+        content=error_body(
+            "overloaded",
+            "the server is at capacity; retry after the indicated delay",
+            503,
+            details={"retry_after_ms": 1000},
+            headers=headers,
+        ),
+        headers=headers,
     )
 
 
@@ -246,12 +275,11 @@ async def database_error_handler(
     logger.exception("database error")
     return JSONResponse(
         status_code=503,
-        content={
-            "error": {
-                "code": "database_unavailable",
-                "message": "database operation failed",
-            }
-        },
+        content=error_body(
+            "database_unavailable", "database operation failed", 503,
+            headers={"Retry-After": "2"},
+        ),
+        headers={"Retry-After": "2"},
     )
 
 
@@ -260,9 +288,7 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
     logger.exception("unhandled error")
     return JSONResponse(
         status_code=500,
-        content={
-            "error": {"code": "internal_error", "message": "internal server error"}
-        },
+        content=error_body("internal_error", "internal server error", 500),
     )
 
 
@@ -321,7 +347,12 @@ async def root(request: Request) -> Any:
         "mcp": "/mcp/" if settings.mcp_enabled else None,
         "dashboard": "/dashboard/" if dashboard_dir.is_dir() else None,
         "agent_docs": "/v1/agent-docs",
+        "first_call": "get_orientation",
         "primitives": [
+            "get_orientation",
+            "ack_constitution",
+            "get_usage",
+            "get_index_status",
             "workspace_sync",
             "create_task",
             "review_task",
@@ -339,6 +370,14 @@ async def root(request: Request) -> Any:
             "dereference_many",
             "archive_document",
             "restore_document",
+            "rename_document",
+            "register_namespace",
+            "list_namespaces",
+            "get_token",
+            "get_lineage",
+            "list_token_tree",
+            "explain_write",
+            "register_parts",
             "propose_document_change",
             "vote_on_proposal",
             "list_document_proposals",

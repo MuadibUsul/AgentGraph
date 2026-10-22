@@ -36,6 +36,7 @@ from app.schemas import (
     SlotPatchRequest,
     SlotReplaceRequest,
 )
+from app.services import addresses as address_service
 from app.services.common import (
     append_event,
     db_now,
@@ -165,6 +166,7 @@ async def replace_slot(
             raise VersionConflict("context_slot", None)
         namespace = request.namespace or "default"
         ensure_namespace(principal, namespace, write=True)
+        await address_service.ensure_namespace_registered(session, principal, namespace)
         await enforce_policy(
             session,
             principal,
@@ -224,7 +226,12 @@ async def replace_slot(
         principal, "context_slot", existing.locked_by_human, existing.human_note
     )
     if request.expected_version != existing.version:
-        raise VersionConflict("context_slot", slot_out(existing).model_dump(mode="json"))
+        raise VersionConflict(
+            "context_slot",
+            slot_out(existing).model_dump(mode="json"),
+            expected_version=request.expected_version,
+            include_content=request.return_current_on_conflict,
+        )
     await enforce_policy(
         session,
         principal,
@@ -241,7 +248,12 @@ async def replace_slot(
         session, principal.workspace.id, slot_key, for_update=True
     )
     if slot.version != request.expected_version:
-        raise VersionConflict("context_slot", slot_out(slot).model_dump(mode="json"))
+        raise VersionConflict(
+            "context_slot",
+            slot_out(slot).model_dump(mode="json"),
+            expected_version=request.expected_version,
+            include_content=request.return_current_on_conflict,
+        )
     ensure_not_human_locked(
         principal, "context_slot", slot.locked_by_human, slot.human_note
     )
@@ -369,7 +381,10 @@ async def patch_slot(
     if slot.version != request.expected_version:
         if not request.rebase:
             raise VersionConflict(
-                "context_slot", slot_out(slot).model_dump(mode="json")
+                "context_slot",
+                slot_out(slot).model_dump(mode="json"),
+                expected_version=request.expected_version,
+                include_content=request.return_current_on_conflict,
             )
         base_state = await _slot_base_state(
             session, slot, request.expected_version

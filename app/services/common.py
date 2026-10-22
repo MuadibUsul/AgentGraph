@@ -62,6 +62,7 @@ def iso(value: datetime | None) -> str | None:
 def workspace_info(workspace: Workspace) -> WorkspaceInfo:
     return WorkspaceInfo(
         id=workspace.id,
+        canonical_id=workspace.canonical_id,
         name=workspace.name,
         tier=workspace.tier,
         created_at=workspace.created_at,
@@ -71,6 +72,7 @@ def workspace_info(workspace: Workspace) -> WorkspaceInfo:
 def slot_out(slot: ContextSlot) -> SlotOut:
     return SlotOut(
         id=slot.id,
+        canonical_id=slot.canonical_id,
         slot_key=slot.slot_key,
         goal=slot.goal,
         current_state=slot.current_state or {},
@@ -88,12 +90,14 @@ def slot_out(slot: ContextSlot) -> SlotOut:
         taint_sources=slot.taint_sources or [],
         updated_by=slot.updated_by,
         updated_at=slot.updated_at,
+        updated_stamp=slot.updated_stamp,
     )
 
 
 def slot_summary(slot: ContextSlot) -> SlotSummary:
     return SlotSummary(
         id=slot.id,
+        canonical_id=slot.canonical_id,
         slot_key=slot.slot_key,
         namespace=slot.namespace,
         version=slot.version,
@@ -112,6 +116,8 @@ def task_summary(task: CollabTask) -> TaskSummary:
     brief = task.handoff_brief if isinstance(task.handoff_brief, dict) else {}
     return TaskSummary(
         id=task.id,
+        canonical_id=task.canonical_id,
+        alias=task.task_key,
         task_key=task.task_key,
         title=task.title,
         status=task.status,
@@ -133,6 +139,7 @@ def task_summary(task: CollabTask) -> TaskSummary:
         tainted=task.tainted,
         taint_sources=task.taint_sources or [],
         updated_at=task.updated_at,
+        updated_stamp=task.updated_stamp,
     )
 
 
@@ -145,6 +152,8 @@ def task_out(task: CollabTask) -> TaskOut:
         output_artifact=task.output_artifact or {},
         handoff_brief=task.handoff_brief,
         reject_history=task.reject_history or [],
+        review_round=task.review_round,
+        review_history=task.review_history or [],
         created_by=task.created_by,
         created_at=task.created_at,
     )
@@ -168,6 +177,8 @@ def document_summary(
         frontmatter = _compact_frontmatter(frontmatter)
     return DocumentSummary(
         id=document.id,
+        canonical_id=document.canonical_id,
+        alias=document.doc_key,
         doc_key=document.doc_key,
         title=document.title,
         namespace=document.namespace,
@@ -188,6 +199,8 @@ def document_summary(
         archive_reason=document.archive_reason,
         updated_by=document.updated_by,
         updated_at=document.updated_at,
+        updated_stamp=document.updated_stamp,
+        **getattr(document, "_index_status", {}),
     )
 
 
@@ -203,6 +216,7 @@ def document_out(
         content=document.content,
         created_by=document.created_by,
         created_at=document.created_at,
+        created_stamp=document.created_stamp,
         agent_view=render_document(
             document,
             include_content=include_content,
@@ -242,6 +256,7 @@ def link_out(link: Any) -> LinkOut:
 def agent_token_out(token: AgentToken) -> AgentTokenOut:
     return AgentTokenOut(
         id=token.id,
+        canonical_id=token.canonical_id,
         agent_signature=token.agent_signature,
         role_scope=token.role_scope.value,
         allowed_namespaces=list(token.allowed_namespaces or ["*"]),
@@ -316,6 +331,12 @@ def task_snapshot(task: CollabTask) -> dict[str, Any]:
         "output_artifact": task.output_artifact or {},
         "handoff_brief": task.handoff_brief,
         "artifact_uri": task.artifact_uri,
+        "artifact_version": task.artifact_version,
+        "artifact_hash": task.artifact_hash,
+        "handed_off_by": task.handed_off_by,
+        "review_round": task.review_round,
+        "review_history": task.review_history or [],
+        "handoff_lease_expires_at": iso(task.handoff_lease_expires_at),
         "human_feedback": task.human_feedback,
         "review_feedback": task.review_feedback,
         "reviewed_by": task.reviewed_by,
@@ -449,3 +470,13 @@ def domain_event_type(table: str | None, action: str | None, payload: Any = None
         ((table or ""), (action or "").upper()),
         f"{table or 'unknown'}.{(action or 'unknown').upper()}",
     )
+
+
+def event_identity(event_id: int) -> dict[str, Any]:
+    """Protocol identity of an outbox event (PRD AG-ST-18 point 2).
+
+    ``event_id`` is globally unique and ``seq`` never reused, so consumers of
+    at-least-once delivery deduplicate by ``event_id`` and resume by ``seq``.
+    """
+    return {"event_id": f"evt_{int(event_id)}", "seq": int(event_id)}
+

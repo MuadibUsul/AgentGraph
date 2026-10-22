@@ -22,7 +22,7 @@ from app.errors import (
     HumanSovereigntyLocked,
     NamespaceForbidden,
 )
-from app.models import AgentToken, HumanSession, HumanUser, Workspace
+from app.models import AgentToken, HumanSession, HumanUser, Tenant, Workspace
 from app.tenant import activate_tenant
 
 settings = get_settings()
@@ -54,6 +54,16 @@ class Principal:
     token_id: uuid.UUID | None = None
     user_id: uuid.UUID | None = None
     human_role: str | None = None
+    tenant: Tenant | None = None
+
+    @property
+    def tenant_id(self) -> str:
+        return self.workspace.tenant_id
+
+    @property
+    def tenant_scope(self) -> list[str]:
+        """Tenant ids this principal may touch (one node in Phase 1)."""
+        return [self.workspace.tenant_id]
 
     @property
     def is_commander(self) -> bool:
@@ -103,7 +113,7 @@ def extract_admin_token(request: Request) -> str | None:
     return header.strip() if header and header.strip() else None
 
 
-async def resolve_principal(
+async def _resolve_principal(
     session: AsyncSession,
     raw_key: str,
     *,
@@ -184,6 +194,77 @@ async def resolve_principal(
     )
 
 
+async def resolve_principal(
+    session: AsyncSession,
+    raw_key: str,
+    *,
+    agent_hint: str | None = None,
+) -> Principal | None:
+    principal = await _resolve_principal(session, raw_key, agent_hint=agent_hint)
+    if principal is None:
+        return None
+    tenant = await session.get(Tenant, principal.workspace.tenant_id)
+    if tenant is None or tenant.status == "deleted":
+        # A purged tenant's credentials behave like unknown keys.
+        return None
+    principal.tenant = tenant
+    return principal
+
+
+# POST endpoints that only read; a suspended tenant may still call them.
+_READ_ONLY_POSTS = frozenset({"/v1/query", "/v1/dereference", "/v1/dereference-many"})
+# Reachable while a tenant is being deleted: owners cancel deletion or fetch
+# the final export, and anyone may sign out.
+_DELETING_ALLOWED = frozenset(
+    {
+        "/v1/human/tenant",
+        "/v1/human/tenant/restore",
+        "/v1/human/tenant/final-export",
+        "/v1/auth/me",
+        "/v1/auth/logout",
+    }
+)
+_SUSPENDED_ALLOWED_WRITES = frozenset({"/v1/auth/logout", "/v1/auth/password"})
+
+
+def is_write_request(method: str, path: str) -> bool:
+    return method.upper() in ("POST", "PUT", "PATCH", "DELETE") and (
+        path not in _READ_ONLY_POSTS
+    )
+
+
+def ensure_tenant_usable(principal: Principal, *, write: bool, path: str = "") -> None:
+    """Apply tenant lifecycle rules (PRD AG-ID-07 points 8 and 10)."""
+    tenant = principal.tenant
+    if tenant is None or principal.auth_kind is AuthKind.HUMAN_ADMIN:
+        return
+    if tenant.status == "deleting" and path not in _DELETING_ALLOWED:
+        raise ApiError(
+            403,
+            "tenant_deleting",
+            "this tenant is scheduled for deletion; only an owner can cancel it "
+            "or download the final export",
+            details={
+                "purge_after": tenant.purge_after.isoformat() if tenant.purge_after else None,
+                "restorable": True,
+                "tenant": tenant.id,
+            },
+        )
+    if tenant.status == "suspended" and write and path not in _SUSPENDED_ALLOWED_WRITES:
+        raise ApiError(
+            403,
+            "tenant_suspended",
+            "this tenant is suspended: reads and exports still work, writes do not",
+            details={
+                "reason_code": tenant.status_reason or "suspended",
+                "since": (
+                    tenant.status_changed_at.isoformat() if tenant.status_changed_at else None
+                ),
+                "contact": "the workspace owner or the AgentGraph operator",
+            },
+        )
+
+
 async def get_principal(
     request: Request,
     session: AsyncSession = Depends(get_db),
@@ -206,7 +287,16 @@ async def get_principal(
             "invalid or inactive API key",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    await activate_tenant(session, principal.workspace.id)
+    ensure_tenant_usable(
+        principal,
+        write=is_write_request(request.method, request.url.path),
+        path=request.url.path,
+    )
+    from app.services.lineage import stamp_for
+    from app.stamp_context import set_current_stamp
+
+    set_current_stamp(await stamp_for(principal))
+    await activate_tenant(session, principal.workspace.id, principal.tenant_scope)
     from app.services.common import set_audit_actor
     from app.services.usage import enforce_rate_limit
 
@@ -279,6 +369,10 @@ async def require_admin(request: Request) -> None:
     from app.services.common import set_audit_actor_values
 
     set_audit_actor_values("human_admin", None, None)
+    from app.services.lineage import ADMIN_STAMP
+    from app.stamp_context import set_current_stamp
+
+    set_current_stamp(dict(ADMIN_STAMP))
     if not settings.admin_token:
         raise ApiError(
             503,

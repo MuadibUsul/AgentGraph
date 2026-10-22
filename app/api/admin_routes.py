@@ -68,6 +68,10 @@ from app.schemas import (
     TaskOut,
     TaskReleaseRequest,
     TaskReviewRequest,
+    TenantDeleteRequest,
+    TenantListResponse,
+    TenantOut,
+    TenantSuspendRequest,
     TimelineListResponse,
     UpdateWorkspaceRequest,
     UsageOut,
@@ -80,6 +84,7 @@ from app.schemas import (
     WorkspaceInfo,
     WorkspaceStatsResponse,
 )
+from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
 from app.services.timeline import list_timeline
 
@@ -1165,3 +1170,62 @@ async def cancel_task(
         reason=body.reason,
         expected_version=body.expected_version,
     )
+
+
+# ---------------------------------------------------------------- tenants
+
+
+@router.get("/tenants", response_model=TenantListResponse, summary="List tenants")
+async def list_tenants(session: AsyncSession = Depends(get_db)) -> TenantListResponse:
+    return await tenant_service.list_tenants(session)
+
+
+@router.get("/tenants/{tenant_id}", response_model=TenantOut, summary="Read a tenant")
+async def get_tenant(
+    tenant_id: str, session: AsyncSession = Depends(get_db)
+) -> TenantOut:
+    return await tenant_service.describe_tenant(session, tenant_id)
+
+
+@router.post(
+    "/tenants/{tenant_id}/suspend",
+    response_model=TenantOut,
+    summary="Suspend a tenant: reads and exports keep working, writes are refused",
+)
+async def suspend_tenant(
+    tenant_id: str,
+    body: TenantSuspendRequest,
+    session: AsyncSession = Depends(get_db),
+) -> TenantOut:
+    return await tenant_service.suspend_tenant(session, tenant_id, body.reason)
+
+
+@router.post("/tenants/{tenant_id}/resume", response_model=TenantOut, summary="Resume")
+async def resume_tenant(
+    tenant_id: str, session: AsyncSession = Depends(get_db)
+) -> TenantOut:
+    return await tenant_service.resume_tenant(session, tenant_id)
+
+
+@router.post(
+    "/tenants/{tenant_id}/delete",
+    response_model=TenantOut,
+    summary="Operator confirmation of tenant deletion (an owner must also confirm)",
+)
+async def delete_tenant(
+    tenant_id: str,
+    body: TenantDeleteRequest,
+    session: AsyncSession = Depends(get_db),
+) -> TenantOut:
+    return await tenant_service.admin_confirm_deletion(session, tenant_id, body.confirm)
+
+
+@router.post(
+    "/tenants/{tenant_id}/restore",
+    response_model=TenantOut,
+    summary="Cancel a pending or in-grace tenant deletion",
+)
+async def restore_tenant(
+    tenant_id: str, session: AsyncSession = Depends(get_db)
+) -> TenantOut:
+    return await tenant_service.restore_tenant(session, tenant_id)

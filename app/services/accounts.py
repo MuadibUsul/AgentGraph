@@ -34,6 +34,7 @@ from app.schemas import (
     HumanUserUpdateRequest,
 )
 from app.services.common import workspace_info
+from app.services.tenants import sync_membership
 
 settings = get_settings()
 _PASSWORD_LIMITER = anyio.CapacityLimiter(4)
@@ -157,6 +158,8 @@ async def create_human_user(
     )
     session.add(user)
     try:
+        await session.flush()
+        await sync_membership(session, user)
         await session.commit()
     except Exception:
         await session.rollback()
@@ -190,6 +193,7 @@ async def update_human_user(
         user.display_name = request.display_name
     if request.role is not None:
         user.role = request.role
+        await sync_membership(session, user)
     if request.is_active is not None:
         user.is_active = request.is_active
         if not request.is_active:
@@ -286,6 +290,10 @@ async def _provision_account(
     except IntegrityError:
         await session.rollback()
         raise ApiError(409, "human_user_exists", "this email already has an account") from None
+    await sync_membership(session, user)
+    from app.services.onboarding import scaffold_new_workspace
+
+    await scaffold_new_workspace(session, workspace.id)
     return user, workspace
 
 

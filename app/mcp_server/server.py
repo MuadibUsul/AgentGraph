@@ -13,28 +13,40 @@ from mcp import types
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import Field, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app import services
-from app.auth import PERMISSIONS, AuthKind, Principal, resolve_principal
+from app import agent_guide, services, warnings_context
+from app.auth import (
+    PERMISSIONS,
+    AuthKind,
+    Principal,
+    ensure_tenant_usable,
+    resolve_principal,
+)
 from app.config import get_settings
 from app.database import async_session_factory
+from app.error_registry import classify, protocol_docs, retry_after_ms
 from app.errors import ApiError
+from app.models import Tenant
 from app.schemas import (
+    REVIEW_APPROVE_STATUSES,
+    REVIEW_REJECT_STATUSES,
     DocumentArchiveRequest,
     DocumentBatchUpsertItem,
     DocumentBatchUpsertRequest,
     DocumentQueryRequest,
+    DocumentRenameRequest,
     DocumentSectionPatchRequest,
     DocumentUpsertRequest,
     ExternalActionCreateRequest,
     HandoffBrief,
     ProposalCreateRequest,
     ProposalVoteRequest,
+    RegisterPartsRequest,
     SlotPatchRequest,
     TaskClaimRequest,
     TaskCreateRequest,
@@ -42,8 +54,16 @@ from app.schemas import (
     TaskHandoffRequest,
     TaskReviewRequest,
 )
+from app.services import addresses as address_service
+from app.services import budget as budget_service
+from app.services import idempotency, indexer
+from app.services import lineage as lineage_service
+from app.services import orientation as orientation_service
 from app.services.common import set_event_platform
+from app.services.lineage import stamp_for
+from app.stamp_context import set_current_stamp
 from app.tenant import activate_tenant
+from app.versioning import current_version
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -51,7 +71,109 @@ settings = get_settings()
 _request_principal: ContextVar[Principal | None] = ContextVar(
     "agentgraph_mcp_principal", default=None
 )
+_request_credential: ContextVar[str | None] = ContextVar(
+    "agentgraph_mcp_credential", default=None
+)
 _stdio_principal: Principal | None = None
+_current_tool: ContextVar[str | None] = ContextVar("agentgraph_mcp_tool", default=None)
+
+# Write tools that take a generic ``idempotency_key`` (PRD AG-ST-18 point 1).
+# draft_external_action keeps its own action-level idempotency_key.
+IDEMPOTENT_TOOLS = frozenset(
+    {
+        "create_task",
+        "review_task",
+        "request_human_review",
+        "agent_claim_and_read",
+        "agent_patch_shared_state",
+        "agent_handoff_task",
+        "agent_escalate_to_human",
+        "upsert_shared_doc",
+        "upsert_many",
+        "patch_doc_section",
+        "propose_document_change",
+        "vote_on_proposal",
+        "archive_document",
+        "restore_document",
+        "register_namespace",
+        "rename_document",
+        "register_parts",
+        "ack_constitution",
+    }
+)
+_CONTENT_BLOCK = TypeAdapter(types.ContentBlock)
+
+
+def _dump_result(result: Any) -> dict[str, Any]:
+    def blocks(items: Any) -> list[Any]:
+        return [item.model_dump(mode="json", by_alias=True) for item in items]
+
+    if isinstance(result, tuple) and len(result) == 2:
+        return {"kind": "tuple", "content": blocks(result[0]), "structured": result[1]}
+    if isinstance(result, dict):
+        return {"kind": "dict", "structured": result}
+    return {"kind": "content", "content": blocks(result)}
+
+
+def _mark_replayed_text(block: Any) -> Any:
+    if getattr(block, "type", None) == "text":
+        try:
+            payload = json.loads(block.text)
+        except (TypeError, ValueError):
+            return block
+        if isinstance(payload, dict):
+            payload["replayed"] = True
+            return types.TextContent(
+                type="text", text=json.dumps(payload, ensure_ascii=False, default=str)
+            )
+    return block
+
+
+def _merge_text_block(block: Any, collected: list[dict[str, Any]]) -> Any:
+    if getattr(block, "type", None) != "text":
+        return block
+    try:
+        payload = json.loads(block.text)
+    except (TypeError, ValueError):
+        return block
+    if not isinstance(payload, dict):
+        return block
+    return types.TextContent(
+        type="text",
+        text=json.dumps(
+            warnings_context.merge_warnings(payload, collected), ensure_ascii=False, default=str
+        ),
+    )
+
+
+def _with_warnings(result: Any, collected: list[dict[str, Any]]) -> Any:
+    """Attach soft-constraint warnings (PRD §6 warnings[]) to a tool result."""
+    if not collected or isinstance(result, types.CallToolResult):
+        return result
+    if isinstance(result, tuple) and len(result) == 2:
+        content, structured = result
+        return (
+            [_merge_text_block(block, collected) for block in content],
+            warnings_context.merge_warnings(structured, collected),
+        )
+    if isinstance(result, dict):
+        return warnings_context.merge_warnings(result, collected)
+    return [_merge_text_block(block, collected) for block in result]
+
+
+def _load_result(stored: dict[str, Any]) -> Any:
+    content = [
+        _mark_replayed_text(_CONTENT_BLOCK.validate_python(item))
+        for item in stored.get("content") or []
+    ]
+    structured = stored.get("structured")
+    if isinstance(structured, dict):
+        structured = {**structured, "replayed": True}
+    if stored.get("kind") == "tuple":
+        return content, structured
+    if stored.get("kind") == "dict":
+        return structured
+    return content
 
 def _error_envelope(exc: ToolError) -> dict[str, Any]:
     """Turn FastMCP/pydantic/tool errors into one JSON envelope.
@@ -115,10 +237,28 @@ class AgentGraphFastMCP(FastMCP):
     async def call_tool(
         self, name: str, arguments: dict[str, Any]
     ) -> types.CallToolResult | Any:
+        _current_tool.set(name)
+        collected = warnings_context.begin_collection()
+        result = await self._dispatch(name, arguments)
+        return _with_warnings(result, collected)
+
+    async def _dispatch(self, name: str, arguments: dict[str, Any]) -> Any:
         try:
-            return await super().call_tool(name, arguments)
+            key = None
+            if name in IDEMPOTENT_TOOLS and isinstance(arguments, dict):
+                arguments = dict(arguments)
+                key = arguments.pop("idempotency_key", None)
+            if key is None:
+                return await super().call_tool(name, arguments)
+            return await self._call_idempotent(name, arguments, key)
         except ToolError as exc:
             envelope = _error_envelope(exc)
+            for key, value in classify(
+                envelope["code"],
+                int(envelope.get("http_status") or 400),
+                details=envelope.get("details"),
+            ).items():
+                envelope.setdefault(key, value)
             return types.CallToolResult(
                 content=[
                     types.TextContent(
@@ -130,11 +270,52 @@ class AgentGraphFastMCP(FastMCP):
                 isError=True,
             )
 
+    async def _call_idempotent(
+        self, name: str, arguments: dict[str, Any], raw_key: Any
+    ) -> Any:
+        credential = _request_credential.get() or settings.mcp_api_key
+        if not isinstance(raw_key, str) or not credential:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "validation_error",
+                        "http_status": 422,
+                        "message": "idempotency_key must be a string",
+                        "details": {"field": "idempotency_key"},
+                    }
+                )
+            )
+        try:
+            key = idempotency.validate_key(raw_key)
+            principal = idempotency.credential_hash(credential)
+            tool = f"mcp:{name}"
+            body_hash = idempotency.request_hash(tool, current_version(), arguments)
+            replay = await idempotency.begin(principal, tool, key, body_hash)
+        except idempotency.UnknownCredential:
+            return await super().call_tool(name, arguments)
+        except ApiError as exc:
+            raise ToolError(str(_api_error(exc))) from exc
+        if replay is not None:
+            return _load_result(replay.response or {})
+        try:
+            result = await super().call_tool(name, arguments)
+        except BaseException:
+            await idempotency.abort(principal, tool, key)
+            raise
+        try:
+            await idempotency.complete(principal, tool, key, 200, _dump_result(result))
+        except Exception:  # noqa: BLE001 - bookkeeping must not fail a finished call
+            logger.exception("could not store MCP idempotency record")
+            await idempotency.abort(principal, tool, key)
+        return result
+
 
 mcp = AgentGraphFastMCP(
     name="AgentGraph",
     instructions=(
         "A human-in-the-loop shared blackboard for multi-agent teams. "
+        "FIRST CALL get_orientation: it returns your identity, the constitution, "
+        "namespaces, your tasks and next_calls. "
         "Use workspace_sync for the L0 map, create_task to create work, "
         "agent_claim_and_read to claim a task and read only L1 briefs, "
         "agent_patch_shared_state for JSON Patch updates to leases, "
@@ -209,9 +390,11 @@ class MCPAuthMiddleware:
             await self._unauthorized(scope, receive, send)
             return
         token = _request_principal.set(principal)
+        credential_token = _request_credential.set(raw_key)
         try:
             await self.app(scope, receive, send)
         finally:
+            _request_credential.reset(credential_token)
             _request_principal.reset(token)
 
     @staticmethod
@@ -245,7 +428,22 @@ async def _principal_for_call(session: AsyncSession) -> Principal:
                     "invalid_api_key", "MCP_API_KEY is invalid or inactive", 401
                 )
             _stdio_principal = principal
-    await activate_tenant(session, principal.workspace.id)
+    # Re-read the tenant on every call so suspension/deletion apply at once,
+    # including to the long-lived stdio principal.
+    principal.tenant = await session.get(Tenant, principal.workspace.tenant_id)
+    if principal.tenant is None or principal.tenant.status == "deleted":
+        raise _tool_error("unauthorized", "invalid or inactive API key", 401)
+    tool_name = _current_tool.get()
+    try:
+        ensure_tenant_usable(
+            principal,
+            write=tool_name in IDEMPOTENT_TOOLS or tool_name == "draft_external_action",
+            path=f"mcp:{tool_name}",
+        )
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+    set_current_stamp(await stamp_for(principal))
+    await activate_tenant(session, principal.workspace.id, principal.tenant_scope)
     from app.services.common import set_audit_actor
     from app.services.usage import enforce_rate_limit
 
@@ -305,12 +503,53 @@ def _validation_error(exc: ValidationError) -> ToolError:
 
 
 def _api_error(exc: ApiError) -> ToolError:
-    return _tool_error(
-        exc.code, exc.message, exc.status_code, exc.details
-    )
+    details = exc.details
+    delay = retry_after_ms(exc.headers)
+    if delay is not None:
+        # MCP has no headers: carry Retry-After as retry_after_ms (PRD §6).
+        details = {**(details if isinstance(details, dict) else {}), "retry_after_ms": delay}
+        if exc.details is not None and not isinstance(exc.details, dict):
+            details["detail"] = exc.details
+    return _tool_error(exc.code, exc.message, exc.status_code, details)
 
 
 # ------------------------------------------------------------------- tools
+
+
+@mcp.tool(name="get_orientation")
+async def get_orientation(
+    sections: list[str] | None = None,
+    max_bytes: Annotated[int, Field(ge=4_096, le=131_072)] = 32_768,
+) -> dict[str, Any]:
+    """Call this first after connecting.
+
+    Returns who you are (role, token, scopes), the workspace constitution,
+    the namespace map with your access, collaborators, your open tasks,
+    claimable tasks, required reading (constitution first), an event cursor,
+    the conventions and limits, and next_calls: ready-to-run calls that follow
+    the rules. Over max_bytes, optional detail is truncated (marked truncated).
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await orientation_service.build(
+                session, principal, sections=sections, max_bytes=max_bytes
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="ack_constitution")
+async def ack_constitution(version: int) -> dict[str, Any]:
+    """Record that you read this constitution version (get_orientation.ack_required)."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await orientation_service.ack_constitution(session, principal, version)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
 
 
 @mcp.tool(name="workspace_sync")
@@ -468,7 +707,10 @@ async def review_task(
     decision: Literal["approve", "reject"],
     feedback: str | None = None,
     expected_version: int | None = None,
-    next_status: Literal["DONE", "HANDOFF", "READY"] | None = None,
+    next_status: Annotated[
+        str | None,
+        Field(description=TaskReviewRequest.model_fields["next_status"].description),
+    ] = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -476,11 +718,7 @@ async def review_task(
 
     AWAITING_HUMAN and ESCALATED_TO_HUMAN require an actual human account;
     workspace automation keys cannot resolve them. Rejections increment the
-    ping-pong counter and may escalate to human; a
-    rejected task returns to READY. For reject, omit next_status or use READY
-    (IN_PROGRESS is not a valid review target). Agent review feedback is stored
-    as review_feedback with the reviewer signature, not as human_feedback.
-    This mirrors REST POST /v1/tasks/{key}/review.
+    ping-pong counter and may escalate to human.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -659,6 +897,7 @@ async def agent_patch_shared_state(
             le=settings.max_task_lease_seconds,
         ),
     ] = settings.default_task_lease_seconds,
+    return_current_on_conflict: bool = False,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -672,6 +911,7 @@ async def agent_patch_shared_state(
         principal = await _principal_for_call(session)
         try:
             body = SlotPatchRequest(
+                return_current_on_conflict=return_current_on_conflict,
                 ops=ops,
                 expected_version=expected_version,
                 lease_epoch=lease_epoch,
@@ -781,6 +1021,7 @@ async def upsert_shared_doc(
     expected_version: int = 0,
     namespace: str | None = None,
     include_content: bool = False,
+    return_current_on_conflict: bool = False,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -795,6 +1036,7 @@ async def upsert_shared_doc(
         principal = await _principal_for_call(session)
         try:
             body = DocumentUpsertRequest(
+                return_current_on_conflict=return_current_on_conflict,
                 title=title,
                 content=content,
                 frontmatter=frontmatter or {},
@@ -830,6 +1072,7 @@ async def patch_doc_section(
     new_markdown: str,
     expected_version: int,
     include_content: bool = False,
+    return_current_on_conflict: bool = False,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -841,6 +1084,7 @@ async def patch_doc_section(
         principal = await _principal_for_call(session)
         try:
             body = DocumentSectionPatchRequest(
+                return_current_on_conflict=return_current_on_conflict,
                 section_heading=section_heading,
                 new_markdown=new_markdown,
                 expected_version=expected_version,
@@ -872,17 +1116,25 @@ async def query_workspace(
     query: str | None = None,
     filters: dict[str, Any] | None = None,
     namespace: str | None = None,
-    limit: int = 10,
+    limit: Annotated[int, Field(ge=1, le=50)] = 10,
     include_unverified: bool = False,
+    include_own_unverified: bool = True,
     include_tainted: bool = False,
     include_archived: bool = False,
     mode: str = "hybrid",
 ) -> dict[str, Any]:
-    """Structured + semantic document discovery.
+    """Structured + semantic document discovery (semantic search, NOT exhaustive).
 
-    By default this returns VERIFIED documents plus the caller's own DRAFTs,
-    so a writer can retrieve what it just created; other agents' unverified
-    drafts stay hidden. Set include_unverified=true to search all drafts.
+    This ranks the best matches; it does not guarantee completeness. To
+    enumerate every document in a namespace use list_documents (cursor
+    pagination); for the L0 map and incremental changes use workspace_sync.
+    limit defaults to 10, at most 50.
+
+    include_own_unverified (default true) keeps your own DRAFTs in the results
+    so a writer can retrieve what it just created; include_unverified (default
+    false) adds other agents' unverified drafts. Each hit carries is_own,
+    created_by, trust and matched_chunks; excluded counts what the default
+    filters hid (unverified_by_others, archived, tainted).
 
     filters support scalar equality and {eq, gte, lte, gt, lt, exists}
     operators, e.g. {"status":"DRAFT", "due_at":{"gte":"2026-11-01"},
@@ -898,6 +1150,7 @@ async def query_workspace(
                 namespace=namespace,
                 limit=limit,
                 include_unverified=include_unverified,
+                include_own_unverified=include_own_unverified,
                 include_tainted=include_tainted,
                 include_archived=include_archived,
                 mode=mode,
@@ -915,10 +1168,15 @@ async def dereference(
     uri: str,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    expand_parts: bool = False,
+    content_offset: Annotated[int, Field(ge=0)] = 0,
+    content_limit: Annotated[int | None, Field(ge=1, le=262_144)] = None,
 ) -> dict[str, Any]:
-    """Resolve an L2 artifact/doc URI (doc://<doc_key>) to full content.
+    """Resolve an L2 artifact/doc URI (doc://<doc_key> or a doc_… id) to full content.
 
     Other agents' unverified or tainted documents require the explicit flags.
+    expand_parts=true concatenates frontmatter.parts in index order (<= 4 MiB)
+    into expanded_content; each part keeps its own id.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -929,10 +1187,215 @@ async def dereference(
                 uri,
                 include_unverified=include_unverified,
                 include_tainted=include_tainted,
+                expand_parts=expand_parts,
+                content_offset=content_offset,
+                content_limit=content_limit,
             )
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="register_namespace")
+async def register_namespace(
+    namespace: str,
+    purpose: str | None = None,
+    doc_type_default: Literal["collaborative", "log"] = "collaborative",
+    write_policy: Literal["open", "proposal_required", "human_only"] = "open",
+) -> dict[str, Any]:
+    """Register a namespace before writing to it (register-before-use).
+
+    Namespaces match ^[a-z][a-z0-9-]{1,31}$; system/handoff/reviews/tasks/ag and
+    names starting with _ are reserved. Under API version 2026-11 writing to an
+    unregistered namespace fails with namespace_not_registered; call this, then
+    retry the write unchanged. Idempotent: an existing namespace is returned.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await address_service.register_namespace(
+                session,
+                principal,
+                namespace=namespace,
+                purpose=purpose,
+                doc_type_default=doc_type_default,
+                write_policy=write_policy,
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_namespaces")
+async def list_namespaces() -> dict[str, Any]:
+    """List registered namespaces with their purpose and default document type."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await address_service.list_namespaces(session, principal)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="rename_document")
+async def rename_document(
+    ref: str,
+    new_alias: str,
+    expected_version: int | None = None,
+    session_batch_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """Change a document's alias (doc_key). The canonical id never changes.
+
+    ref accepts the doc_… id or the current alias. The old alias keeps
+    resolving to the same document forever (alias_redirected warning) and is
+    never assigned to another document.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await services.rename_document(
+                session,
+                principal,
+                ref,
+                DocumentRenameRequest(
+                    new_alias=new_alias,
+                    expected_version=expected_version,
+                    session_batch_id=session_batch_id,
+                ),
+            )
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="register_parts")
+async def register_parts(
+    parent_ref: str,
+    part_refs: list[str],
+    session_batch_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """Register existing documents as the ordered parts of parent_ref.
+
+    For content that was split by hand (e.g. to fit an old size limit): writes
+    parts / part_of / part_index frontmatter without moving any content, so
+    dereference(parent, expand_parts=true) returns the joined body.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await services.register_parts(
+                session,
+                principal,
+                parent_ref,
+                RegisterPartsRequest(part_refs=part_refs, session_batch_id=session_batch_id),
+            )
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_index_status")
+async def get_index_status(namespace: str | None = None) -> dict[str, Any]:
+    """Indexing backlog. Under API version 2026-11 writes return before they are
+    searchable (index_state="pending"); query_workspace only sees indexed
+    content. Read by key with dereference, or wait for the DOC_INDEXED event."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            if namespace:
+                from app.auth import ensure_namespace
+
+                ensure_namespace(principal, namespace)
+            result = await indexer.index_status(session, principal.workspace.id, namespace)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_usage")
+async def get_usage(window: Literal["day", "week", "month"] = "day") -> dict[str, Any]:
+    """Embedding tokens used vs quota, writes, would-be limits and open circuits.
+
+    Agents see workspace totals and their own row; humans see every agent.
+    mode="shadow" means limits are recorded (would_*) but not yet enforced.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await budget_service.get_usage(session, principal, window)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_token")
+async def get_token(token_id: str = "self") -> dict[str, Any]:
+    """Inspect a token without its secret: kind, depth, scopes, namespaces, expiry.
+
+    token_id="self" (default) is the calling token. A token may inspect itself,
+    its ancestors and its own subtree; humans and the workspace key see all.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lineage_service.get_token(session, principal, token_id)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_lineage")
+async def get_lineage(token_id: str = "self") -> dict[str, Any]:
+    """Return the chain of tokens from the workspace root token down to token_id."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lineage_service.get_lineage(session, principal, token_id)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_token_tree")
+async def list_token_tree(
+    token_id: str = "self",
+    include_inactive: bool = False,
+    cursor: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=500)] = 100,
+) -> dict[str, Any]:
+    """List descendant tokens of token_id (no secrets). Only your own subtree."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lineage_service.list_token_tree(
+                session,
+                principal,
+                token_id,
+                include_inactive=include_inactive,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="explain_write")
+async def explain_write(ref: str, version: int | None = None) -> dict[str, Any]:
+    """Answer who wrote a document version, who issued their token, and what
+    the token was allowed to do at write time (the grant snapshot)."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lineage_service.explain_write(session, principal, ref, version)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
 
 
 @mcp.tool(name="propose_document_change")
@@ -1262,14 +1725,28 @@ async def restore_document(
 
 
 @mcp.tool(name="get_api_docs")
-async def get_api_docs() -> dict[str, Any]:
+async def get_api_docs(
+    section: Literal[
+        "guide", "errors", "limits", "retry", "events", "tokens", "versions", "all", "overview"
+    ] = "overview",
+) -> dict[str, Any]:
     """Return the REST/MCP connection guide and core request schemas.
 
     Agent-readable; no admin token required. The live OpenAPI document is also
-    available at GET /v1/agent-docs.
+    available at GET /v1/agent-docs. section="retry" returns the canonical
+    backoff algorithm, "errors" the full error-code registry (code -> class ->
+    action), "versions" the supported API versions.
     """
+    guide = agent_guide.sections()
+    if section == "all":
+        return _compact({**guide, "versions": protocol_docs("versions")["versions"]})
+    if section in ("guide", "limits", "events", "tokens"):
+        return _compact({section: guide[section]})
+    if section != "overview":
+        return _compact(protocol_docs(section))
     return _compact(
         {
+            "protocol": protocol_docs("summary"),
             "name": "AgentGraph",
             "version": settings.app_version,
             "rest_base": "/v1",
@@ -1286,7 +1763,11 @@ async def get_api_docs() -> dict[str, Any]:
                 "archive_document / restore_document instead of deletion",
                 "workspace_sync(since=next_cursor) for incremental changes",
             ],
-            "batch_limits": {"upsert_many": 25, "dereference_many": 25},
+            "batch_limits": {
+                "upsert_many": agent_guide.limits()["batch_upsert_max"],
+                "dereference_many": agent_guide.limits()["batch_dereference_max"],
+            },
+            "limits": agent_guide.limits(),
             "schemas": {
                 "DocumentUpsertRequest": DocumentBatchUpsertItem.model_json_schema(),
                 "DocumentQueryRequest": DocumentQueryRequest.model_json_schema(),
@@ -1294,6 +1775,79 @@ async def get_api_docs() -> dict[str, Any]:
             },
         }
     )
+
+
+def _advertise_idempotency_keys() -> None:
+    for tool_name in IDEMPOTENT_TOOLS:
+        tool = mcp._tool_manager.get_tool(tool_name)
+        if tool is None:
+            continue
+        tool.parameters.setdefault("properties", {})["idempotency_key"] = {
+            "type": "string",
+            "maxLength": idempotency.MAX_KEY_LENGTH,
+            "description": (
+                "Optional. Retries with the same key and arguments within 24 h "
+                "replay the first result (replayed=true) without a second write; "
+                "a different body with the same key is idempotency_key_reused."
+            ),
+        }
+
+
+_advertise_idempotency_keys()
+
+
+def _describe_review_targets() -> None:
+    tool = mcp._tool_manager.get_tool("review_task")
+    if tool is not None:
+        tool.description = (tool.description or "").rstrip() + (
+            "\n\nnext_status (generated from the shared enum): approve -> "
+            + "|".join(REVIEW_APPROVE_STATUSES)
+            + "; reject -> "
+            + "|".join(REVIEW_REJECT_STATUSES)
+            + ". IN_PROGRESS returns the task to its executor while the executor's "
+            "lease is still valid, otherwise to READY (effective_status). This "
+            "mirrors REST POST /v1/tasks/{key}/review."
+        )
+
+
+_describe_review_targets()
+
+@mcp.resource(
+    "agentgraph://docs/agent-guide",
+    name="agent-guide",
+    description="Agent guide (same as GET /v1/agent-docs?format=markdown)",
+    mime_type="text/markdown",
+)
+def agent_guide_resource() -> str:
+    return agent_guide.render()
+
+
+@mcp.resource(
+    "agentgraph://docs/openapi",
+    name="openapi",
+    description="Read-only OpenAPI document without admin endpoints",
+    mime_type="application/json",
+)
+def openapi_resource() -> str:
+    from app.main import app as fastapi_app
+
+    openapi = fastapi_app.openapi()
+    paths = {
+        path: operation
+        for path, operation in openapi.get("paths", {}).items()
+        if path.startswith("/v1") and not path.startswith("/v1/admin")
+    }
+    return json.dumps({**openapi, "paths": paths}, default=str)
+
+
+@mcp.resource(
+    "agentgraph://docs/errors",
+    name="errors",
+    description="Error-code registry: code -> class -> action",
+    mime_type="application/json",
+)
+def errors_resource() -> str:
+    return json.dumps(protocol_docs("errors"), default=str)
 
 
 _http_app: ASGIApp | None = None

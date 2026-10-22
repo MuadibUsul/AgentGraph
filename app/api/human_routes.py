@@ -23,6 +23,7 @@ from app.schemas import (
     BudgetUpdateRequest,
     DocumentHumanUpdateRequest,
     DocumentMutationResponse,
+    DocumentPurgeRequest,
     DocumentStatusRequest,
     DocumentTaintRequest,
     DocumentVerifyRequest,
@@ -49,6 +50,9 @@ from app.schemas import (
     TaskActionResponse,
     TaskEscalateRequest,
     TaskReviewRequest,
+    TenantDeleteRequest,
+    TenantOut,
+    TombstoneOut,
     UsageOut,
     WebhookDeliveryListResponse,
     WebhookRuleCreateRequest,
@@ -57,6 +61,8 @@ from app.schemas import (
     WebhookRuleUpdateRequest,
     WorkspaceStatsResponse,
 )
+from app.services import budget as budget_service
+from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
 from app.services.retrieval import backfill_workspace_chunks
 
@@ -718,3 +724,66 @@ async def reindex(
         session, principal.workspace.id
     )
     return {"chunks": count}
+
+
+# ---------------------------------------------------------------- tenant
+
+
+@router.get("/tenant", response_model=TenantOut, summary="This workspace's tenant")
+async def tenant(
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> TenantOut:
+    return await tenant_service.describe_tenant(session, principal.tenant_id)
+
+
+@router.post(
+    "/tenant/delete",
+    response_model=TenantOut,
+    summary="Owner confirmation of tenant deletion (the operator must also confirm)",
+)
+async def delete_tenant(
+    body: TenantDeleteRequest,
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> TenantOut:
+    return await tenant_service.owner_confirm_deletion(session, principal, body.confirm)
+
+
+@router.post(
+    "/tenant/restore",
+    response_model=TenantOut,
+    summary="Cancel a pending or in-grace tenant deletion (owner)",
+)
+async def restore_tenant(
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> TenantOut:
+    return await tenant_service.owner_restore_tenant(session, principal)
+
+
+@router.post(
+    "/documents/{doc_key:path}/purge",
+    response_model=TombstoneOut,
+    summary="Physically delete an archived document; a tombstone keeps its address",
+)
+async def purge_document(
+    doc_key: str,
+    body: DocumentPurgeRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> TombstoneOut:
+    return await services.purge_document(session, principal, doc_key, body)
+
+
+@router.post(
+    "/budget/circuits/{principal_key}/clear",
+    summary="Clear a runaway-loop circuit breaker for one token (owner)",
+)
+async def clear_circuit(
+    principal_key: str,
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await budget_service.clear_circuit(session, principal, principal_key)
+
