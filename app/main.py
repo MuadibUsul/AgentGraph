@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.admin_routes import router as admin_router
@@ -34,6 +35,7 @@ from app.mcp_server.server import create_http_app, mcp
 from app.middleware import RequestContextMiddleware
 from app.protocol_middleware import ProtocolMiddleware
 from app.services.external_actions import external_action_loop
+from app.services.indexer import index_worker_loop
 from app.services.reaper import lease_reaper_loop
 from app.services.webhooks import webhook_delivery_loop
 
@@ -81,6 +83,7 @@ async def lifespan(app: FastAPI):
     action_task = asyncio.create_task(
         external_action_loop(), name="agentgraph-external-action-dispatcher"
     )
+    index_task = asyncio.create_task(index_worker_loop(), name="agentgraph-index-worker")
     try:
         if settings.mcp_enabled:
             async with mcp.session_manager.run():
@@ -93,9 +96,9 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
-        for task in (reaper_task, webhook_task, action_task):
+        for task in (reaper_task, webhook_task, action_task, index_task):
             task.cancel()
-        for task in (reaper_task, webhook_task, action_task):
+        for task in (reaper_task, webhook_task, action_task, index_task):
             with suppress(asyncio.CancelledError):
                 await task
         await event_bus.stop()
@@ -247,6 +250,24 @@ async def http_error_handler(
     )
 
 
+@app.exception_handler(SQLAlchemyTimeoutError)
+async def overload_handler(request: Request, exc: SQLAlchemyTimeoutError) -> JSONResponse:
+    """Connection pool exhausted: a distinguishable, retryable 503 (AG-ST-06)."""
+    logger.warning("database pool exhausted on %s", request.url.path)
+    headers = {"Retry-After": "1"}
+    return JSONResponse(
+        status_code=503,
+        content=error_body(
+            "overloaded",
+            "the server is at capacity; retry after the indicated delay",
+            503,
+            details={"retry_after_ms": 1000},
+            headers=headers,
+        ),
+        headers=headers,
+    )
+
+
 @app.exception_handler(SQLAlchemyError)
 async def database_error_handler(
     request: Request, exc: SQLAlchemyError
@@ -255,8 +276,10 @@ async def database_error_handler(
     return JSONResponse(
         status_code=503,
         content=error_body(
-            "database_unavailable", "database operation failed", 503
+            "database_unavailable", "database operation failed", 503,
+            headers={"Retry-After": "2"},
         ),
+        headers={"Retry-After": "2"},
     )
 
 
@@ -329,6 +352,7 @@ async def root(request: Request) -> Any:
             "get_orientation",
             "ack_constitution",
             "get_usage",
+            "get_index_status",
             "workspace_sync",
             "create_task",
             "review_task",

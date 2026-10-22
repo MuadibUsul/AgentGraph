@@ -890,6 +890,11 @@ class DocumentSummary(BaseModel):
     updated_by: str
     updated_at: datetime
     updated_stamp: dict[str, Any] | None = None
+    stored: bool = True
+    index_state: str | None = Field(
+        default=None, description="pending | indexed | failed | deferred (AG-ST-13)"
+    )
+    indexed_version: int | None = None
 
 
 class DocumentOut(DocumentSummary):
@@ -911,6 +916,7 @@ class DocumentListResponse(BaseModel):
 class DocumentMutationResponse(BaseModel):
     document: DocumentOut
     session_batch_id: uuid.UUID
+    noop: bool = Field(default=False, description="Same content as the current version")
     content_bytes: int | None = None
     chunk_count: int | None = None
     usage: dict[str, Any] | None = Field(
@@ -953,6 +959,10 @@ class DocumentQueryResponse(BaseModel):
     excluded: dict[str, int] = Field(
         default_factory=dict,
         description="Hits hidden by the default filters (unverified_by_others, archived, tainted)",
+    )
+    index_lag: dict[str, int] | None = Field(
+        default=None,
+        description="pending_jobs and oldest_pending_age_ms: recent writes may not be searchable",
     )
 
 

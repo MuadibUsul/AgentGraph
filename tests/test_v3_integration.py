@@ -706,6 +706,7 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         "get_orientation",
                         "ack_constitution",
                         "get_usage",
+                        "get_index_status",
                         "get_api_docs",
                     }
                     sync = await session.call_tool("workspace_sync", {})
@@ -1083,6 +1084,7 @@ async def test_dashboard_root_and_openapi(client):
         "get_orientation",
         "ack_constitution",
         "get_usage",
+        "get_index_status",
         "propose_document_change",
         "vote_on_proposal",
         "list_document_proposals",

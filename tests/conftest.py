@@ -51,6 +51,8 @@ async def api_base_url() -> AsyncIterator[str]:
             "MCP_ENABLED": "true",
             "LEASE_REAPER_INTERVAL_SECONDS": "5",
             "SSE_REVALIDATE_SECONDS": "5",
+            # Async-index tests drive the worker in-process for determinism.
+            "INDEX_WORKER_ENABLED": "false",
             "FREE_MAX_DOCUMENTS": "1",
             "FREE_MAX_SLOTS": "1",
         }

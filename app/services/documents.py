@@ -81,7 +81,7 @@ from app.schemas import (
     TombstoneOut,
 )
 from app.services import addresses as address_service
-from app.services import budget, onboarding
+from app.services import budget, indexer, onboarding
 from app.services.common import (
     append_event,
     document_out,
@@ -94,7 +94,6 @@ from app.services.policies import enforce_policy
 from app.services.retrieval import (
     hybrid_document_ids,
     query_vector,
-    reindex_document_chunks,
 )
 from app.services.taint import (
     clear_document_taint,
@@ -176,6 +175,21 @@ async def _record_version(
 
 def _embedding_text(text: str) -> str:
     return text
+
+
+async def _document_embedding(
+    workspace_id: uuid.UUID, content: str
+) -> tuple[list[float] | None, str | None]:
+    """Whole-document vector for synchronous (baseline) writes.
+
+    Asynchronous writes (2026-11) leave it to the index worker, which embeds
+    chunks only; the whole-document vector is a legacy fallback.
+    """
+    if indexer.asynchronous():
+        return None, None
+    await enforce_embedding_budget(session=None, workspace_id=workspace_id,
+                                   chars=len(content.encode("utf-8")))
+    return await _embed(content), get_embedding_provider().model
 
 
 async def _embed(content: str) -> list[float]:
@@ -514,6 +528,7 @@ async def list_documents(
         last = rows[page_size - 1]
         next_cursor = _encode_cursor(last.updated_at, last.id)
         rows = rows[:page_size]
+    await indexer.annotate(session, list(rows))
     return DocumentListResponse(
         items=[
             document_summary(row, compact_frontmatter=True) for row in rows
@@ -682,6 +697,7 @@ async def get_document(
         include_unverified=include_unverified,
         include_tainted=include_tainted,
     )
+    await indexer.annotate(session, [document])
     return document_out(document)
 
 
@@ -747,11 +763,7 @@ async def upsert_document(
             content_bytes=len(content.encode("utf-8")),
         )
         await _ensure_document_quota(session, principal.workspace)
-        await enforce_embedding_budget(
-            session, principal.workspace.id, len(content.encode("utf-8"))
-        )
-        vector = await _embed(content)
-        provider = get_embedding_provider()
+        vector, model = await _document_embedding(principal.workspace.id, content)
         document = SharedDocument(
             workspace_id=principal.workspace.id,
             doc_key=doc_key,
@@ -765,7 +777,7 @@ async def upsert_document(
             verified_version=None,
             verified_hash=None,
             embedding=vector,
-            embedding_model=provider.model,
+            embedding_model=model,
             namespace=namespace,
             version=1,
             locked_by_human=False,
@@ -796,7 +808,7 @@ async def upsert_document(
                 document_out(latest).model_dump(mode="json") if latest else None,
             ) from None
         await refresh_document_taint(session, document)
-        await reindex_document_chunks(session, document)
+        await indexer.after_write(session, document)
         await record_audit(
             session,
             workspace_id=principal.workspace.id,
@@ -925,8 +937,19 @@ async def upsert_document(
         title = requested_title
         frontmatter = frontmatter_in
 
-    before = document_snapshot(document)
     new_hash = content_hash(content)
+    if (
+        not rebased
+        and new_hash == (document.content_hash or content_hash(document.content))
+        and frontmatter == (document.frontmatter or {})
+        and title == document.title
+        and namespace == document.namespace
+    ):
+        # Same as the current version: no new version, no embedding (AG-ST-06).
+        await indexer.annotate(session, [document])
+        response = await _mutation_response(session, document, batch)
+        return response.model_copy(update={"noop": True})
+    before = document_snapshot(document)
     if new_hash != (document.content_hash or content_hash(document.content)):
         document.verification_status = "DRAFT"
         document.verified_version = None
@@ -935,11 +958,9 @@ async def upsert_document(
     document.content = content
     document.content_hash = new_hash
     document.frontmatter = frontmatter
-    await enforce_embedding_budget(
-        session, principal.workspace.id, len(content.encode("utf-8"))
+    document.embedding, document.embedding_model = await _document_embedding(
+        principal.workspace.id, content
     )
-    document.embedding = await _embed(content)
-    document.embedding_model = get_embedding_provider().model
     document.namespace = namespace
     document.policy_flags = {"policy": policy.name} if policy else {}
     document.version += 1
@@ -947,7 +968,7 @@ async def upsert_document(
     document.updated_at = utcnow()
     await session.flush()
     await refresh_document_taint(session, document)
-    await reindex_document_chunks(session, document)
+    await indexer.after_write(session, document)
     await _record_version(
         session,
         document,
@@ -1090,18 +1111,16 @@ async def patch_document_section(
     document.verification_status = "DRAFT"
     document.verified_version = None
     document.verified_hash = None
-    await enforce_embedding_budget(
-        session, principal.workspace.id, len(document.content.encode("utf-8"))
+    document.embedding, document.embedding_model = await _document_embedding(
+        principal.workspace.id, document.content
     )
-    document.embedding = await _embed(document.content)
-    document.embedding_model = get_embedding_provider().model
     document.version += 1
     document.updated_by = agent
     document.updated_at = utcnow()
     ensure_content_size(document.content)
     await session.flush()
     await refresh_document_taint(session, document)
-    await reindex_document_chunks(session, document)
+    await indexer.after_write(session, document)
     await _record_version(
         session,
         document,
@@ -1187,13 +1206,19 @@ async def query_documents(
     ranked = await _rank(session, principal, request, conditions, limit)
     if not ranked:
         excluded = await _excluded_ranked(session, principal, request, base, limit, set())
-        return DocumentQueryResponse(items=[], total=0, excluded=excluded)
+        return DocumentQueryResponse(
+            items=[],
+            total=0,
+            excluded=excluded,
+            index_lag=await indexer.lag(session, principal.workspace.id),
+        )
     ids = [doc_id for doc_id, _ in ranked]
     score_by_id = {doc_id: score for doc_id, score in ranked}
     rows = (
         await session.execute(select(SharedDocument).where(SharedDocument.id.in_(ids)))
     ).scalars().all()
     by_id = {row.id: row for row in rows}
+    await indexer.annotate(session, list(rows))
     chunks = await _matched_chunks(session, ids, request.query)
     items = [
         _query_hit(principal, by_id[doc_id], chunks.get(doc_id, [])).model_copy(
@@ -1203,7 +1228,12 @@ async def query_documents(
         if doc_id in by_id
     ]
     excluded = await _excluded_ranked(session, principal, request, base, limit, set(ids))
-    return DocumentQueryResponse(items=items, total=len(items), excluded=excluded)
+    return DocumentQueryResponse(
+        items=items,
+        total=len(items),
+        excluded=excluded,
+        index_lag=await indexer.lag(session, principal.workspace.id),
+    )
 
 
 async def _rank(
@@ -1370,6 +1400,7 @@ async def dereference(
         include_unverified=include_unverified,
         include_tainted=include_tainted,
     )
+    await indexer.annotate(session, [document])
     if expand_parts:
         expanded, parts = await address_service.expand_parts(session, principal, document)
         return DereferenceResponse(
@@ -1461,10 +1492,11 @@ async def create_artifact(
     session.add(document)
     await session.flush()
     await refresh_document_taint(session, document)
-    await enforce_embedding_budget(
-        session, workspace.id, len(artifact_text.encode("utf-8"))
-    )
-    await reindex_document_chunks(session, document)
+    if not indexer.asynchronous():
+        await enforce_embedding_budget(
+            session, workspace.id, len(artifact_text.encode("utf-8"))
+        )
+    await indexer.after_write(session, document)
     await _record_version(
         session,
         document,
@@ -1526,11 +1558,9 @@ async def human_update_document(
             document.verified_hash = None
         document.content = normalized_content
         document.content_hash = new_hash
-        await enforce_embedding_budget(
-            session, workspace.id, len(normalized_content.encode("utf-8"))
+        document.embedding, document.embedding_model = await _document_embedding(
+            workspace.id, normalized_content
         )
-        document.embedding = await _embed(normalized_content)
-        document.embedding_model = get_embedding_provider().model
     if request.frontmatter is not None:
         document.frontmatter = request.frontmatter
     if request.unlock:
@@ -1546,7 +1576,7 @@ async def human_update_document(
     document.updated_at = utcnow()
     await session.flush()
     await refresh_document_taint(session, document)
-    await reindex_document_chunks(session, document)
+    await indexer.after_write(session, document)
     await _record_version(
         session,
         document,
@@ -2009,17 +2039,15 @@ async def normalize_document_html(
     document.verification_status = "DRAFT"
     document.verified_version = None
     document.verified_hash = None
-    await enforce_embedding_budget(
-        session, workspace.id, len(content.encode("utf-8"))
+    document.embedding, document.embedding_model = await _document_embedding(
+        workspace.id, content
     )
-    document.embedding = await _embed(content)
-    document.embedding_model = get_embedding_provider().model
     document.version += 1
     document.updated_by = actor
     document.updated_at = utcnow()
     await session.flush()
     await refresh_document_taint(session, document)
-    await reindex_document_chunks(session, document)
+    await indexer.after_write(session, document)
     await _record_version(
         session,
         document,

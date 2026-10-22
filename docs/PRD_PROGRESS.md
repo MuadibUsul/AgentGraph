@@ -20,8 +20,13 @@ implemented with acceptance tests in `tests/`; deviations are listed.
 | AG-OB-03 agent docs | Done | Generated guide, token-readable OpenAPI, MCP resources. |
 | AG-ST-15 cost control | Shadow mode | Metering, would-be limits, hot-key detection, `get_usage`; `BUDGET_MODE=enforce` turns on 429s (Phase 1 R1.1 completes forced backoff and deferral). |
 
-## Phase 1 and later
+## Phase 1 (in progress)
 
-Not started yet: R1.1 (AG-ST-13, ST-06, ST-15 enforce, CO-03, ST-01, ST-02),
+| ID | Status | Notes |
+|---|---|---|
+| AG-ST-13 async index | Done | Under `2026-11` writes return `stored=true`, `index_state=pending`; a background worker embeds only the latest queued version (coalescing, `superseded` count), emits `DOC_INDEXED`, retries with exponential backoff and ends as `failed` + `DOC_INDEX_FAILED`. `GET /v1/index/status` / `get_index_status`; queries carry `index_lag`. Baseline clients keep synchronous indexing. |
+| AG-ST-06 write semantics | Done | Identical writes are a `noop` (no version bump); connection-pool exhaustion returns 503 `overloaded` with `Retry-After` instead of a 500. |
+
+Not started yet: R1.1 (ST-15 enforce, CO-03, ST-01, ST-02),
 R1.2 (EV-01, EV-02), R1.3 (ST-10, TC-06), R1.4 (ID-01/02/04/05/06/10, TC-07,
 OB-01 full), Phase 2 and Phase 3.

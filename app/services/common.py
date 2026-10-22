@@ -200,6 +200,7 @@ def document_summary(
         updated_by=document.updated_by,
         updated_at=document.updated_at,
         updated_stamp=document.updated_stamp,
+        **getattr(document, "_index_status", {}),
     )
 
 

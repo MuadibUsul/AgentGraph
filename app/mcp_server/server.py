@@ -56,7 +56,7 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
-from app.services import idempotency
+from app.services import idempotency, indexer
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
 from app.services.common import set_event_platform
@@ -1294,6 +1294,24 @@ async def register_parts(
             )
         except ValidationError as exc:
             raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_index_status")
+async def get_index_status(namespace: str | None = None) -> dict[str, Any]:
+    """Indexing backlog. Under API version 2026-11 writes return before they are
+    searchable (index_state="pending"); query_workspace only sees indexed
+    content. Read by key with dereference, or wait for the DOC_INDEXED event."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            if namespace:
+                from app.auth import ensure_namespace
+
+                ensure_namespace(principal, namespace)
+            result = await indexer.index_status(session, principal.workspace.id, namespace)
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)

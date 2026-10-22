@@ -10,7 +10,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import agent_guide, services
-from app.auth import Principal, get_principal, require_permission
+from app.auth import Principal, ensure_namespace, get_principal, require_permission
 from app.database import get_db
 from app.error_registry import protocol_docs
 from app.errors import ApiError
@@ -80,6 +80,7 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
+from app.services import indexer
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
 
@@ -774,6 +775,21 @@ async def workspace_usage(
     return UsageOut(
         **await services.month_usage(session, principal.workspace.id)
     )
+
+
+@router.get(
+    "/index/status",
+    summary="Indexing backlog: pending, failed, oldest pending age, p95 lag (AG-ST-13)",
+)
+async def index_status(
+    namespace: str | None = Query(default=None),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "doc:read")
+    if namespace:
+        ensure_namespace(principal, namespace)
+    return await indexer.index_status(session, principal.workspace.id, namespace)
 
 
 @router.get(

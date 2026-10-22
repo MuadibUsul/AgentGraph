@@ -150,6 +150,12 @@ class Settings(BaseSettings):
     max_brief_bytes: int = 32_768
     max_artifact_chars: int = 4_194_304
 
+    # ------------------------------------------------ async index (AG-ST-13)
+    index_worker_enabled: bool = True
+    index_worker_interval_seconds: float = Field(default=1.0, ge=0.1, le=60)
+    index_worker_batch: int = Field(default=20, ge=1, le=500)
+    index_max_attempts: int = Field(default=5, ge=1, le=50)
+
     # ------------------------------------------------ cost control (AG-ST-15)
     # "shadow" records would-be limits without blocking (run ~14 days to
     # calibrate); "enforce" returns 429 rate_limited / circuit_open.
