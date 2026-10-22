@@ -212,6 +212,7 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.23.0", _MIGRATIONS_DIR / "v3_23_collaboration.sql"),
     ("3.24.0", _MIGRATIONS_DIR / "v3_24_provenance_recall_budgets.sql"),
     ("3.25.0", _MIGRATIONS_DIR / "v3_25_logs_contention_situation.sql"),
+    ("3.26.0", _MIGRATIONS_DIR / "v3_26_tenant_tree.sql"),
 ]
 
 

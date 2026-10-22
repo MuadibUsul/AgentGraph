@@ -539,6 +539,8 @@ class DocumentQueryRequest(StrictModel):
     )
     include_tainted: bool = False
     include_archived: bool = False
+    include_shared: bool = Field(
+        default=False, description="Also search resources other nodes shared with you")
     mode: Literal["auto", "semantic", "keyword", "hybrid"] = "hybrid"
 
     @model_validator(mode="after")
@@ -1002,6 +1004,48 @@ class ChildTenantCreateRequest(StrictModel):
     tier: str = Field(default="free", max_length=32)
 
 
+class TenantMoveRequest(StrictModel):
+    new_parent: str = Field(min_length=1, max_length=64)
+    confirmation_id: str | None = Field(default=None, max_length=40)
+
+
+class TenantAttachRequest(StrictModel):
+    parent: str = Field(min_length=1, max_length=64)
+    confirmation_id: str | None = Field(default=None, max_length=40)
+
+
+class TenantPolicyRequest(StrictModel):
+    value: Any = None
+    locked: bool = False
+
+
+class ShareRequest(StrictModel):
+    resource_kind: Literal["document", "namespace", "workspace", "task"]
+    resource_ref: str = Field(min_length=1, max_length=256)
+    grantee: str = Field(min_length=3, max_length=256,
+                         description="node:<id|alias>, human:<id> or agent:<agent_id>")
+    access: Literal["read", "write"] = "read"
+    expires_at: datetime | None = None
+
+
+class AdminAccessRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=2_000)
+    duration_s: int = Field(default=3_600, ge=1, le=86_400)
+
+
+class NodeDeleteRequest(StrictModel):
+    confirm: str = Field(min_length=1, max_length=64, description="the node's alias")
+    cascade: bool = False
+
+
+class NodeDetachRequest(StrictModel):
+    confirmation_id: str | None = Field(default=None, max_length=40)
+
+
+class TenantQuotaRequest(StrictModel):
+    limit: int | None = Field(default=None, ge=0)
+
+
 class IncidentScopeInputs(StrictModel):
     time_from: datetime | None = None
     time_to: datetime | None = None
@@ -1425,6 +1469,8 @@ class DocumentSummary(BaseModel):
         default=None, description="warn | block while an open recall reaches this version")
     doc_type: str = "collaborative"
     last_human_edit: dict[str, Any] | None = None
+    tenant_alias: str | None = Field(
+        default=None, description="Owning node, on results that may come from shares")
     score: float | None = None
     archived_at: datetime | None = None
     archived_by: str | None = None

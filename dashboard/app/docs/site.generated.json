@@ -440,6 +440,31 @@
      "endpoints": [
       {
        "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "access_session_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/access-sessions/{access_session_id}/close",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Close an admin access session"
+      }
+     ],
+     "group": "access-sessions"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
        "description": "Read-only API/MCP documentation available to every workspace token.",
        "method": "GET",
        "parameters": [
@@ -5145,6 +5170,12 @@
          "type": "boolean"
         },
         {
+         "description": "Also search resources other nodes shared with you",
+         "name": "include_shared",
+         "required": false,
+         "type": "boolean"
+        },
+        {
          "description": "",
          "name": "mode",
          "required": false,
@@ -5391,6 +5422,85 @@
       }
      ],
      "group": "rights-requests"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/shares",
+       "responses": [
+        "200"
+       ],
+       "summary": "Shares made by this node and shares granted to you"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "resource_kind",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "resource_ref",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "node:<id|alias>, human:<id> or agent:<agent_id>",
+         "name": "grantee",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "access",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "expires_at",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/shares",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Share a document, namespace, workspace or task inside the tree"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "DELETE",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "share_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/shares/{share_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Revoke a share (applies to the next request)"
+      }
+     ],
+     "group": "shares"
     },
     {
      "endpoints": [
@@ -6608,6 +6718,196 @@
     {
      "endpoints": [
       {
+       "body": [
+        {
+         "description": "",
+         "name": "reason",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "duration_s",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/access-sessions",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Open audited, time-boxed content access to a subtree (ancestors' admins)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "parent",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "confirmation_id",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/attach",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Attach an independent root under a node (both owners confirm)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "display_name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "tenant_type",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "alias",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "workspace_name",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "tier",
+         "required": false,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/children",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Create a child node (owners and admins of the parent or above)"
+      },
+      {
+       "body": [
+        {
+         "description": "the node's alias",
+         "name": "confirm",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "cascade",
+         "required": false,
+         "type": "boolean"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/delete",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Delete a node below the root (cascade for its subtree; 30 days' grace)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/detach",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Make a subtree its own tree (the root's and the node's owners confirm)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/effective-policy",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Effective policies with the node each value comes from"
+      },
+      {
        "body": [],
        "description": "",
        "method": "GET",
@@ -6751,6 +7051,133 @@
        "body": [
         {
          "description": "",
+         "name": "new_parent",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "confirmation_id",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/move",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Move a subtree inside its tree (both parents' owners confirm)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "value",
+         "required": false,
+         "type": "object"
+        },
+        {
+         "description": "",
+         "name": "locked",
+         "required": false,
+         "type": "boolean"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/policies/{key}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Set a policy (only ever tighter than the ancestors'; lockable)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "limit",
+         "required": false,
+         "type": "integer | null"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "dimension",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/quotas/{dimension}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A node's daily quota (never above its parent's)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/restore",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Cancel a node's deletion (with its subtree)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
          "name": "subject",
          "required": true,
          "type": "RightsSubject"
@@ -6823,6 +7250,67 @@
         "422"
        ],
        "summary": "Rights requests of a node"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "depth",
+         "required": false,
+         "type": "integer | null"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/tree",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The subtree, as far as you may see it"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "tenant_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "include_subtree",
+         "required": false,
+         "type": "boolean"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "window_days",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/tenants/{tenant_id}/usage",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Usage per node, with the subtree's total"
       }
      ],
      "group": "tenants"
@@ -9100,6 +9588,10 @@
      {
       "code": "token_expiring",
       "meaning": "The calling token expires within a day."
+     },
+     {
+      "code": "ttl_capped_by_policy",
+      "meaning": "The token's lifetime was capped by an organisation policy."
      },
      {
       "code": "unknown_mention",

@@ -275,6 +275,12 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
     if "trust_level" in fields and fields["trust_level"] not in ("internal", "external"):
         raise ApiError(422, "validation_error", "trust_level is internal or external",
                        details={"field": "trust_level"})
+    if fields.get("trust_level") == "external":
+        from app.services import tree
+
+        if not await tree.policy_value(principal.workspace.tenant_id, "external_agents_allowed"):
+            raise ApiError(403, "forbidden", "this organisation's policy allows no external agents",
+                           details={"policy": "external_agents_allowed"})
     if "agent_id" in fields and fields["agent_id"] != row["agent_id"]:
         new_id = fields["agent_id"]
         if not AGENT_ID.fullmatch(new_id or ""):

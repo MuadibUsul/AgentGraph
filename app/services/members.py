@@ -58,7 +58,8 @@ async def effective_role(
         inherited = row_tenant != tenant_id
         if inherited and role not in ("owner", "admin"):
             continue
-        if best is None or RANK[role] > RANK[best["role"]]:
+        if best is None or RANK[role] > RANK[best["role"]] or (
+                RANK[role] == RANK[best["role"]] and best["inherited"] and not inherited):
             best = {"role": role, "inherited": inherited, "via_tenant": row_tenant}
     return best
 
@@ -203,6 +204,12 @@ async def invite_member(session: AsyncSession, principal: Principal, tenant_ref:
         raise ApiError(422, "validation_error", "role is owner, admin, member or guest",
                        details={"field": "role", "allowed": list(ROLES)})
     _assignable(caller, role)
+    if role == "guest":
+        from app.services import tree
+
+        if not await tree.policy_value(node["id"], "guests_allowed"):
+            raise ApiError(403, "forbidden", "this organisation's policy allows no guests",
+                           details={"policy": "guests_allowed"})
     email = email.strip()
     if not EMAIL.fullmatch(email):
         raise ApiError(422, "validation_error", "not an email address",
@@ -348,14 +355,44 @@ async def remove_member(session: AsyncSession, principal: Principal, tenant_ref:
              "AND s.revoked_at IS NULL"),
         {"t": node["id"], "u": member_id},
     )
+    spaces = await _hand_over_personal_spaces(session, node["id"], member_id)
     await _audit(session, node["id"], "member.removed",
                  {"principal_id": member_id, "role": target["role"],
                   "tokens_revoked": len(revoked), "tokens_transferred": len(transferred),
                   "transfer_tokens_to": transfer_tokens_to,
+                  "personal_spaces_handed_over": spaces,
                   "by": f"human:{principal.user_id}"})
     await session.commit()
     return {"tenant_id": node["id"], "principal_id": member_id, "revoked_tokens": revoked,
-            "transferred_tokens": transferred}
+            "transferred_tokens": transferred, "personal_spaces_handed_over": spaces}
+
+
+async def _hand_over_personal_spaces(session: AsyncSession, node_id: str,
+                                     member_id: str) -> list[str]:
+    """AG-ID-13 point 5: a leaving member's managed personal spaces go to the
+    owners of their parent node; the member loses access to them."""
+    spaces = (await session.execute(
+        text("SELECT t.id, t.parent_tenant_id FROM tenants t JOIN memberships m ON "
+             "m.tenant_id = t.id WHERE t.tenant_type = 'personal' AND :n = ANY(t.path) AND "
+             "t.parent_tenant_id IS NOT NULL AND m.principal_id = CAST(:u AS uuid)"),
+        {"n": node_id, "u": member_id})).all()
+    for space_id, parent_id in spaces:
+        await session.execute(
+            text("INSERT INTO memberships (tenant_id, principal_id, role, invited_by) "
+                 "SELECT :space, m.principal_id, 'owner', 'handover' FROM memberships m "
+                 "JOIN tenants p ON p.id = :parent WHERE m.tenant_id = ANY(p.path) AND "
+                 "m.role = 'owner' AND m.principal_id <> CAST(:u AS uuid) "
+                 "ON CONFLICT (tenant_id, principal_id) DO UPDATE SET role = 'owner'"),
+            {"space": space_id, "parent": parent_id, "u": member_id})
+        await session.execute(
+            text("DELETE FROM memberships WHERE tenant_id = :space AND "
+                 "principal_id = CAST(:u AS uuid)"), {"space": space_id, "u": member_id})
+        await session.execute(
+            text("UPDATE human_sessions s SET revoked_at = NOW() FROM workspaces w "
+                 "WHERE w.id = s.workspace_id AND w.tenant_id = :t AND "
+                 "s.user_id = CAST(:u AS uuid) AND s.revoked_at IS NULL"),
+            {"t": space_id, "u": member_id})
+    return [space_id for space_id, _ in spaces]
 
 
 async def accept_invitation(session: AsyncSession, *, code: str, password: str,

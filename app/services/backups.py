@@ -639,9 +639,10 @@ async def _restore(
         # Erasures made after the backup are applied again (AG-TC-07 point 7).
         from app.services.rights import replay
 
-        replayed = 0
+        replayed = tombstones = 0
         async with factory() as restored:
             replayed = await replay(restored, list(selected))
+            tombstones = await _replay_tombstones(restored)
             await restored.commit()
     finally:
         if engine is not None:
@@ -649,6 +650,7 @@ async def _restore(
     return {
         "tenants": tenants_out,
         "redactions_replayed": replayed,
+        "tombstones_replayed": tombstones,
         "pre_restore_export_id": pre_restore_export,
         "warnings": [] if target == "staging" else [
             {"code": "keys_rotated",
@@ -898,3 +900,26 @@ async def backup_scheduler_loop() -> None:
             )
         await asyncio.sleep(60)
 
+
+
+async def _replay_tombstones(restored: AsyncSession) -> int:
+    """Nodes physically deleted in production stay deleted after a restore
+    (AG-ID-13 point 6): their restored workspaces go, the tenant row becomes
+    the same content-free tombstone."""
+    async with async_session_factory() as live:
+        deleted = (await live.execute(
+            text("SELECT id FROM tenants WHERE status = 'deleted'"))).scalars().all()
+    if not deleted:
+        return 0
+    gone = (await restored.execute(
+        text("SELECT id FROM tenants WHERE id = ANY(:ids) AND status <> 'deleted'"),
+        {"ids": list(deleted)})).scalars().all()
+    for tenant_id in gone:
+        await restored.execute(text("DELETE FROM workspaces WHERE tenant_id = :t"),
+                               {"t": tenant_id})
+        await restored.execute(text("DELETE FROM memberships WHERE tenant_id = :t"),
+                               {"t": tenant_id})
+        await restored.execute(
+            text("UPDATE tenants SET status = 'deleted', display_name = '[deleted]', "
+                 "deleted_at = COALESCE(deleted_at, NOW()) WHERE id = :t"), {"t": tenant_id})
+    return len(gone)

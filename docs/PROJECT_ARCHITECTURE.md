@@ -680,6 +680,8 @@ ruff check .
 | `app/services/logs.py` | 日志型文档：append_entries/read_entries、按文档无间隙 seq、每 20 条或 5 分钟重渲染并建索引 |
 | `app/services/contention.py` | 热点文档保护：section_hash、10 秒 5 次冲突进入 contended 60 秒、doc.contended |
 | `app/services/situation.py` | 态势感知：每主体每分钟指标、8 条异常规则、告警去抖与 alert.raised、list_alerts/ack/get_metrics |
+| `app/services/tree.py` | 租户树：子节点、可见子树、移动/挂接/迁出（双方 owner 确认）、只能收紧的继承策略与锁定、配额池、按节点用量、宪法继承、节点删除与恢复 |
+| `app/services/sharing.py` | 跨节点共享（同树内读/写授权、撤销即时生效、include_shared）与祖先管理员的审计访问会话 |
 | `scripts/deploy_tlines.sh` | Tlines 部署：数据库备份、旧镜像打标签、构建重启、校验、自动/手动回滚 |
 | `scripts/webhook_receiver.py` | Bot 侧签名 Webhook 接收器：校验时间戳/HMAC，写入 JSONL outbox |
 | `app/services/tasks.py` | 失败认领/续租/释放/交接/审核/升级写入 `TASK_*_FAILED` 时间线 |

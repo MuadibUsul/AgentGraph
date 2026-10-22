@@ -78,6 +78,11 @@ EVENT_TYPES: dict[str, str] = {
     "doc.recalled": "A version this document derives from was recalled (details: recall_id, "
                     "hop, via; targets: the author, the maintainer, holders of pinned tasks).",
     "recall.closed": "Every node of a recall is resolved or dismissed.",
+    "tenant.moved": "A node moved inside its tree (in every workspace of the subtree).",
+    "tenant.attached": "An independent root joined a tree.",
+    "tenant.detached": "A subtree became its own tree.",
+    "tenant.admin_access": "An ancestor's admin opened content access to this node "
+                           "(targets: the node's owners).",
     "alert.raised": "A high-severity anomaly (targets: the workspace's owners; at most every "
                     "30 minutes per alert).",
     "doc.contended": "A document had 5+ version conflicts in 10 s; overwrites wait 60 s.",

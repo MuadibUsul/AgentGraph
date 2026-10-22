@@ -102,6 +102,7 @@ from app.services import (
     indexer,
     onboarding,
     provenance,
+    sharing,
     situation,
 )
 from app.services import addresses as address_service
@@ -1099,7 +1100,14 @@ async def get_document(
     taint_mode: str = "annotate",
 ) -> DocumentOut:
     require_permission(principal, "doc:read")
-    document = await _get_document(session, principal.workspace.id, doc_key)
+    await sharing.require_content_access(principal, "document")
+    try:
+        document = await _get_document(session, principal.workspace.id, doc_key)
+    except NotFound:
+        shared = await sharing.read_shared(principal, doc_key)
+        if shared is None:
+            raise
+        return provenance.apply_taint_mode(shared, await _taint_mode(principal, taint_mode))
     ensure_namespace(principal, document.namespace)
     _ensure_document_visible(
         principal,
@@ -1110,7 +1118,8 @@ async def get_document(
     await indexer.annotate(session, [document])
     await provenance.note_reads(principal, [document])
     return provenance.apply_taint_mode(
-        await _with_entries(session, document, document_out(document)), taint_mode)
+        await _with_entries(session, document, document_out(document)),
+        await _taint_mode(principal, taint_mode))
 
 
 @agent_onboarding.records("document")
@@ -1140,6 +1149,10 @@ async def upsert_document(
     await budget.check_write(
         principal, document_id=existing.id if existing else None, doc_key=doc_key
     )
+    if doc_key == onboarding.CONSTITUTION_KEY:
+        from app.services import tree
+
+        await tree.check_constitution(principal.workspace.tenant_id, content)
     origin = getattr(request, "content_origin", "internal")
     origins = await provenance.collect(
         session, principal, agent=agent, derived_from=getattr(request, "derived_from", []),
@@ -1157,6 +1170,9 @@ async def upsert_document(
         namespace = request.namespace or "default"
         ensure_namespace(principal, namespace, write=True)
         if request.expected_version != 0:
+            shared = await sharing.write_shared(principal, doc_key, request)
+            if shared is not None:
+                return shared
             raise VersionConflict("shared_document", None)
         if is_canonical(doc_key):
             raise NotFound("shared_document", f"document '{doc_key}' not found")
@@ -1666,6 +1682,17 @@ async def query_documents(
 ) -> DocumentQueryResponse:
     """Semantic/structured discovery. Not exhaustive: use list_documents to enumerate."""
     require_permission(principal, "query")
+    await sharing.require_content_access(principal, "query")
+    if request.include_shared:
+        own = await query_documents(
+            session, principal, request.model_copy(update={"include_shared": False}))
+        alias = await sharing.alias_of(principal.tenant_id)
+        items = [item.model_copy(update={"tenant_alias": alias}) for item in own.items]
+        for document, owner in await sharing.shared_hits(principal, request.query,
+                                                         request.limit):
+            items.append(_query_hit(principal, document, []).model_copy(
+                update={"tenant_alias": owner}))
+        return own.model_copy(update={"items": items, "total": len(items)})
     await budget.check_query(principal)
     base = [SharedDocument.workspace_id == principal.workspace.id]
     if request.namespace:
@@ -1898,8 +1925,18 @@ async def dereference(
     taint_mode: str = "annotate",
 ) -> DereferenceResponse:
     require_permission(principal, "doc:read")
+    await sharing.require_content_access(principal, "document")
     doc_key = parse_doc_uri(uri)
-    document = await _get_document(session, principal.workspace.id, doc_key)
+    try:
+        document = await _get_document(session, principal.workspace.id, doc_key)
+    except NotFound:
+        shared = await sharing.read_shared(principal, doc_key)
+        if shared is None:
+            raise
+        return DereferenceResponse(
+            uri=uri, document=provenance.apply_taint_mode(
+                shared, await _taint_mode(principal, taint_mode)),
+            content_total_bytes=len((shared.content or "").encode("utf-8")))
     ensure_namespace(principal, document.namespace)
     _ensure_document_visible(
         principal,
@@ -1928,10 +1965,19 @@ async def dereference(
     return DereferenceResponse(
         uri=uri,
         document=provenance.apply_taint_mode(
-            await _with_entries(session, document, out), taint_mode),
+            await _with_entries(session, document, out),
+            await _taint_mode(principal, taint_mode)),
         content_total_bytes=len(raw),
         content_truncated=truncated,
     )
+
+
+async def _taint_mode(principal: Principal, requested: str) -> str:
+    """The stricter of the caller's taint_mode and the tree's taint_mode_min (AG-ID-11)."""
+    from app.services import tree
+
+    floor = await tree.policy_value(principal.workspace.tenant_id, "taint_mode_min")
+    return tree._stricter("taint", requested, floor or "annotate")
 
 
 async def _with_entries(
@@ -2086,6 +2132,10 @@ async def human_update_document(
     before = document_snapshot(document)
     if request.title is not None:
         document.title = request.title
+    if request.content is not None and document.doc_key == onboarding.CONSTITUTION_KEY:
+        from app.services import tree
+
+        await tree.check_constitution(workspace.tenant_id, request.content)
     if request.content is not None:
         normalized_content, _ = normalize_notion_content(request.content)
         ensure_content_size(normalized_content)
@@ -2487,6 +2537,7 @@ async def get_document_version(
     include_tainted: bool = False,
 ) -> DocumentVersionOut:
     require_permission(principal, "doc:read")
+    await sharing.require_content_access(principal, "document_version")
     document = await _get_document(session, principal.workspace.id, doc_key)
     ensure_namespace(principal, document.namespace)
     _ensure_document_visible(

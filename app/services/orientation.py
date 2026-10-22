@@ -135,7 +135,15 @@ async def _constitution(session: AsyncSession, principal: Principal) -> dict[str
         "updated_at": document.updated_at,
         "ack_required": ack != document.version,
         "acked_version": ack,
+        # AG-ID-11 point 4: ancestors' sections, each with the node it comes from.
+        "inherited": await _inherited_rules(principal),
     }
+
+
+async def _inherited_rules(principal: Principal) -> list[dict[str, Any]]:
+    from app.services import tree
+
+    return await tree.inherited_constitution(principal.workspace.tenant_id)
 
 
 def _summary(body: str, limit: int = 2_048) -> str:

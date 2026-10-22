@@ -122,6 +122,9 @@ EPHEMERAL = frozenset({
     "token_reads", "token_usage", "token_budgets",
     # Conflict counters, per-minute metrics and situation alerts (R2.3).
     "doc_contention", "principal_metrics", "situation_alerts",
+    # Tree governance (R2.4): policies, confirmations, shares and admin access
+    # sessions belong to the live tree, not to one node's data.
+    "tenant_policies", "tenant_confirmations", "tenant_shares", "admin_access_sessions",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
@@ -268,6 +271,7 @@ async def request_export(
     purpose: str = "manual",
     requested_by: str | None = None,
     start: bool = True,
+    deliver_to: list[str] | None = None,
 ) -> dict[str, Any]:
     if scope not in ("tenant", "workspace", "namespace"):
         raise ApiError(422, "validation_error", "scope must be tenant, workspace or namespace",
@@ -278,10 +282,12 @@ async def request_export(
     if purpose == "manual":
         _authorize(principal, scope)
     tenant_id = principal.tenant_id
+    deliver_to = list(deliver_to or [])
     if scope == "tenant":
         scope_ref = scope_ref or tenant_id
         if scope_ref != tenant_id and principal.auth_kind is not AuthKind.HUMAN_ADMIN:
-            raise Forbidden("you may export your own tenant only")
+            await _authorize_node(principal, scope_ref)
+            deliver_to.append(tenant_id)
         tenant_id = scope_ref
     elif scope == "workspace":
         scope_ref = str(principal.workspace.id)
@@ -334,16 +340,16 @@ async def request_export(
                 text(
                     "INSERT INTO exports (tenant_id, workspace_id, requested_by, purpose, scope, "
                     "scope_ref, include_subtree, include_history, include_groups, kind, "
-                    "base_export_id, prev_export_id) VALUES (:tenant, :workspace, :by, :purpose, "
-                    ":scope, :ref, :subtree, :history, CAST(:groups AS jsonb), :kind, :base, "
-                    ":prev) RETURNING *"
+                    "base_export_id, prev_export_id, deliver_to) VALUES (:tenant, :workspace, "
+                    ":by, :purpose, :scope, :ref, :subtree, :history, CAST(:groups AS jsonb), "
+                    ":kind, :base, :prev, :deliver) RETURNING *"
                 ),
                 {"tenant": tenant_id, "workspace": principal.workspace.id,
                  "by": requested_by or principal.agent_signature, "purpose": purpose,
                  "scope": scope, "ref": scope_ref, "subtree": include_subtree,
                  "history": include_history,
                  "groups": json.dumps(include) if include is not None else None,
-                 "kind": kind, "base": base_id, "prev": prev_id},
+                 "kind": kind, "base": base_id, "prev": prev_id, "deliver": deliver_to},
             )
         ).mappings().one()
         await session.commit()
@@ -390,9 +396,30 @@ def start_export(export_id: str) -> None:
     task.add_done_callback(_running.discard)
 
 
+async def _authorize_node(principal: Principal, node_id: str) -> None:
+    """Another node: an owner/admin of it or an ancestor, or a person's own
+    personal space unless an ancestor's policy forbids it (AG-ID-13)."""
+    from app.services import tree
+
+    if principal.auth_kind is not AuthKind.HUMAN:
+        raise Forbidden("you may export your own tenant only")
+    async with async_session_factory() as session:
+        target = await tree.node(session, None, node_id)
+        role = await tree.role_on(session, principal, target["id"])
+        if role in ("owner", "admin"):
+            return
+        if target["tenant_type"] == "personal" and role == "member" and (
+                await tree.effective(session, target["id"]))["personal_space_export"]["value"]:
+            return
+    raise Forbidden("you may export your own tenant only")
+
+
 def _visible(principal: Principal, row: dict[str, Any]) -> bool:
     if principal.auth_kind is AuthKind.HUMAN_ADMIN:
         return True
+    if principal.tenant_id in (row.get("deliver_to") or []):
+        return principal.auth_kind is AuthKind.HUMAN and principal.human_role in (
+            "OWNER", "ADMIN")
     if row["tenant_id"] != principal.tenant_id:
         return False
     if principal.auth_kind is AuthKind.WORKSPACE:

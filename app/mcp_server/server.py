@@ -71,7 +71,9 @@ from app.services import lineage as lineage_service
 from app.services import logs as log_service
 from app.services import orientation as orientation_service
 from app.services import recall as recall_service
+from app.services import sharing as sharing_service
 from app.services import tasks as task_service
+from app.services import tree as tree_service
 from app.services.common import set_event_platform
 from app.services.lineage import stamp_for
 from app.stamp_context import set_current_stamp
@@ -124,6 +126,14 @@ IDEMPOTENT_TOOLS = frozenset(
         "set_budget",
         "append_entries",
         "ack_alert",
+        "create_child_tenant",
+        "move_tenant",
+        "attach_tenant",
+        "detach_tenant",
+        "set_policy",
+        "share",
+        "revoke_share",
+        "open_admin_access",
     }
 )
 _CONTENT_BLOCK = TypeAdapter(types.ContentBlock)
@@ -1269,6 +1279,156 @@ async def get_task_tree(
     return _compact(result)
 
 
+@mcp.tool(name="get_tenant_tree")
+async def get_tenant_tree(node: str = "current", depth: int | None = None) -> dict[str, Any]:
+    """Your organisation's tree as far as you may see it (company → organization
+    → personal); agents see their own node."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await tree_service.get_tree(None, principal, node, depth))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool(name="create_child_tenant")
+async def create_child_tenant(
+    parent: str,
+    display_name: str,
+    tenant_type: Literal["organization", "personal"] = "organization",
+    alias: str | None = None,
+) -> dict[str, Any]:
+    """Create a node under a parent. People (owners/admins) only: agent tokens get 403."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await tree_service.create_child(
+            None, principal, parent, tenant_type=tenant_type, display_name=display_name,
+            alias=alias, workspace_name=None))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool(name="move_tenant")
+async def move_tenant(node: str, new_parent: str,
+                      confirmation_id: str | None = None) -> dict[str, Any]:
+    """Move a subtree inside its tree; both parents' owners confirm (409
+    confirmation_required with confirmation_id until they have). People only."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await tree_service.move(None, principal, node, new_parent,
+                                                confirmation_id=confirmation_id))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool(name="attach_tenant")
+async def attach_tenant(root: str, parent: str,
+                        confirmation_id: str | None = None) -> dict[str, Any]:
+    """Attach an independent root under a node; both owners confirm. People only."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await tree_service.attach(None, principal, root, parent,
+                                                  confirmation_id=confirmation_id))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool(name="detach_tenant")
+async def detach_tenant(node: str, confirmation_id: str | None = None) -> dict[str, Any]:
+    """Make a subtree its own tree; the root's and the node's owners confirm. People only."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await tree_service.detach(None, principal, node,
+                                                  confirmation_id=confirmation_id))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool(name="get_effective_policy")
+async def get_effective_policy(node: str = "current") -> dict[str, Any]:
+    """The policies in force here, each with the node it comes from (the strictest
+    value along the path wins; locked keys cannot change below)."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await tree_service.get_effective_policy(None, principal, node))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool(name="set_policy")
+async def set_policy(node: str, key: str, value: Any = None,
+                     locked: bool = False) -> dict[str, Any]:
+    """Tighten a policy on a node (never looser than the ancestors'). People only."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await tree_service.set_policy(None, principal, node, key, value,
+                                                      locked))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool(name="list_shares")
+async def list_shares() -> dict[str, Any]:
+    """Resources other nodes shared with you (and those your node shared)."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await sharing_service.list_shares(None, principal))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool(name="share")
+async def share(
+    resource_kind: Literal["document", "namespace", "workspace", "task"],
+    resource_ref: str,
+    grantee: str,
+    access: Literal["read", "write"] = "read",
+    expires_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Share a resource with a node or principal of the same tree. People only."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await sharing_service.share(
+            None, principal, resource_kind=resource_kind, resource_ref=resource_ref,
+            grantee=grantee, access=access, expires_at=expires_at))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool(name="revoke_share")
+async def revoke_share(share_id: str) -> dict[str, Any]:
+    """Revoke a share. People only."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await sharing_service.revoke_share(None, principal, share_id))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool(name="open_admin_access")
+async def open_admin_access(node: str, reason: str,
+                            duration_s: Annotated[int, Field(ge=1, le=86_400)] = 3_600
+                            ) -> dict[str, Any]:
+    """Open audited content access to a subtree you administer from above; its
+    owners are told at once. People only."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        return _compact(await sharing_service.open_admin_access(
+            None, principal, node, reason=reason, duration_s=duration_s))
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+
+
 @mcp.tool(name="append_entries")
 async def append_entries(
     doc_key: str,
@@ -1591,6 +1751,7 @@ async def query_workspace(
     include_tainted: bool = False,
     include_archived: bool = False,
     mode: str = "hybrid",
+    include_shared: bool = False,
 ) -> dict[str, Any]:
     """Structured + semantic document discovery (semantic search, NOT exhaustive).
 
@@ -1605,10 +1766,12 @@ async def query_workspace(
     created_by, trust and matched_chunks; excluded counts what the default
     filters hid (unverified_by_others, archived, tainted).
 
-    filters support scalar equality and {eq, gte, lte, gt, lt, exists}
-    operators, e.g. {"status":"DRAFT", "due_at":{"gte":"2026-11-01"},
-    "owner":{"exists":true}}. Archived documents are excluded unless
-    include_archived=true. query adds hybrid ranking; returns summaries only.
+    filters support scalar equality and {eq, ne, gt, gte, lt, lte, exists,
+    in, nin, contains} operators plus "$or", e.g. {"status":"DRAFT",
+    "due_at":{"lte":"now+30d"}, "owner":{"exists":true}}. Archived documents
+    are excluded unless include_archived=true. include_shared=true adds
+    documents other nodes of your organisation shared with you (each hit then
+    carries tenant_alias). query adds hybrid ranking; returns summaries only.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -1620,6 +1783,7 @@ async def query_workspace(
                 limit=limit,
                 include_unverified=include_unverified,
                 include_own_unverified=include_own_unverified,
+                include_shared=include_shared,
                 include_tainted=include_tainted,
                 include_archived=include_archived,
                 mode=mode,

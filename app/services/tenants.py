@@ -223,7 +223,7 @@ async def owner_restore_tenant(session: AsyncSession, principal: Principal) -> T
     return await restore_tenant(session, principal.tenant_id)
 
 
-_TREE_ERRORS = ("tenant_type_invalid_parent", "tenant_cycle")
+_TREE_ERRORS = ("tenant_type_invalid_parent", "tenant_cycle", "tenant_depth_exceeded")
 
 
 async def create_child_tenant(
@@ -249,7 +249,12 @@ async def create_child_tenant(
     if parent.status != "active":
         raise ApiError(409, "invalid_state_transition", "the parent tenant is not active",
                        details={"status": parent.status})
-    if parent.depth >= 3:
+    if parent.tenant_type == "personal":
+        raise ApiError(422, "tenant_type_invalid_parent", "personal tenants have no children",
+                       details={"child_type": tenant_type, "parent_type": "personal",
+                                "allowed": []})
+    if parent.depth >= 4:
+        # depth counts the root as 1: three levels below the root (AG-ID-09).
         raise ApiError(422, "tenant_depth_exceeded", "a tenant tree is at most 3 levels deep",
                        details={"max_depth": 3})
     if tenant_type not in ("organization", "personal"):

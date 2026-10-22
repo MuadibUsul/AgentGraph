@@ -15,14 +15,23 @@ from app.auth import Principal, get_principal
 from app.database import async_session_factory
 from app.errors import Forbidden
 from app.schemas import (
+    AdminAccessRequest,
+    ChildTenantCreateRequest,
     MemberInviteRequest,
     MemberUpdateRequest,
+    NodeDeleteRequest,
+    NodeDetachRequest,
     RightsCloseRequest,
     RightsEraseRequest,
     RightsExportRequest,
     RightsRequestCreate,
+    ShareRequest,
+    TenantAttachRequest,
+    TenantMoveRequest,
+    TenantPolicyRequest,
+    TenantQuotaRequest,
 )
-from app.services import members, rights
+from app.services import members, rights, sharing, tree
 
 router = APIRouter(prefix="/v1", tags=["Organisation"])
 
@@ -82,6 +91,172 @@ async def remove_member(
     async with async_session_factory() as session:
         return await members.remove_member(session, _people_only(principal), tenant_id,
                                            principal_id, transfer_tokens_to=transfer_tokens_to)
+
+
+# --------------------------------------------------------- the tree (AG-ID-09, ID-11)
+
+
+@router.post("/tenants/{tenant_id}/children", status_code=201,
+             summary="Create a child node (owners and admins of the parent or above)")
+async def create_child_node(
+    tenant_id: str,
+    body: ChildTenantCreateRequest,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.create_child(None, principal, tenant_id, tenant_type=body.tenant_type,
+                                   display_name=body.display_name, alias=body.alias,
+                                   workspace_name=body.workspace_name)
+
+
+@router.get("/tenants/{tenant_id}/tree", summary="The subtree, as far as you may see it")
+async def tenant_tree(
+    tenant_id: str,
+    depth: int | None = Query(default=None, ge=0, le=3),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.get_tree(None, principal, tenant_id, depth)
+
+
+@router.post("/tenants/{tenant_id}/move",
+             summary="Move a subtree inside its tree (both parents' owners confirm)")
+async def move_node(
+    tenant_id: str,
+    body: TenantMoveRequest,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.move(None, _people_only(principal), tenant_id, body.new_parent,
+                           confirmation_id=body.confirmation_id)
+
+
+@router.post("/tenants/{tenant_id}/attach",
+             summary="Attach an independent root under a node (both owners confirm)")
+async def attach_node(
+    tenant_id: str,
+    body: TenantAttachRequest,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.attach(None, _people_only(principal), tenant_id, body.parent,
+                             confirmation_id=body.confirmation_id)
+
+
+@router.put("/tenants/{tenant_id}/policies/{key}",
+            summary="Set a policy (only ever tighter than the ancestors'; lockable)")
+async def set_node_policy(
+    tenant_id: str,
+    key: str,
+    body: TenantPolicyRequest,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.set_policy(None, _people_only(principal), tenant_id, key, body.value,
+                                 body.locked)
+
+
+@router.get("/tenants/{tenant_id}/effective-policy",
+            summary="Effective policies with the node each value comes from")
+async def effective_policy(
+    tenant_id: str,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.get_effective_policy(None, principal, tenant_id)
+
+
+@router.put("/tenants/{tenant_id}/quotas/{dimension}",
+            summary="A node's daily quota (never above its parent's)")
+async def set_node_quota(
+    tenant_id: str,
+    dimension: str,
+    body: TenantQuotaRequest,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.set_quota(None, _people_only(principal), tenant_id, dimension, body.limit)
+
+
+@router.get("/tenants/{tenant_id}/usage", summary="Usage per node, with the subtree's total")
+async def node_usage(
+    tenant_id: str,
+    include_subtree: bool = Query(default=True),
+    window_days: int = Query(default=1, ge=1, le=31),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.usage_by_node(None, _people_only(principal), tenant_id,
+                                    include_subtree=include_subtree, window_days=window_days)
+
+
+@router.post("/tenants/{tenant_id}/delete",
+             summary="Delete a node below the root (cascade for its subtree; 30 days' grace)")
+async def delete_node(
+    tenant_id: str,
+    body: NodeDeleteRequest,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.delete_node(None, _people_only(principal), tenant_id,
+                                  confirm=body.confirm, cascade=body.cascade)
+
+
+@router.post("/tenants/{tenant_id}/restore", summary="Cancel a node's deletion (with its subtree)")
+async def restore_node(
+    tenant_id: str,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.restore_node(None, _people_only(principal), tenant_id)
+
+
+@router.post("/tenants/{tenant_id}/detach",
+             summary="Make a subtree its own tree (the root's and the node's owners confirm)")
+async def detach_node(
+    tenant_id: str,
+    body: NodeDetachRequest | None = None,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await tree.detach(None, _people_only(principal), tenant_id,
+                             confirmation_id=body.confirmation_id if body else None)
+
+
+# --------------------------------------------------------- sharing (AG-ID-12)
+
+
+@router.post("/shares", status_code=201,
+             summary="Share a document, namespace, workspace or task inside the tree")
+async def create_share(
+    body: ShareRequest,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await sharing.share(None, principal, resource_kind=body.resource_kind,
+                               resource_ref=body.resource_ref, grantee=body.grantee,
+                               access=body.access, expires_at=body.expires_at)
+
+
+@router.get("/shares", summary="Shares made by this node and shares granted to you")
+async def list_shares(principal: Principal = Depends(get_principal)) -> dict:
+    return await sharing.list_shares(None, principal)
+
+
+@router.delete("/shares/{share_id}", summary="Revoke a share (applies to the next request)")
+async def revoke_share(
+    share_id: str,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await sharing.revoke_share(None, principal, share_id)
+
+
+@router.post("/tenants/{tenant_id}/access-sessions", status_code=201,
+             summary="Open audited, time-boxed content access to a subtree (ancestors' admins)")
+async def open_admin_access(
+    tenant_id: str,
+    body: AdminAccessRequest,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await sharing.open_admin_access(None, _people_only(principal), tenant_id,
+                                           reason=body.reason, duration_s=body.duration_s)
+
+
+@router.post("/access-sessions/{access_session_id}/close",
+             summary="Close an admin access session")
+async def close_admin_access(
+    access_session_id: str,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await sharing.close_admin_access(None, _people_only(principal), access_session_id)
 
 
 # --------------------------------------------------------- rights requests

@@ -67,6 +67,9 @@ class Principal:
     can_issue: bool = False
     token_depth: int = 0  # stored depth: root 0, branch 1, child 2...
     max_descendants: int = 0
+    # AG-ID-12: an owner/admin of an ancestor sees metadata here; content
+    # needs an open admin access session.
+    inherited_access: bool = False
 
     @property
     def tenant_id(self) -> str:
@@ -215,6 +218,7 @@ async def _resolve_principal(
         token_id=human_session.id,
         user_id=user.id,
         human_role=ACCOUNT_ROLE[access["role"]],
+        inherited_access=bool(access.get("inherited")),
     )
 
 

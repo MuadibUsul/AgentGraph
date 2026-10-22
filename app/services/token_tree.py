@@ -288,7 +288,20 @@ async def issue_child_token(
     parent_lineage = [workspace.root_token_id] if via_root else list(principal.lineage or [])
     parent_depth = 0 if via_root else principal.token_depth
     child_depth = parent_depth + 1  # stored numbering
+    from app.services import tree
+
+    async with async_session_factory() as platform:
+        policy = await tree.effective(platform, workspace.tenant_id)
+        if (principal.auth_kind is AuthKind.HUMAN and principal.user_id is not None
+                and not policy["members_can_issue"]["value"]
+                and await tree.role_on(platform, principal, workspace.tenant_id) == "member"):
+            raise ApiError(403, "forbidden", "this organisation's policy keeps members from "
+                           "issuing agent tokens",
+                           details={"policy": "members_can_issue",
+                                    "source_node": policy["members_can_issue"]["source_node"]})
     max_depth = workspace.max_token_depth
+    if policy["max_issue_depth"]["value"] is not None:
+        max_depth = min(max_depth, int(policy["max_issue_depth"]["value"]))
     if prd_depth(child_depth) > max_depth:
         raise ApiError(403, "depth_limit_exceeded", "the token tree is at its maximum depth",
                        details={"max_depth": max_depth, "parent_depth": prd_depth(parent_depth)})
@@ -307,6 +320,12 @@ async def issue_child_token(
                    now=now)
     scopes, read, write = grant["scopes"], grant["read"], grant["write"]
     can_issue, expires_at = grant["can_issue"], grant["expires_at"]
+    cap = policy["token_max_ttl_seconds"]["value"]
+    if cap is not None and (expires_at is None or expires_at > now + timedelta(seconds=cap)):
+        expires_at = now + timedelta(seconds=int(cap))
+        add_warning("ttl_capped_by_policy", "the token's lifetime was capped by policy",
+                    max_ttl_seconds=int(cap),
+                    source_node=policy["token_max_ttl_seconds"]["source_node"])
     branch = child_depth == 1
 
     agent = request.get("agent") or {}

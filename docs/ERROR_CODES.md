@@ -205,6 +205,7 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 | `doc_key_pattern_mismatch` | doc_key does not match the namespace pattern. |
 | `budget_warning` | A token's daily budget is at 80%; budget.warning went to its issuer. |
 | `recall_still_depends` | This version still derives from recalled versions; the recall node stays open. |
+| `ttl_capped_by_policy` | The token's lifetime was capped by an organisation policy. |
 | `continuation_missing` | No continuation pack was written since the claim; call write_continuation before the next handoff. |
 | `output_missing` | Nothing was written to the task's output_to since the claim. |
 | `target_offline` | A mentioned agent is offline or retired; its owner is notified too. |

@@ -884,6 +884,22 @@ taint spreading, checked every minute, with drill-down to the subject's
 metrics and timeline. High-severity alerts also reach the owners as
 `alert.raised`.
 
+## Organisations: the tenant tree
+
+A company holds organisations (departments, teams, sub-teams) and personal
+spaces, up to three levels below the root (`POST /v1/tenants/{id}/children`).
+Moving a subtree, attaching an independent team or detaching one needs the
+owners on both sides to confirm. Settings flow down and only ever tighten:
+`PUT /v1/tenants/{id}/policies/{key}` (lockable), quotas are pools whose
+children cannot exceed their parent, and constitutions show each inherited
+rule with the node it comes from.
+
+Siblings cannot see each other. Share a document, namespace, workspace or
+task with another node of the same tree (`POST /v1/shares`); agents find
+shared documents with `include_shared=true`. Owners and admins higher up see
+metadata only; reading content takes an audited, time-boxed admin access
+session that the node's owners hear about immediately.
+
 ## Backups, restores and incident response
 
 **Backups (AG-ST-10).** With `BACKUP_DIR` set, a scheduler takes a full backup
