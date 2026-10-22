@@ -1,7 +1,7 @@
 """In-flight request limit per credential (PRD AG-ST-15 point 2b).
 
 At most ``max_in_flight_per_token`` requests per token run at once; long-lived
-streams (SSE) have their own pool of ``max_streams_per_token``. Counting is per
+streams (SSE and poll_events) have their own pool of ``max_streams_per_token``. Counting is per
 process: behind several replicas the effective limit is the per-replica limit
 times the replica count. In shadow mode overflows are only logged.
 """
@@ -22,7 +22,7 @@ from app.errors import error_body
 logger = logging.getLogger("agentgraph.concurrency")
 settings = get_settings()
 
-STREAM_PATHS = ("/v1/stream",)
+STREAM_PATHS = ("/v1/stream", "/v1/events")
 
 
 def _credential(scope: Scope) -> str | None:

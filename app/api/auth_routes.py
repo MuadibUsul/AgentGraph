@@ -10,6 +10,7 @@ from app.auth import Principal, get_human_account
 from app.config import get_settings
 from app.database import get_db
 from app.schemas import (
+    AcceptInviteRequest,
     AuthConfigResponse,
     GoogleLinkRequest,
     GoogleLoginRequest,
@@ -19,6 +20,7 @@ from app.schemas import (
     HumanSessionOut,
     HumanUserOut,
     PasswordChangeRequest,
+    SwitchWorkspaceRequest,
 )
 
 router = APIRouter(prefix="/v1/auth", tags=["Human Auth"])
@@ -164,3 +166,27 @@ async def logout(
     await services.human_logout(
         session, principal.user_id, principal.token_id
     )
+
+
+@router.post("/accept-invite", status_code=201,
+             summary="Accept a member invitation: create the account and sign in")
+async def accept_invite(
+    body: AcceptInviteRequest, session: AsyncSession = Depends(get_db)
+) -> dict:
+    from app.services.members import accept_invitation
+
+    return await accept_invitation(session, code=body.code, password=body.password,
+                                   display_name=body.display_name)
+
+
+@router.post("/switch-workspace",
+             summary="A session for another workspace you may use (404 if you may not)")
+async def switch_workspace(
+    body: SwitchWorkspaceRequest,
+    principal: Principal = Depends(get_human_account),
+) -> dict:
+    from app.database import async_session_factory
+    from app.services.members import switch_workspace as switch
+
+    async with async_session_factory() as session:
+        return await switch(session, principal, body.workspace_id)

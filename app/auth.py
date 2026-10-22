@@ -42,6 +42,8 @@ class AuthKind(str, Enum):
     AGENT = "agent"
     HUMAN = "human"
     HUMAN_ADMIN = "human_admin"
+    # The workspace's root token (AG-ID-01): token management only.
+    ROOT = "root"
 
 
 @dataclass
@@ -55,6 +57,19 @@ class Principal:
     user_id: uuid.UUID | None = None
     human_role: str | None = None
     tenant: Tenant | None = None
+    # Token tree (AG-ID-01/02): canonical id, effective grant along the chain.
+    token_cid: str | None = None
+    scopes: frozenset[str] | None = None  # None: limited by the role only
+    write_namespaces: list[str] | None = None  # None: same as allowed_namespaces
+    lineage: list[str] | None = None
+    parent_token_id: str | None = None
+    expires_at: datetime | None = None
+    can_issue: bool = False
+    token_depth: int = 0  # stored depth: root 0, branch 1, child 2...
+    max_descendants: int = 0
+    # AG-ID-12: an owner/admin of an ancestor sees metadata here; content
+    # needs an open admin access session.
+    inherited_access: bool = False
 
     @property
     def tenant_id(self) -> str:
@@ -125,6 +140,7 @@ async def _resolve_principal(
         await session.execute(select(Workspace).where(Workspace.api_key_hash == key_hash))
     ).scalar_one_or_none()
     if workspace is not None:
+        # The workspace key: a branch of the root with commander rights.
         signature = (agent_hint or "human_commander").strip() or "human_commander"
         return Principal(
             workspace=workspace,
@@ -132,32 +148,41 @@ async def _resolve_principal(
             agent_signature=signature[:128],
             auth_kind=AuthKind.WORKSPACE,
             allowed_namespaces=["*"],
+            token_cid=workspace.key_token_id,
+            lineage=[workspace.root_token_id, workspace.key_token_id],
+            parent_token_id=workspace.root_token_id,
+            can_issue=True,
+            token_depth=1,
+        )
+    workspace = (
+        await session.execute(select(Workspace).where(Workspace.root_key_hash == key_hash))
+    ).scalar_one_or_none()
+    if workspace is not None:
+        return Principal(
+            workspace=workspace,
+            role=RoleScope.COMMANDER,
+            agent_signature="workspace_root",
+            auth_kind=AuthKind.ROOT,
+            allowed_namespaces=["*"],
+            token_cid=workspace.root_token_id,
+            lineage=[workspace.root_token_id],
+            can_issue=True,
+            token_depth=0,
         )
 
     token = (
-        await session.execute(
-            select(AgentToken).where(
-                AgentToken.api_key_hash == key_hash,
-                AgentToken.is_active.is_(True),
-                AgentToken.revoked_at.is_(None),
-            )
-        )
+        await session.execute(select(AgentToken).where(AgentToken.api_key_hash == key_hash))
     ).scalar_one_or_none()
     now = datetime.now(timezone.utc)
     if token is not None:
-        if token.expires_at is not None and token.expires_at <= now:
+        if token.revoked_at is not None:
+            raise _revoked(token, token.revoked_ancestor or token.canonical_id)
+        if not token.is_active:
             return None
         workspace = await session.get(Workspace, token.workspace_id)
         if workspace is None:
             return None
-        return Principal(
-            workspace=workspace,
-            role=RoleScope(token.role_scope.value),
-            agent_signature=token.agent_signature,
-            auth_kind=AuthKind.AGENT,
-            allowed_namespaces=list(token.allowed_namespaces or ["*"]),
-            token_id=token.id,
-        )
+        return await _agent_principal(session, workspace, token, now)
 
     human = (
         await session.execute(
@@ -177,20 +202,102 @@ async def _resolve_principal(
     workspace = await session.get(Workspace, human_session.workspace_id)
     if workspace is None:
         return None
-    role = (
-        RoleScope.VIEWER
-        if user.role == "VIEWER"
-        else RoleScope.COMMANDER
-    )
+    # AG-ID-10: the membership (direct, or owner/admin inherited from an
+    # ancestor) decides what a person is in this workspace's node.
+    from app.services.members import ACCOUNT_ROLE, workspace_access
+
+    access = await workspace_access(session, user, workspace.id)
+    if access is None:
+        return None
     return Principal(
         workspace=workspace,
-        role=role,
+        role=RoleScope.VIEWER if access["role"] == "guest" else RoleScope.COMMANDER,
         agent_signature=user.email,
         auth_kind=AuthKind.HUMAN,
         allowed_namespaces=["*"],
         token_id=human_session.id,
         user_id=user.id,
-        human_role=user.role,
+        human_role=ACCOUNT_ROLE[access["role"]],
+        inherited_access=bool(access.get("inherited")),
+    )
+
+
+def _revoked(token: AgentToken, ancestor: str) -> ApiError:
+    return ApiError(
+        401, "token_revoked", "this token was revoked",
+        details={"revoked_at": token.revoked_at.isoformat() if token.revoked_at else None,
+                 "revoked_ancestor": ancestor},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _expired(token: AgentToken, expired: AgentToken) -> ApiError:
+    return ApiError(
+        401, "token_expired", "this token or one of its ancestors expired",
+        details={"expired_at": expired.expires_at.isoformat(),
+                 "expired_token": expired.canonical_id,
+                 "parent_token_id": token.parent_token_id},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def meet(first: list[str], second: list[str]) -> list[str]:
+    """Intersect two namespace lists where "*" means every namespace."""
+    if "*" in first:
+        return list(second)
+    if "*" in second:
+        return list(first)
+    return [item for item in first if item in second]
+
+
+async def _agent_principal(
+    session: AsyncSession, workspace: Workspace, token: AgentToken, now: datetime
+) -> Principal:
+    """The effective grant is the intersection along the chain (AG-ID-02 point 1)."""
+    lineage = list(token.lineage or [workspace.root_token_id, token.canonical_id])
+    ancestors = []
+    others = [item for item in lineage if item not in (
+        token.canonical_id, workspace.root_token_id, workspace.key_token_id)]
+    if others:
+        rows = (
+            await session.execute(
+                select(AgentToken).where(AgentToken.workspace_id == workspace.id,
+                                         AgentToken.canonical_id.in_(others))
+            )
+        ).scalars().all()
+        by_id = {row.canonical_id: row for row in rows}
+        ancestors = [by_id[item] for item in others if item in by_id]
+    for ancestor in ancestors:
+        if ancestor.revoked_at is not None:
+            raise _revoked(token, ancestor.canonical_id)
+    for item in [*ancestors, token]:
+        if item.expires_at is not None and item.expires_at <= now:
+            raise _expired(token, item)
+    scopes: frozenset[str] | None = None
+    read = ["*"]
+    write = ["*"]
+    for item in [*ancestors, token]:
+        if item.scopes is not None:
+            scopes = frozenset(item.scopes) if scopes is None else scopes & set(item.scopes)
+        read = meet(read, list(item.read_namespaces or item.allowed_namespaces or ["*"]))
+        write = meet(write, list(item.write_namespaces or item.allowed_namespaces or ["*"]))
+    expires = [item.expires_at for item in [*ancestors, token] if item.expires_at]
+    return Principal(
+        workspace=workspace,
+        role=RoleScope(token.role_scope.value),
+        agent_signature=token.agent_signature,
+        auth_kind=AuthKind.AGENT,
+        allowed_namespaces=read,
+        token_id=token.id,
+        token_cid=token.canonical_id,
+        scopes=scopes,
+        write_namespaces=write,
+        lineage=lineage,
+        parent_token_id=token.parent_token_id,
+        expires_at=min(expires) if expires else None,
+        can_issue=bool(token.can_issue) and (scopes is None or "token:issue" in scopes),
+        token_depth=token.depth,
+        max_descendants=token.max_descendants,
     )
 
 
@@ -299,6 +406,16 @@ async def get_principal(
     from app.stamp_context import set_current_stamp
 
     set_current_stamp(await stamp_for(principal))
+    from app.services.access_log import note_request
+    from app.stamp_context import current_stamp
+
+    write = is_write_request(request.method, request.url.path)
+    note_request(principal.workspace.id, current_stamp(), write=write)
+    from app.services import directory, token_tree
+
+    await token_tree.after_authentication(principal, path=request.url.path)
+    await directory.touch(principal, write=write)
+    await directory.load_actor_map(principal)
     await activate_tenant(session, principal.workspace.id, principal.tenant_scope)
     from app.services.common import set_audit_actor
     from app.services.usage import enforce_rate_limit
@@ -402,6 +519,7 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
     RoleScope.COMMANDER: {"*"},
     RoleScope.VIEWER: {
         "workspace:read",
+        "events:read",
         "state:read",
         "task:read",
         "doc:read",
@@ -412,6 +530,7 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
     },
     RoleScope.SCOUT: {
         "workspace:read",
+        "events:read",
         "task:read",
         "doc:read",
         "doc:create",
@@ -422,6 +541,7 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
     },
     RoleScope.ANALYST: {
         "workspace:read",
+        "events:read",
         "state:read",
         "task:read",
         "task:create",
@@ -443,6 +563,7 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
     },
     RoleScope.AUDITOR: {
         "workspace:read",
+        "events:read",
         "state:read",
         "task:read",
         "task:claim",
@@ -464,6 +585,7 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
     },
     RoleScope.EXECUTOR: {
         "workspace:read",
+        "events:read",
         "state:read",
         "state:write",
         "task:read",
@@ -488,9 +610,52 @@ PERMISSIONS: dict[RoleScope, set[str]] = {
 }
 
 
+# PRD AG-ID-02 point 7: the scope vocabulary and the permissions each grants.
+SCOPE_PERMISSIONS: dict[str, frozenset[str]] = {
+    "docs:read": frozenset({"workspace:read", "doc:read", "query", "link:read",
+                            "timeline:read", "proposal:read", "state:read"}),
+    "docs:write": frozenset({"doc:write", "doc:create", "link:write", "state:write",
+                             "timeline:append"}),
+    "docs:archive": frozenset({"doc:archive"}),
+    "tasks:read": frozenset({"workspace:read", "task:read"}),
+    "tasks:write": frozenset({"task:create", "task:claim", "task:transition"}),
+    "tasks:review": frozenset({"task:review", "doc:verify"}),
+    "proposals:write": frozenset({"doc:propose", "proposal:vote"}),
+    "events:read": frozenset({"workspace:read", "events:read", "audit:read", "budget:read"}),
+    "external_action:draft": frozenset({"action:read", "action:propose"}),
+    "export": frozenset({"export"}),
+    "webhooks:manage": frozenset({"webhook:manage"}),
+    "token:issue": frozenset({"token:issue"}),
+}
+SCOPES = tuple(sorted(SCOPE_PERMISSIONS))
+
+
+def scopes_for_role(role: RoleScope) -> list[str]:
+    """The scopes a role's permissions cover (what a legacy token may grant on)."""
+    granted = PERMISSIONS.get(role, set())
+    if "*" in granted:
+        return list(SCOPES)
+    return [scope for scope, permissions in SCOPE_PERMISSIONS.items()
+            if permissions & granted]
+
+
+def effective_scopes(principal: Principal) -> list[str]:
+    """What this credential could grant on: role ∩ chain scopes; token:issue by can_issue."""
+    base = [scope for scope in scopes_for_role(principal.role) if scope != "token:issue"]
+    if principal.scopes is not None:
+        base = [scope for scope in base if scope in principal.scopes]
+    if principal.can_issue:
+        base.append("token:issue")
+    return base
+
+
 def can(principal: Principal, permission: str) -> bool:
     granted = PERMISSIONS.get(principal.role, set())
-    return "*" in granted or permission in granted
+    if not ("*" in granted or permission in granted):
+        return False
+    if principal.scopes is None:
+        return True
+    return any(permission in SCOPE_PERMISSIONS.get(scope, ()) for scope in principal.scopes)
 
 
 def require_permission(principal: Principal, permission: str) -> None:
@@ -498,6 +663,11 @@ def require_permission(principal: Principal, permission: str) -> None:
         raise Forbidden(
             f"role {principal.role.value} lacks permission '{permission}'"
         )
+
+
+def is_manager(principal: Principal) -> bool:
+    """An owner or admin of the node (AG-ID-10): members, policies, quotas, exports."""
+    return principal.auth_kind is AuthKind.HUMAN and principal.human_role in ("OWNER", "ADMIN")
 
 
 def effective_agent(principal: Principal, provided: str | None) -> str:
@@ -516,9 +686,14 @@ def effective_agent(principal: Principal, provided: str | None) -> str:
 
 
 def ensure_namespace(principal: Principal, namespace: str, *, write: bool = False) -> None:
-    if principal.is_commander or "*" in principal.allowed_namespaces:
+    if principal.auth_kind is not AuthKind.AGENT:
         return
-    if namespace not in principal.allowed_namespaces:
+    names = (principal.write_namespaces
+             if write and principal.write_namespaces is not None
+             else principal.allowed_namespaces)
+    if "*" in names:
+        return
+    if namespace not in names:
         raise NamespaceForbidden(namespace)
 
 

@@ -23,6 +23,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.admin_routes import router as admin_router
 from app.api.auth_routes import router as auth_router
 from app.api.human_routes import router as human_router
+from app.api.org_routes import router as org_router
+from app.api.public_docs import router as public_docs_router
 from app.api.stream_routes import admin_router as admin_stream_router
 from app.api.stream_routes import router as stream_router
 from app.api.v1_routes import router as v1_router
@@ -39,6 +41,7 @@ from app.root_page import ROOT_PRIMITIVES, render_root_page
 from app.services.external_actions import external_action_loop
 from app.services.indexer import index_worker_loop
 from app.services.reaper import lease_reaper_loop
+from app.services.situation import MetricsMiddleware
 from app.services.webhooks import webhook_delivery_loop
 
 settings = get_settings()
@@ -86,6 +89,29 @@ async def lifespan(app: FastAPI):
         external_action_loop(), name="agentgraph-external-action-dispatcher"
     )
     index_task = asyncio.create_task(index_worker_loop(), name="agentgraph-index-worker")
+    from app.services.access_log import flush as flush_access_log
+    from app.services.access_log import flush_loop as access_log_loop
+    from app.services.backups import backup_scheduler_loop
+    from app.services.incidents import incident_check_loop
+    from app.services.mailer import mail_worker_loop
+    from app.services.situation import evaluation_loop as situation_evaluation_loop
+    from app.services.situation import flush as flush_metrics
+    from app.services.situation import situation_loop
+    from app.services.token_budget import flush as flush_token_usage
+    from app.services.token_budget import flush_loop as token_usage_loop
+
+    background = [
+        asyncio.create_task(access_log_loop(), name="agentgraph-access-log"),
+        asyncio.create_task(token_usage_loop(), name="agentgraph-token-usage"),
+        asyncio.create_task(situation_loop(), name="agentgraph-metrics"),
+        asyncio.create_task(situation_evaluation_loop(), name="agentgraph-situation"),
+        asyncio.create_task(mail_worker_loop(), name="agentgraph-mailer"),
+        asyncio.create_task(incident_check_loop(), name="agentgraph-incident-sla"),
+    ]
+    if settings.backup_dir and settings.backup_scheduler_enabled:
+        background.append(
+            asyncio.create_task(backup_scheduler_loop(), name="agentgraph-backups")
+        )
     try:
         if settings.mcp_enabled:
             async with mcp.session_manager.run():
@@ -98,11 +124,18 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
-        for task in (reaper_task, webhook_task, action_task, index_task):
+        tasks = (reaper_task, webhook_task, action_task, index_task, *background)
+        for task in tasks:
             task.cancel()
-        for task in (reaper_task, webhook_task, action_task, index_task):
+        for task in tasks:
             with suppress(asyncio.CancelledError):
                 await task
+        with suppress(Exception):
+            await flush_access_log()
+        with suppress(Exception):
+            await flush_token_usage()
+        with suppress(Exception):
+            await flush_metrics()
         await event_bus.stop()
         await close_embedding_provider()
         await engine.dispose()
@@ -118,8 +151,9 @@ app = FastAPI(
         "capability-scoped service layer."
     ),
     lifespan=lifespan,
+    # /docs is the public documentation site; Swagger UI lives at /api-reference.
     docs_url=(
-        "/docs"
+        "/api-reference"
         if settings.docs_enabled and not settings.docs_require_auth
         else None
     ),
@@ -169,7 +203,10 @@ async def security_headers(request: Request, call_next):
         response.headers.setdefault(
             "Cache-Control", "public, max-age=31536000, immutable"
         )
-    elif path.startswith("/dashboard/") or path == "/dashboard":
+    elif (
+        path.startswith("/dashboard/") or path == "/dashboard"
+        or path.startswith("/docs/") or path == "/docs"
+    ):
         response.headers.setdefault(
             "Cache-Control", "no-store, max-age=0, must-revalidate"
         )
@@ -182,6 +219,7 @@ async def security_headers(request: Request, call_next):
 
 # Innermost: count in-flight requests per token only for authenticated calls.
 app.add_middleware(ConcurrencyLimitMiddleware)
+app.add_middleware(MetricsMiddleware)
 app.add_middleware(RequestContextMiddleware)
 # Inside CORS so protocol errors (unsupported_api_version) still carry CORS headers.
 app.add_middleware(ProtocolMiddleware)
@@ -197,6 +235,7 @@ app.add_middleware(
 app.include_router(v1_router)
 app.include_router(auth_router)
 app.include_router(human_router)
+app.include_router(org_router)
 app.include_router(stream_router)
 app.include_router(admin_router)
 app.include_router(admin_stream_router)
@@ -211,6 +250,13 @@ if dashboard_dir.is_dir():
         StaticFiles(directory=str(dashboard_dir), html=True),
         name="dashboard",
     )
+# Public documentation site (no login). The Next.js export renders it at
+# /docs; without a console build the API serves the same content as plain HTML.
+docs_site_dir = dashboard_dir / "docs"
+if docs_site_dir.is_dir():
+    app.mount("/docs", StaticFiles(directory=str(docs_site_dir), html=True), name="docs")
+else:
+    app.include_router(public_docs_router)
 
 
 @app.exception_handler(ApiError)
@@ -327,7 +373,7 @@ if settings.docs_enabled and settings.docs_require_auth:
     ) -> JSONResponse:
         return JSONResponse(app.openapi())
 
-    @app.get("/docs", include_in_schema=False)
+    @app.get("/api-reference", include_in_schema=False)
     async def protected_docs(
         _: None = Depends(_require_docs_auth),
     ) -> HTMLResponse:
@@ -342,7 +388,8 @@ async def root(request: Request) -> Any:
     descriptor = {
         "name": settings.app_name,
         "version": settings.app_version,
-        "docs": "/docs" if settings.docs_enabled else None,
+        "docs": "/docs/",
+        "api_reference": "/api-reference" if settings.docs_enabled else None,
         "health": "/healthz",
         "rest": "/v1",
         "mcp": "/mcp/" if settings.mcp_enabled else None,
@@ -359,8 +406,17 @@ async def root(request: Request) -> Any:
 
 
 @app.get("/healthz", tags=["Health"], summary="Liveness probe")
-async def healthz() -> dict[str, str]:
-    return {"status": "ok", "version": settings.app_version}
+async def healthz() -> dict[str, Any]:
+    payload: dict[str, Any] = {"status": "ok", "version": settings.app_version}
+    # AG-ST-10: timestamps only (no backup details without authentication).
+    from app.services.backups import health_timestamps
+
+    try:
+        stamps = await asyncio.wait_for(health_timestamps(), timeout=2)
+    except Exception:  # noqa: BLE001 - liveness never fails on this
+        stamps = {"last_backup_at": None, "last_restore_drill_at": None}
+    payload.update({key: value.isoformat() if value else None for key, value in stamps.items()})
+    return payload
 
 
 @app.get("/readyz", tags=["Health"], summary="Readiness probe")

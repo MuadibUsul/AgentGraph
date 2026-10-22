@@ -306,6 +306,9 @@ CREATE INDEX IF NOT EXISTS idx_workspace_events_time
     ON workspace_events(created_at DESC);
 
 -- 11. Reactive event bus -------------------------------------------------------
+-- Base definition so the triggers below can be created. The current
+-- definition (typed, seq-numbered events) is sql/functions/
+-- notify_workspace_change.sql, applied after every migration on each start.
 CREATE OR REPLACE FUNCTION notify_workspace_change() RETURNS trigger AS $$
 DECLARE
     row_data JSONB;

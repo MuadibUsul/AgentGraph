@@ -38,6 +38,8 @@ from app.schemas import (
     HumanUserListResponse,
     HumanUserOut,
     HumanUserUpdateRequest,
+    LegacyMergeRequest,
+    OnboardingUpdate,
     PolicyCreateRequest,
     PolicyListResponse,
     PolicyOut,
@@ -47,6 +49,7 @@ from app.schemas import (
     ProposalListResponse,
     ProposalOut,
     ProposalRejectRequest,
+    SecurityContactsRequest,
     SlotMutationResponse,
     TaskActionResponse,
     TaskEscalateRequest,
@@ -64,8 +67,11 @@ from app.schemas import (
     WebhookRuleUpdateRequest,
     WorkspaceStatsResponse,
 )
+from app.services import agent_onboarding as agent_onboarding_service
 from app.services import budget as budget_service
 from app.services import exports as export_service
+from app.services import human_onboarding as onboarding_service
+from app.services import incidents as incident_service
 from app.services import leases as lease_service
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
@@ -77,8 +83,9 @@ router = APIRouter(prefix="/v1/human", tags=["Human Console"])
 async def _owner(
     principal: Principal = Depends(get_human_account),
 ) -> Principal:
-    if principal.human_role != "OWNER":
-        raise Forbidden("workspace OWNER role is required")
+    """Owners and admins of the node (AG-ID-10 role table)."""
+    if principal.human_role not in ("OWNER", "ADMIN"):
+        raise Forbidden("an owner or admin of this organisation is required")
     return principal
 
 
@@ -92,6 +99,17 @@ async def list_agent_tokens(
     session: AsyncSession = Depends(get_db),
 ) -> AgentTokenListResponse:
     return await services.list_agent_tokens(session, principal.workspace)
+
+
+@router.get(
+    "/agent-onboarding",
+    summary="Onboarding state of every agent token: steps, first action, last activity",
+)
+async def agent_onboarding_overview(
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await agent_onboarding_service.overview(session, principal.workspace.id)
 
 
 @router.post(
@@ -515,7 +533,7 @@ async def accounts(
     principal: Principal = Depends(get_human_principal),
     session: AsyncSession = Depends(get_db),
 ) -> HumanUserListResponse:
-    if principal.human_role != "OWNER":
+    if principal.human_role not in ("OWNER", "ADMIN"):
         from app.errors import Forbidden
 
         raise Forbidden("owner role required to list accounts")
@@ -535,7 +553,7 @@ async def create_account(
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> HumanUserCreatedResponse:
-    if principal.human_role != "OWNER":
+    if principal.human_role not in ("OWNER", "ADMIN"):
         from app.errors import Forbidden
 
         raise Forbidden("owner role required to create accounts")
@@ -558,7 +576,7 @@ async def update_account(
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> HumanUserOut:
-    if principal.human_role != "OWNER":
+    if principal.human_role not in ("OWNER", "ADMIN"):
         from app.errors import Forbidden
 
         raise Forbidden("owner role required to update accounts")
@@ -742,6 +760,23 @@ async def tenant(
     return await tenant_service.describe_tenant(session, principal.tenant_id)
 
 
+@router.get("/onboarding", summary="Getting-started checklist for the signed-in person")
+async def onboarding_status(
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await onboarding_service.status(session, principal)
+
+
+@router.post("/onboarding", summary="Tick, skip, close or reopen the getting-started checklist")
+async def onboarding_update(
+    body: OnboardingUpdate,
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await onboarding_service.update(session, principal, action=body.action, step=body.step)
+
+
 @router.get(
     "/tenant/final-export",
     summary="The final export taken when deletion was confirmed (?download=true for the zip)",
@@ -829,3 +864,61 @@ async def clear_circuit(
 ) -> dict:
     return await budget_service.clear_circuit(session, principal, principal_key)
 
+
+
+# ------------------------------------------------- security incidents (AG-TC-06)
+
+
+@router.get(
+    "/incident-notices",
+    summary="Security incident notices sent to your organisation (owners and admins)",
+)
+async def incident_notices(principal: Principal = Depends(get_human_account)) -> dict:
+    return await incident_service.notices_for(principal)
+
+
+@router.get("/tenant/security-contacts", summary="Extra recipients of incident notices")
+async def get_security_contacts(principal: Principal = Depends(get_human_account)) -> dict:
+    return await incident_service.get_security_contacts(principal)
+
+
+@router.put(
+    "/tenant/security-contacts",
+    summary="Set the root organisation's security contacts (owners only)",
+)
+async def set_security_contacts(
+    body: SecurityContactsRequest, principal: Principal = Depends(get_human_account)
+) -> dict:
+    return await incident_service.set_security_contacts(principal, body.emails)
+
+
+# ---------------------------------------------------- token tree and directory
+
+
+@router.post(
+    "/root-token:rotate",
+    summary="Rotate the workspace root token's secret (owners); the token id stays",
+)
+async def rotate_root_token(
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    if principal.human_role != "OWNER":
+        raise Forbidden("only an owner rotates the root token")
+    from app.services import token_tree
+
+    return await token_tree.rotate_root(session, principal.workspace.id)
+
+
+@router.post(
+    "/agents/merge-legacy",
+    summary="Claim a pre-directory updated_by label for a registered agent",
+)
+async def merge_legacy_identity(
+    body: LegacyMergeRequest,
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import directory
+
+    return await directory.merge_legacy_identity(session, principal, body.legacy, body.agent_id)

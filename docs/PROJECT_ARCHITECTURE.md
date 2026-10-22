@@ -3,7 +3,7 @@
 | 项 | 值 |
 |---|---|
 | 产品版本 | **v3.2.1** |
-| 数据库 schema | **3.16.0** |
+| 数据库 schema | **3.26.0** |
 | 文档更新时间 | **2026-10-22** |
 | 本地仓库 | `E:\Codes\AgentGraph` |
 | 生产地址 | `https://agentgraph.fusionpropulsion.space` |
@@ -279,7 +279,7 @@ E:\Codes\AgentGraph\
 │   ├── config.py                     # 所有环境变量与运行参数
 │   ├── database.py                   # async engine/session、schema bootstrap、迁移链
 │   ├── auth.py                       # Principal、API Key、RBAC、namespace、人类锁
-│   ├── models.py                     # 35 张核心表的 ORM
+│   ├── models.py                     # 36 张核心表的 ORM
 │   ├── schemas.py                    # 请求/响应 Pydantic 契约
 │   ├── errors.py                     # ApiError 与统一错误体
 │   ├── error_registry.py             # 错误码注册表
@@ -314,7 +314,7 @@ E:\Codes\AgentGraph\
 │   ├── mcp_server/
 │   │   ├── __init__.py
 │   │   ├── __main__.py               # python -m app.mcp_server（stdio）
-│   │   └── server.py                 # 40 个 MCP 工具 + HTTP/stdio 认证
+│   │   └── server.py                 # 78 个 MCP 工具 + HTTP/stdio 认证
 │   │
 │   └── services/
 │       ├── __init__.py
@@ -367,7 +367,17 @@ E:\Codes\AgentGraph\
 │       ├── v3_13_async_index.sql
 │       ├── v3_14_budget_enforce.sql
 │       ├── v3_15_leases.sql
-│       └── v3_16_exports.sql
+│       ├── v3_16_exports.sql
+│       ├── v3_17_events.sql
+│       ├── v3_18_onboarding_progress.sql
+│       ├── v3_19_agent_onboarding.sql
+│       ├── v3_20_durability_incidents.sql
+│       ├── v3_21_token_tree.sql
+│       ├── v3_22_members.sql
+│       ├── v3_23_collaboration.sql
+│       ├── v3_24_provenance_recall_budgets.sql
+│       ├── v3_25_logs_contention_situation.sql
+│       └── v3_26_tenant_tree.sql
 │
 ├── dashboard/
 │   ├── package.json                  # Next.js 14.2 / React 18
@@ -461,7 +471,7 @@ E:\Codes\AgentGraph\
 
 ### 5.1 核心表分组
 
-当前 ORM 中共有 **35 张核心表**。
+当前 ORM 中共有 **36 张核心表**。
 
 | 分组 | 表 | 用途 |
 |---|---|---|
@@ -708,15 +718,18 @@ Agent POST /v1/documents/{doc}/proposals (base_version, content, mode)
 | **人类控制台** | `/v1/human/*`：workspace、tasks review/escalate、slots、documents、audit、proposals、policies、webhooks、external-actions、budget、accounts、tenant、transfer-responsibilities |
 | **Operator** | `/v1/admin/*`：workspaces、tasks、slots、documents、agent-tokens、audit undo、policies、budget、tenants、exports/imports、reindex、normalize-html、force-release/reassign/cancel |
 
-### 7.3 MCP 工具（40 个）
+### 7.3 MCP 工具（78 个）
 
-| 分组 | 工具 |
+| 能力组 | 覆盖内容 |
 |---|---|
-| **开始 / 身份（4）** | `get_orientation`, `ack_constitution`, `workspace_sync`, `get_api_docs` |
-| **任务生命周期（6）** | `create_task`, `review_task`, `request_human_review`, `agent_claim_and_read`, `agent_handoff_task`, `agent_escalate_to_human` |
-| **状态 / 租约（4）** | `agent_patch_shared_state`, `heartbeat`, `release_lease`, `list_leases` |
-| **文档（16）** | `upsert_shared_doc`, `upsert_many`, `patch_doc_section`, `query_workspace`, `list_documents`, `dereference`, `dereference_many`, `archive_document`, `restore_document`, `rename_document`, `register_namespace`, `list_namespaces`, `register_parts`, `propose_document_change`, `vote_on_proposal`, `list_document_proposals` |
-| **治理 / 可追溯（10）** | `get_usage`, `get_token`, `get_lineage`, `list_token_tree`, `explain_write`, `draft_external_action`, `export_workspace`, `get_export`, `list_exports`, `get_index_status` |
+| **入职 / 身份** | orientation、constitution 确认、Agent 名录、子令牌/轮换/撤销、token tree 与 lineage |
+| **任务 / 协作** | 任务创建、claim/heartbeat/handoff/review、escalation、continuation、子任务、任务树 |
+| **状态 / 租约** | 状态槽 JSON Patch、heartbeat、release_lease、list_leases |
+| **文档 / 检索** | upsert、批量写、section patch、query、列举、dereference、归档/恢复、提案、日志、recall、taint |
+| **治理 / 租户** | 预算、告警、metrics、租户树、策略、共享、成员/权限相关的只读与治理入口 |
+| **事件 / 导出 / 外部动作** | poll_events、subscribe/unsubscribe、export/import、external action、API docs |
+
+当前共 **78 个 MCP 工具**，完整名称和参数以 `app/mcp_server/server.py`、`GET /v1/agent-docs` 和 `GET /v1/openapi.json` 为准。
 
 MCP HTTP 默认无状态（`MCP_STATELESS_HTTP=true`），不返回 `mcp-session-id`；未知工具返回结构化 `unknown_tool` 404，而不是 500。stdio 模式通过 `MCP_API_KEY` 读取 Agent 身份。
 
@@ -844,7 +857,7 @@ python:3.12-slim
 | 服务器目录 | `/home/deploy/agentgraph` |
 | Compose | `docker-compose.prod.yml`（项目名 `agentgraph`） |
 | API 容器 | `agentgraph-api` |
-| 镜像 | `agentgraph:3.2.1`（内含当前 v3.16 schema 代码） |
+| 镜像 | `agentgraph:3.2.1`（内含当前 v3.26 schema 代码） |
 | 数据库 | 独立 `agentgraph_pgdata` 卷，不与其他项目共用 |
 | 网络 | 内部 `agentgraph_internal` + 共享 `web`；不发布宿主端口 |
 | 反向代理 | Caddy：`agentgraph.fusionpropulsion.space` → `agentgraph-api:8000` |
@@ -877,7 +890,7 @@ OPENAI_BASE_URL=https://api.jina.ai/v1
   → v3_hardening.sql
   → v3_2_production.sql
   → v3_2_1_mcp_improvements.sql
-  → v3_3 ... v3_16
+  → v3_3 ... v3_26
 
 v2 库
   v2_to_v3_collab.sql
@@ -887,7 +900,7 @@ v2 库
   schema_migrations 中缺失的版本按顺序执行
 ```
 
-迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.16.0**。
+迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.26.0**。
 
 ### 9.5 备份与回滚
 
@@ -954,7 +967,7 @@ ruff check .
 - Webhook、外部动作、补偿；
 - SSE outbox 重放；
 - 租户导出/导入；
-- 40 个 MCP 工具；
+- 78 个 MCP 工具；
 - EN/中文控制台、登录/注册、operator 入口分离；
 - 生产 HTTPS、Caddy、健康检查。
 
@@ -980,7 +993,25 @@ ruff check .
 
 ---
 
-## 12. 快速索引
+## 12. GitHub R1/R2 增量（schema 3.26.0）
+
+2026-10-22 合并 `origin/main` 后，代码已包含 GitHub 上的 R1.3–R2.4 能力；产品版本仍统一为 **v3.2.1**，数据库 schema 升至 **3.26.0**。
+
+- **事件与订阅**：`v3_17_events.sql`，`app/services/events.py`，MCP `poll_events` / `subscribe` / `list_subscriptions` / `unsubscribe`。
+- **人类与 Agent 引导**：`v3_18`/`v3_19`，`agent_onboarding.py`、`human_onboarding.py`、`docs_site.py`，控制台 checklist 与公开 docs 站点。
+- **持久化与事件响应**：`v3_20`，`backups.py`、`incidents.py`、`alerts.py`、`mailer.py`、`access_log.py`。
+- **token tree 与协作者**：`v3_21`，`token_tree.py`、`directory.py`，子令牌/轮换/撤销/谱系。
+- **成员、角色与个人权利**：`v3_22`，`members.py`、`rights.py`、`org_routes.py`。
+- **协作原语**：`v3_23`，`collab.py`，任务指针、mention、continuation、子任务与任务树。
+- **溯源、召回与令牌预算**：`v3_24`，`provenance.py`、`recall.py`、`token_budget.py`。
+- **日志、争用与态势**：`v3_25`，`logs.py`、`contention.py`、`situation.py`。
+- **租户树**：`v3_26`，`tree.py`，子租户创建/移动/挂载/卸载。
+- **前端新增**：`dashboard/app/docs/` 公开文档站，`components/onboarding.tsx`、`components/situation.tsx`，以及成员/权限、备份与事故相关控制台入口。
+- **MCP 工具**：从 40 增至 **78**；完整名称见 `app/mcp_server/server.py`。
+
+本次本地新增的根页面 JSON-first 视图和命名空间模糊选择器也在此版本内；生产、GitHub、本地应保持同一提交与 `3.2.1` 应用版本。
+
+## 13. 快速索引
 
 | 想找什么 | 去哪里 |
 |---|---|
@@ -1005,4 +1036,4 @@ ruff check .
 
 ---
 
-*AgentGraph v3.2.1 · schema 3.16.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*
+*AgentGraph v3.2.1 · schema 3.26.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*

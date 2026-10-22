@@ -242,12 +242,26 @@ async def test_tree_constraints_are_enforced_in_the_database(client, admin_heade
         assert level3["depth"] == 3
         assert list(level3["path"]) == [root["id"], level2, level3["id"]]
         assert level3["root_tenant_id"] == root["id"]
+        # Three levels below the root (AG-ID-09): depth counts the root as 1.
+        level4 = await conn.fetchval(
+            "INSERT INTO tenants (alias, display_name, tenant_type, parent_tenant_id) "
+            "VALUES ($1, 'deep', 'personal', $2) RETURNING depth",
+            f"depth4-{suffix}",
+            level3["id"],
+        )
+        assert level4 == 4
+        level3b = await conn.fetchval(
+            "INSERT INTO tenants (alias, display_name, tenant_type, parent_tenant_id) "
+            "VALUES ($1, 'o4', 'organization', $2) RETURNING id",
+            f"org4-{suffix}",
+            level3["id"],
+        )
         with pytest.raises(asyncpg.PostgresError):
             await conn.execute(
                 "INSERT INTO tenants (alias, display_name, tenant_type, parent_tenant_id) "
-                "VALUES ($1, 'deep', 'personal', $2)",
-                f"depth4-{suffix}",
-                level3["id"],
+                "VALUES ($1, 'deeper', 'personal', $2)",
+                f"depth5-{suffix}",
+                level3b,
             )
     finally:
         await conn.close()

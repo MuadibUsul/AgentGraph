@@ -90,7 +90,7 @@ async def _snapshot(workspace_id: str) -> dict[str, list]:
             drop = " - ".join(["to_jsonb(t)", *[f"'{column}'" for column in excluded]])
             if table == "tenants":
                 where, arg = "t.id = $1", tenant
-            elif table == "memberships":
+            elif table in ("memberships", "redaction_log"):
                 where, arg = "t.tenant_id = $1", tenant
             elif table == "workspaces":
                 where, arg = "t.id = $1::uuid", workspace_id
@@ -121,8 +121,8 @@ async def _erase(workspace_id: str) -> None:
             for table in reversed(list(export_service.EXPORTED)):
                 if table == "tenants":
                     await conn.execute("DELETE FROM tenants WHERE id = $1", tenant)
-                elif table == "memberships":
-                    await conn.execute("DELETE FROM memberships WHERE tenant_id = $1", tenant)
+                elif table in ("memberships", "redaction_log"):
+                    await conn.execute(f"DELETE FROM {table} WHERE tenant_id = $1", tenant)
                 elif table == "workspaces":
                     await conn.execute("DELETE FROM workspaces WHERE id = $1::uuid", workspace_id)
                 else:

@@ -12,6 +12,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import addresses
@@ -285,17 +286,22 @@ async def ensure_namespace_registered(
                 "rest": "POST /v1/namespaces",
             },
         )
-    session.add(
-        NamespaceRecord(
-            workspace_id=principal.workspace.id,
-            namespace=namespace,
-            purpose=None,
-            owner=principal.agent_signature,
-            created_by=principal.agent_signature,
-            auto_registered=True,
-        )
-    )
-    await session.flush()
+    try:
+        # Concurrent first writes to a new namespace race to register it.
+        async with session.begin_nested():
+            session.add(
+                NamespaceRecord(
+                    workspace_id=principal.workspace.id,
+                    namespace=namespace,
+                    purpose=None,
+                    owner=principal.agent_signature,
+                    created_by=principal.agent_signature,
+                    auto_registered=True,
+                )
+            )
+            await session.flush()
+    except IntegrityError:
+        return  # registered by the request that won the race
     if implicit:
         return
     from app.services.onboarding import ensure_namespace_readme
@@ -353,7 +359,13 @@ async def register_namespace(
 
 
 async def list_namespaces(session: AsyncSession, principal: Principal) -> dict[str, Any]:
+    from app.services import agent_onboarding
     from app.services.onboarding import namespace_overview
+
+    if agent_onboarding.tracked(principal) and agent_onboarding.primary_namespace(
+            principal) is None:
+        # A token without namespaces reads the namespace map instead of a readme.
+        await agent_onboarding.observe(principal, "readme_read", namespace=None)
 
     entries = await namespace_overview(session, principal)
     rows = {

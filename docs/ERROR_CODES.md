@@ -25,6 +25,7 @@ do not edit by hand. Every error body is
 
 | code | HTTP | class | action | rule |
 |---|---|---|---|---|
+| `backup_in_progress` | 409 | `retry_after` | `wait_retry_after_then_retry_same_request` | Another backup is running; retry later. |
 | `contention` | 409 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After, then retry. |
 | `export_in_progress` | 409 | `retry_after` | `wait_retry_after_then_retry_same_request` | Poll details.export_id instead of starting another export. |
 | `idempotency_in_progress` | 409 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After and query the result with the same key. |
@@ -74,6 +75,7 @@ do not edit by hand. Every error body is
 | `last_owner_required` | 409 | `fix_request` | `fix_request_then_resend` | Assign another owner first. |
 | `locate_required` | 409 | `fix_request` | `fix_request_then_resend` | Run locate_personal_data first. |
 | `log_document_append_only` | 409 | `fix_request` | `append_entries` | Use append_entries instead. |
+| `not_a_log_document` | 409 | `fix_request` | `fix_request_then_resend` | Write with upsert_shared_doc instead. |
 | `policy_exists` | 409 | `fix_request` | `fix_request_then_resend` | Update the existing policy instead. |
 | `proposal_required` | 409 | `fix_request` | `propose_document_change` | Submit propose_document_change instead. |
 | `task_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another task_key. |
@@ -114,6 +116,7 @@ do not edit by hand. Every error body is
 | `quota_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Stay within the parent's limit. |
 | `rollup_summary_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a rollup summary. |
 | `subject_identifier_required` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
+| `task_tree_too_deep` | 422 | `fix_request` | `fix_request_then_resend` | Split under a shallower task. |
 | `tenant_cycle` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `tenant_depth_exceeded` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `tenant_type_invalid_parent` | 422 | `fix_request` | `fix_request_then_resend` | Choose a parent from details.allowed. |
@@ -171,9 +174,12 @@ do not edit by hand. Every error body is
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` | `stop_and_escalate_to_human` | A human locked this resource; ask a human to change it. |
 | `tenant_deleting` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop; only an owner can cancel deletion or fetch the export. |
 | `tenant_suspended` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop writing and notify a human; reads and export still work. |
+| `backup_chain_broken` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Restore from an older full backup or take a new one. |
+| `backups_not_configured` | 409 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure backup storage. |
 | `confirmation_required` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for details.pending_confirmations. |
 | `escalated_to_human` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for the human decision. |
 | `incident_not_confirmed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Confirm the incident first. |
+| `staging_not_configured` | 409 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure a separate staging database. |
 | `taint_blocked` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A human must verify tainted content. |
 | `tree_quota_exceeded` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Revoke unused child tokens or ask a human for more quota. |
 | `budget_exhausted` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Wait for resets_at or ask the issuer for more budget. |
@@ -189,6 +195,7 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 | code | meaning |
 |---|---|
 | `secrets_not_imported` | Imported tokens must be rotated and users must reset passwords. |
+| `keys_rotated` | A restored workspace has new keys; rotate them and re-issue agent tokens. |
 | `alias_redirected` | Read through a renamed alias; use the current alias or id. |
 | `legacy_alias` | Address predates the grammar; accepted, but 2026-11 rejects new ones. |
 | `dangling_ref` | A $ref or part does not resolve; stored as written. |
@@ -196,6 +203,13 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 | `namespace_undocumented` | The namespace readme is still a generated stub. |
 | `frontmatter_missing` | Fields the namespace readme requires are missing. |
 | `doc_key_pattern_mismatch` | doc_key does not match the namespace pattern. |
+| `budget_warning` | A token's daily budget is at 80%; budget.warning went to its issuer. |
+| `recall_still_depends` | This version still derives from recalled versions; the recall node stays open. |
+| `ttl_capped_by_policy` | The token's lifetime was capped by an organisation policy. |
+| `continuation_missing` | No continuation pack was written since the claim; call write_continuation before the next handoff. |
+| `output_missing` | Nothing was written to the task's output_to since the claim. |
+| `target_offline` | A mentioned agent is offline or retired; its owner is notified too. |
+| `unknown_mention` | A mentioned principal is not in the directory. |
 | `not_registered` | The collaborator directory is not live; identity is inferred. |
 | `constitution_draft` | The constitution is still the generated template. |
 | `token_expiring` | The calling token expires within a day. |

@@ -118,6 +118,11 @@ export function AuditView({
           <Empty
             title={t("No audit batches")}
             detail={t("Agent writes will appear here grouped by session_batch_id.")}
+            action={
+              <a className="button ghost small" href="/docs/console/" target="_blank" rel="noreferrer">
+                {t("How audit and undo work")}
+              </a>
+            }
           />
         ) : (
           <div className="batch-grid">

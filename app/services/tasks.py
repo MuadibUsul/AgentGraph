@@ -8,7 +8,7 @@ from datetime import timedelta
 from functools import wraps
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,6 +59,7 @@ from app.schemas import (
     TaskRenewRequest,
     TaskReviewRequest,
 )
+from app.services import access_log, agent_onboarding, collab
 from app.services import addresses as address_service
 from app.services import leases as lease_service
 from app.services.common import (
@@ -358,6 +359,7 @@ async def _create_task_core(
     agent: str,
     batch: uuid.UUID,
     commit: bool,
+    parent: CollabTask | None = None,
 ) -> CollabTask:
     require_permission(principal, "task:create")
     namespace = request.namespace or "default"
@@ -380,6 +382,7 @@ async def _create_task_core(
     )
     if existing is not None:
         raise ApiError(409, "task_exists", f"task '{task_key}' already exists")
+    await collab.validate_new_task(session, principal, request)
 
     dependencies: list[CollabTask] = []
     for dep_key in request.depends_on:
@@ -416,6 +419,15 @@ async def _create_task_core(
         created_at=utcnow(),
         updated_at=utcnow(),
     )
+    collab.apply_new_fields(task, request)
+    if parent is not None:
+        task.parent_task_id = parent.id
+        task.parent_task_key = parent.task_key
+        task.root_task_id = parent.root_task_id or parent.id
+        task.root_task_key = parent.root_task_key or parent.task_key
+        task.tree_depth = (parent.tree_depth or 0) + 1
+    mentions = collab.parse_mentions(request.mentions, request.description)
+    task.mentions = mentions
     session.add(task)
     try:
         await session.flush()
@@ -454,7 +466,13 @@ async def _create_task_core(
             "status": status.value,
             "assigned_role": assigned_role,
             "priority": task.priority,
+            "parent_task_key": task.parent_task_key,
         },
+        namespace=namespace,
+    )
+    await collab.deliver_mentions(
+        session, principal, mentions,
+        refs={"task_key": task_key, "id": task.canonical_id, "title": task.title},
         namespace=namespace,
     )
     if commit:
@@ -462,6 +480,7 @@ async def _create_task_core(
     return task
 
 
+@agent_onboarding.records("task_create")
 async def create_task(
     session: AsyncSession, principal: Principal, request: TaskCreateRequest
 ) -> TaskOut:
@@ -481,11 +500,40 @@ async def list_tasks(
     assigned_role: str | None = None,
     namespace: str | None = None,
     limit: int = 100,
+    assignee: str | None = None,
+    required_role: str | None = None,
+    parent: str | None = None,
+    kind: str | None = None,
+    claimable_by_me: bool = False,
 ) -> TaskListResponse:
     require_permission(principal, "task:read")
     query = select(CollabTask).where(
         CollabTask.workspace_id == principal.workspace.id
     )
+    if assignee == "me":
+        mine = await collab.my_refs(session, principal)
+        query = query.where(CollabTask.assignee.in_(mine))
+    elif assignee:
+        query = query.where(CollabTask.assignee == assignee)
+    if required_role:
+        query = query.where(CollabTask.required_role == required_role)
+    if parent:
+        parent_task = await _get_task(session, principal.workspace.id, parent)
+        query = query.where(CollabTask.parent_task_id == parent_task.id)
+    if kind:
+        query = query.where(CollabTask.kind == kind)
+    if claimable_by_me:
+        mine = await collab.my_refs(session, principal)
+        entry = await collab.my_directory_entry(session, principal)
+        query = query.where(
+            CollabTask.status.in_(list(_CLAIMABLE)),
+            (CollabTask.assignee.is_(None)) | (CollabTask.assignee.in_(mine)),
+            (CollabTask.required_role.is_(None))
+            | (CollabTask.required_role == ((entry or {}).get("role") or "")),
+            CollabTask.required_capabilities.contained_by(
+                list((entry or {}).get("capabilities") or [])
+            ),
+        )
     if statuses:
         query = query.where(CollabTask.status.in_(statuses))
     if assigned_role:
@@ -505,15 +553,20 @@ async def list_tasks(
     return TaskListResponse(items=[task_summary(task) for task in tasks])
 
 
+@access_log.reads("task")
 async def get_task(
     session: AsyncSession, principal: Principal, task_key: str
 ) -> TaskOut:
     require_permission(principal, "task:read")
     task = await _get_task(session, principal.workspace.id, task_key)
     ensure_namespace(principal, task.namespace)
-    return task_out(task)
+    out = task_out(task)
+    out.children_summary = await collab.children_summary(session, task)
+    return out
 
 
+@access_log.reads("task")
+@agent_onboarding.records("task_claim")
 @_task_failure_event("CLAIM")
 async def claim_task(
     session: AsyncSession,
@@ -531,10 +584,14 @@ async def claim_task(
         raise EscalatedToHuman(task_out(task).model_dump(mode="json"))
     if task.status not in _CLAIMABLE and task.status is not TaskStatus.IN_PROGRESS:
         raise InvalidStateTransition(task.status.value, "IN_PROGRESS")
-    _check_assignee(task, principal, agent)
+    if not await collab.assignee_matches(session, principal, task, agent):
+        _check_assignee(task, principal, agent)
+    await collab.check_claimable(session, principal, task)
     now = await db_now(session)
     _check_lease(task, agent, now)
     before = task_snapshot(task)
+    if task.claimed_by != agent or task.status is not TaskStatus.IN_PROGRESS:
+        task.claimed_at = now
     _clear_lease(task)
     ttl = lease_service.ttl_for(request.lease_ttl_seconds, request.lease_seconds)
     task.status = TaskStatus.IN_PROGRESS
@@ -545,6 +602,11 @@ async def claim_task(
     task.updated_at = now
     await session.flush()
     lease = await lease_service.grant_task_lease(session, principal, task, agent, ttl)
+    context = (
+        await collab.load_context(session, principal, task, max_bytes=request.context_max_bytes)
+        if request.include_context
+        else []
+    )
     await refresh_task_taint(session, task)
     await record_audit(
         session,
@@ -580,6 +642,7 @@ async def claim_task(
         upstream_briefs=await _upstream_briefs(session, task, principal),
         slots=await _context_slots(session, principal, task),
         documents=await _context_documents(session, principal, task),
+        context=context,
         session_batch_id=batch,
     )
 
@@ -665,6 +728,7 @@ async def release_task(
 async def _release_dependents(
     session: AsyncSession, completed: CollabTask, principal: Principal
 ) -> None:
+    await collab.on_done(session, completed)
     dependent_ids = (
         await session.execute(
             select(WorkspaceLink.source_id).where(
@@ -779,6 +843,7 @@ async def handoff_task(
         if request.brief is not None
         else None
     )
+    await collab.handoff_checks(session, principal, task, agent, request.next_status, brief)
 
     artifact_uri = request.artifact_uri
     if request.artifact_text is not None and request.artifact_uri is not None:
@@ -913,6 +978,7 @@ async def handoff_task(
     )
 
 
+@agent_onboarding.records("review")
 @_task_failure_event("REVIEW")
 async def review_task(
     session: AsyncSession,
@@ -1099,8 +1165,23 @@ async def escalate_task(
     ensure_task_role(principal, task.assigned_role)
     _check_version(task, request.expected_version)
     lease_service.check_fencing(task, request.fencing_token)
-    if task.status in (TaskStatus.DONE, TaskStatus.FAILED):
+    if task.status in (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED):
         raise InvalidStateTransition(task.status.value, "ESCALATED_TO_HUMAN")
+    if request.question:
+        # AG-CO-05: a question with options; the holder keeps the task.
+        if request.blocking and not principal.is_human:
+            await lease_service.require_holder(session, task, agent, await db_now(session))
+        escalation = await collab.escalate(session, principal, task, agent, request)
+        await session.commit()
+        return TaskActionResponse(
+            task=task_out(task),
+            escalated=True,
+            escalation=escalation,
+            session_batch_id=batch,
+            status=task.status,
+            version=task.version,
+            task_key=task.task_key,
+        )
     before = task_snapshot(task)
     task.status = TaskStatus.ESCALATED_TO_HUMAN
     _clear_lease(task)
@@ -1229,8 +1310,14 @@ async def cancel_task(
 ) -> TaskOut:
     task = await _get_task(session, workspace_id, task_key, for_update=True)
     _check_version(task, expected_version)
-    if task.status in (TaskStatus.DONE, TaskStatus.FAILED):
+    if task.status in (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED):
         raise InvalidStateTransition(task.status.value, "FAILED")
+    lease = await lease_service.active_task_lease(session, task)
+    if lease is not None:
+        lease.state = "released"
+        lease.ended_at = utcnow()
+        lease.end_reason = "cancelled"
+    cancelled_children = await collab.cancel_children(session, task, reason)
     before = task_snapshot(task)
     task.status = TaskStatus.FAILED
     task.review_feedback = reason
@@ -1255,8 +1342,134 @@ async def cancel_task(
         workspace_id=workspace_id,
         agent=actor,
         event_type="TASK_CANCELLED",
-        payload={"task_key": task.task_key, "reason": reason},
+        payload={"task_key": task.task_key, "reason": reason,
+                 "cancelled_children": cancelled_children},
         namespace=task.namespace,
     )
     await session.commit()
     return task_out(task)
+
+
+# ------------------------------------------------ collaboration (PRD R2.1)
+
+
+async def write_continuation(
+    session: AsyncSession, principal: Principal, task_key: str, request: Any
+) -> dict[str, Any]:
+    """AG-CO-04: the holder writes a continuation pack; ``handoff`` hands off too."""
+    require_permission(principal, "task:transition")
+    agent = effective_agent(principal, None)
+    task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
+    ensure_namespace(principal, task.namespace, write=True)
+    data = request.model_dump(mode="json")
+    pointer = await collab.write_continuation(session, principal, task, agent, data)
+    task.version += 1
+    task.updated_at = utcnow()
+    await append_event(
+        session,
+        workspace_id=principal.workspace.id,
+        agent=agent,
+        event_type="TASK_CONTINUATION",
+        payload={"task_key": task.task_key, "id": task.canonical_id,
+                 "continuation": pointer,
+                 "targets": [request.handoff_to] if request.handoff_to else []},
+        namespace=task.namespace,
+    )
+    await session.commit()
+    result: dict[str, Any] = {"continuation": pointer, "task": task_out(task).model_dump(
+        mode="json")}
+    if request.handoff:
+        handoff = await handoff_task(
+            session, principal, task.task_key,
+            TaskHandoffRequest(next_status="HANDOFF", brief={
+                "summary": (data.get("done") or ["continuation written"])[-1][:500],
+                "key_metrics": {}, "unverified_hypotheses": [], "risk_flag": False,
+                **(request.brief or {})}),
+        )
+        result["task"] = handoff.task.model_dump(mode="json")
+    return result
+
+
+async def create_subtasks(
+    session: AsyncSession, principal: Principal, task_key: str, request: Any
+) -> dict[str, Any]:
+    """AG-CO-08: up to 20 children, atomically, by the holder or the lead."""
+    require_permission(principal, "task:create")
+    agent = effective_agent(principal, None)
+    parent = await _get_task(session, principal.workspace.id, task_key, for_update=True)
+    ensure_namespace(principal, parent.namespace, write=True)
+    if not collab.may_lead(principal, parent, agent):
+        raise Forbidden("only the task's holder or lead creates its subtasks")
+    if (parent.tree_depth or 0) + 1 > collab.MAX_TREE_DEPTH:
+        raise ApiError(422, "task_tree_too_deep", "task trees are at most 4 levels deep",
+                       details={"max_depth": collab.MAX_TREE_DEPTH})
+    if parent.status in (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED):
+        raise InvalidStateTransition(parent.status.value, "subtasks")
+    batch = uuid.uuid4()
+    children = []
+    for child in request.tasks:
+        if child.namespace is None:
+            child = child.model_copy(update={"namespace": parent.namespace})
+        children.append(await _create_task_core(
+            session, principal, child, agent=agent, batch=batch, commit=False, parent=parent))
+    parent.lead = request.lead or parent.lead or f"agent:{agent}"
+    parent.children_done = False
+    parent.version += 1
+    parent.updated_at = utcnow()
+    await session.commit()
+    return {"parent": task_out(parent).model_dump(mode="json"),
+            "children": [task_summary(child).model_dump(mode="json") for child in children]}
+
+
+async def get_task_tree(
+    session: AsyncSession, principal: Principal, task_key: str, *, depth: int,
+    include: list[str],
+) -> dict[str, Any]:
+    require_permission(principal, "task:read")
+    task = await _get_task(session, principal.workspace.id, task_key)
+    ensure_namespace(principal, task.namespace)
+    return await collab.task_tree(session, principal, task, depth=min(max(depth, 1), 4),
+                                  include=include)
+
+
+async def create_escalation(
+    session: AsyncSession, principal: Principal, request: Any
+) -> dict[str, Any]:
+    """A question to a human that blocks no task (AG-CO-05)."""
+    require_permission(principal, "task:create")
+    agent = effective_agent(principal, None)
+    result = await collab.escalate(session, principal, None, agent, request)
+    await session.commit()
+    return result
+
+
+async def list_escalations(
+    session: AsyncSession, principal: Principal, *, status: str | None
+) -> dict[str, Any]:
+    require_permission(principal, "task:read")
+    rows = (
+        await session.execute(
+            text("SELECT e.*, t.task_key AS task_key FROM escalations e LEFT JOIN "
+                 "collab_tasks t ON t.id = e.task_id WHERE e.workspace_id = :ws AND "
+                 "(CAST(:status AS text) IS NULL OR e.status = :status) "
+                 "ORDER BY e.created_at DESC LIMIT 200"),
+            {"ws": principal.workspace.id, "status": status},
+        )
+    ).mappings().all()
+    items = []
+    for row in rows:
+        item = {key: value for key, value in row.items()
+                if key not in ("workspace_id", "tenant_id", "task_id", "escalation_task_id",
+                               "raised_by_token")}
+        for key in ("due_at", "resolved_at", "last_reminded_at", "created_at"):
+            if item.get(key) is not None:
+                item[key] = item[key].isoformat()
+        items.append(item)
+    return {"items": items}
+
+
+async def resolve_escalation(
+    session: AsyncSession, principal: Principal, escalation_id: str, request: Any
+) -> dict[str, Any]:
+    return await collab.resolve(session, principal, escalation_id, option_id=request.option_id,
+                                answer=request.answer, note=request.note)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from collections import deque
@@ -18,6 +19,7 @@ from app.models import (
     SharedDocument,
     TaintEdge,
 )
+from app.services.provenance import cap_sources
 
 settings = get_settings()
 
@@ -82,7 +84,10 @@ async def compute_document_taint(
     keys, external = extract_references(
         document.content, document.frontmatter or {}
     )
-    sources: list[dict[str, Any]] = []
+    # Write-time provenance (AG-TC-01) comes first and survives recomputation.
+    sources: list[dict[str, Any]] = [
+        dict(entry) for entry in (document.provenance_taint or []) if isinstance(entry, dict)
+    ]
     for uri in sorted(external):
         sources.append(
             {
@@ -138,13 +143,13 @@ async def compute_document_taint(
             entry.get("doc_key")
             or entry.get("uri")
             or entry.get("doc_id")
-            or repr(entry)
+            or json.dumps(entry, sort_keys=True, default=str)
         )
         if identity in seen:
             continue
         seen.add(identity)
         deduped.append(entry)
-    return bool(deduped), deduped[:50]
+    return bool(deduped), cap_sources(deduped)
 
 
 async def _replace_edges(
@@ -440,6 +445,8 @@ async def clear_document_taint(
 ) -> None:
     document.tainted = False
     document.taint_sources = []
+    document.provenance_taint = []
+    document.recall_severity = None
     document.trust_level = "TRUSTED"
     document.taint_cleared_at = datetime.now(timezone.utc)
     document.taint_cleared_by = actor
