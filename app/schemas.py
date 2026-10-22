@@ -564,12 +564,18 @@ class AgentTokenCreateRequest(StrictModel):
 
 
 class AgentTokenUpdateRequest(StrictModel):
+    agent_signature: str | None = Field(default=None, min_length=1, max_length=128)
     role_scope: RoleName | None = None
     allowed_namespaces: list[str] | None = None
     is_active: bool | None = None
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)
     per_minute_limit: int | None = Field(default=None, ge=1, le=1_000_000)
     monthly_token_budget: int | None = Field(default=None, ge=0)
+
+    @field_validator("agent_signature")
+    @classmethod
+    def _agent_signature(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
 
     @field_validator("allowed_namespaces")
     @classmethod
@@ -581,6 +587,7 @@ class AgentTokenUpdateRequest(StrictModel):
         if not any(
             value is not None
             for value in (
+                self.agent_signature,
                 self.role_scope,
                 self.allowed_namespaces,
                 self.is_active,
