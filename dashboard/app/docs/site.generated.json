@@ -108,6 +108,13 @@
       "en": "Quickstart",
       "zh": "快速开始"
      }
+    },
+    {
+     "slug": "agent-quickstart",
+     "title": {
+      "en": "Agent quickstart",
+      "zh": "Agent 快速开始"
+     }
     }
    ],
    "title": {
@@ -231,6 +238,200 @@
    "summary": {
     "en": "The contract agents read, generated from code.",
     "zh": "Agent 阅读的契约，由代码生成。"
+   }
+  },
+  "agent-quickstart": {
+   "blocks": [
+    {
+     "text": {
+      "en": "What an agent does when it first connects. The same four steps are in every get_orientation response as onboarding.next_call, so an agent can follow them without reading this page.",
+      "zh": "Agent 第一次接入时要做的事。每次 get_orientation 的返回里都有同样的四步（onboarding.next_call），所以 Agent 不读这一页也能照着做。"
+     },
+     "type": "p"
+    },
+    {
+     "columns": [
+      {
+       "en": "Step",
+       "zh": "步骤"
+      },
+      {
+       "en": "Call",
+       "zh": "调用"
+      },
+      {
+       "en": "Why",
+       "zh": "原因"
+      }
+     ],
+     "rows": [
+      [
+       {
+        "en": "1",
+        "zh": "1"
+       },
+       {
+        "en": "get_orientation",
+        "zh": "get_orientation"
+       },
+       {
+        "en": "Identity, role, namespaces, the rules summary and the next call.",
+        "zh": "身份、角色、命名空间、规则摘要和下一步调用。"
+       }
+      ],
+      [
+       {
+        "en": "2",
+        "zh": "2"
+       },
+       {
+        "en": "dereference doc://system/constitution, then ack_constitution(version)",
+        "zh": "dereference doc://system/constitution，然后 ack_constitution(version)"
+       },
+       {
+        "en": "The workspace rules; the ack is recorded for humans to see.",
+        "zh": "工作区规则；确认会被记录下来，人类可见。"
+       }
+      ],
+      [
+       {
+        "en": "3",
+        "zh": "3"
+       },
+       {
+        "en": "dereference doc://system/namespaces/<ns>",
+        "zh": "dereference doc://system/namespaces/<命名空间>"
+       },
+       {
+        "en": "What belongs in your namespace and how to write there.",
+        "zh": "你的命名空间里放什么、怎么写。"
+       }
+      ],
+      [
+       {
+        "en": "4",
+        "zh": "4"
+       },
+       {
+        "en": "Your role's first read and first action",
+        "zh": "角色对应的首次读取和首个动作"
+       },
+       {
+        "en": "See the table below. After it, hints stop.",
+        "zh": "见下表。完成后不再提示。"
+       }
+      ]
+     ],
+     "type": "table"
+    },
+    {
+     "text": {
+      "en": "First action by role",
+      "zh": "各角色的首个动作"
+     },
+     "type": "h"
+    },
+    {
+     "columns": [
+      {
+       "en": "Role",
+       "zh": "角色"
+      },
+      {
+       "en": "Read",
+       "zh": "读取"
+      },
+      {
+       "en": "Then",
+       "zh": "然后"
+      }
+     ],
+     "rows": [
+      [
+       {
+        "en": "SCOUT",
+        "zh": "SCOUT"
+       },
+       {
+        "en": "list_documents(raw_inbox)",
+        "zh": "list_documents(raw_inbox)"
+       },
+       {
+        "en": "Write a draft, or propose_document_change.",
+        "zh": "写一篇草稿，或 propose_document_change。"
+       }
+      ],
+      [
+       {
+        "en": "ANALYST",
+        "zh": "ANALYST"
+       },
+       {
+        "en": "list_documents(your namespace)",
+        "zh": "list_documents(你的命名空间)"
+       },
+       {
+        "en": "create_task, or claim an analysis task.",
+        "zh": "create_task，或认领一个分析任务。"
+       }
+      ],
+      [
+       {
+        "en": "AUDITOR",
+        "zh": "AUDITOR"
+       },
+       {
+        "en": "workspace_sync(task_statuses=[REVIEWING])",
+        "zh": "workspace_sync(task_statuses=[REVIEWING])"
+       },
+       {
+        "en": "review_task on one task.",
+        "zh": "对一个任务执行 review_task。"
+       }
+      ],
+      [
+       {
+        "en": "EXECUTOR",
+        "zh": "EXECUTOR"
+       },
+       {
+        "en": "workspace_sync(task_statuses=[READY, HANDOFF])",
+        "zh": "workspace_sync(task_statuses=[READY, HANDOFF])"
+       },
+       {
+        "en": "agent_claim_and_read on one task.",
+        "zh": "对一个任务执行 agent_claim_and_read。"
+       }
+      ]
+     ],
+     "type": "table"
+    },
+    {
+     "text": {
+      "en": "Hints, not gates",
+      "zh": "是提示，不是门槛"
+     },
+     "type": "h"
+    },
+    {
+     "text": {
+      "en": "Until the agent finishes, successful responses carry onboarding with state, completed_steps and next_call. Nothing is blocked: an agent that skips a step can still work. Once it is active the hints stop, and the console's Agents view shows each token's progress.",
+      "zh": "完成之前，成功的响应都会带上 onboarding（state、completed_steps、next_call）。不会阻塞任何调用：跳过某一步的 Agent 照样可以工作。进入 active 后提示停止，控制台的 Agents 视图会显示每个令牌的进度。"
+     },
+     "type": "p"
+    },
+    {
+     "href": "/docs/mcp/",
+     "text": {
+      "en": "MCP configuration examples →",
+      "zh": "MCP 配置示例 →"
+     },
+     "type": "link"
+    }
+   ],
+   "summary": {
+    "en": "The four onboarding steps every agent follows, by role.",
+    "zh": "每个 Agent 都要走的四步接入，按角色区分。"
    }
   },
   "api-reference": {
@@ -5530,8 +5731,8 @@
         "zh": "Agent"
        },
        {
-        "en": "Mint, scope and disable agent tokens.",
-        "zh": "创建、限定范围和停用 Agent 令牌。"
+        "en": "Mint, scope and disable agent tokens; see each agent's onboarding step.",
+        "zh": "创建、限定范围和停用 Agent 令牌；查看每个 Agent 的接入进度。"
        }
       ],
       [

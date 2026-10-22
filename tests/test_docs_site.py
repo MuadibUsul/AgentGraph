@@ -67,11 +67,13 @@ def test_api_reference_comes_from_openapi_without_admin():
 async def test_docs_are_public_and_swagger_moved(client):
     root = await client.get("/docs", follow_redirects=False)
     assert root.status_code in (307, 308)
+    # Served by the Next.js export when the console is built, otherwise by
+    # the plain-HTML fallback; both carry the page title in English.
     index = await client.get("/docs/")
     assert index.status_code == 200 and "text/html" in index.headers["content-type"]
     assert "AgentGraph Docs" in index.text and "/v1/admin" not in index.text
-    quick = await client.get("/docs/quickstart/", params={"lang": "zh"})
-    assert quick.status_code == 200 and "快速开始" in quick.text
+    quick = await client.get("/docs/quickstart/")
+    assert quick.status_code == 200 and "Quickstart" in quick.text
     for header in ("content-security-policy", "x-frame-options", "x-content-type-options",
                    "referrer-policy"):
         assert header in quick.headers
@@ -79,6 +81,18 @@ async def test_docs_are_public_and_swagger_moved(client):
     assert (await client.get("/docs/nope/")).status_code == 404
     # Development settings: Swagger UI is open at its new path.
     assert (await client.get("/api-reference")).status_code == 200
+
+
+def test_fallback_pages_render_both_languages():
+    from app.api.public_docs import _render
+
+    for slug in docs_site.build()["pages"]:
+        english = _render(slug, "en")
+        chinese = _render(slug, "zh")
+        assert 'lang="en"' in english and 'lang="zh-CN"' in chinese
+        assert "/v1/admin" not in english + chinese
+    assert "快速开始" in _render("quickstart", "zh")
+    assert "Agent 快速开始" in _render("agent-quickstart", "zh")
 
 
 async def test_operator_reference_needs_basic_auth(enforce_client):

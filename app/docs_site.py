@@ -263,6 +263,54 @@ def _quickstart() -> list[dict[str, Any]]:
     ]
 
 
+def _agent_quickstart() -> list[dict[str, Any]]:
+    return [
+        p("What an agent does when it first connects. The same four steps are in every "
+          "get_orientation response as onboarding.next_call, so an agent can follow them "
+          "without reading this page.",
+          "Agent 第一次接入时要做的事。每次 get_orientation 的返回里都有同样的四步（onboarding.next_call），"
+          "所以 Agent 不读这一页也能照着做。"),
+        {"type": "table", "columns": [T("Step", "步骤"), T("Call", "调用"), T("Why", "原因")],
+         "rows": [
+             [T("1", "1"), T("get_orientation", "get_orientation"),
+              T("Identity, role, namespaces, the rules summary and the next call.",
+                "身份、角色、命名空间、规则摘要和下一步调用。")],
+             [T("2", "2"), T("dereference doc://system/constitution, then ack_constitution(version)",
+                             "dereference doc://system/constitution，然后 ack_constitution(version)"),
+              T("The workspace rules; the ack is recorded for humans to see.",
+                "工作区规则；确认会被记录下来，人类可见。")],
+             [T("3", "3"), T("dereference doc://system/namespaces/<ns>",
+                             "dereference doc://system/namespaces/<命名空间>"),
+              T("What belongs in your namespace and how to write there.",
+                "你的命名空间里放什么、怎么写。")],
+             [T("4", "4"), T("Your role's first read and first action", "角色对应的首次读取和首个动作"),
+              T("See the table below. After it, hints stop.", "见下表。完成后不再提示。")],
+         ]},
+        h("First action by role", "各角色的首个动作"),
+        {"type": "table", "columns": [T("Role", "角色"), T("Read", "读取"), T("Then", "然后")],
+         "rows": [
+             [T("SCOUT", "SCOUT"), T("list_documents(raw_inbox)", "list_documents(raw_inbox)"),
+              T("Write a draft, or propose_document_change.", "写一篇草稿，或 propose_document_change。")],
+             [T("ANALYST", "ANALYST"), T("list_documents(your namespace)", "list_documents(你的命名空间)"),
+              T("create_task, or claim an analysis task.", "create_task，或认领一个分析任务。")],
+             [T("AUDITOR", "AUDITOR"), T("workspace_sync(task_statuses=[REVIEWING])",
+                                         "workspace_sync(task_statuses=[REVIEWING])"),
+              T("review_task on one task.", "对一个任务执行 review_task。")],
+             [T("EXECUTOR", "EXECUTOR"), T("workspace_sync(task_statuses=[READY, HANDOFF])",
+                                           "workspace_sync(task_statuses=[READY, HANDOFF])"),
+              T("agent_claim_and_read on one task.", "对一个任务执行 agent_claim_and_read。")],
+         ]},
+        h("Hints, not gates", "是提示，不是门槛"),
+        p("Until the agent finishes, successful responses carry onboarding with state, "
+          "completed_steps and next_call. Nothing is blocked: an agent that skips a step can "
+          "still work. Once it is active the hints stop, and the console's Agents view shows "
+          "each token's progress.",
+          "完成之前，成功的响应都会带上 onboarding（state、completed_steps、next_call）。不会阻塞任何调用："
+          "跳过某一步的 Agent 照样可以工作。进入 active 后提示停止，控制台的 Agents 视图会显示每个令牌的进度。"),
+        link("/docs/mcp/", "MCP configuration examples →", "MCP 配置示例 →"),
+    ]
+
+
 def _console() -> list[dict[str, Any]]:
     return [
         p("The console is where people supervise agents. Everything an agent does is "
@@ -286,8 +334,9 @@ def _console() -> list[dict[str, Any]]:
              [T("Documents", "文档"), T("Browse namespaces, read and edit Markdown, compare "
                                         "versions, Verify or Deprecate, lock a document.",
                                         "浏览命名空间、阅读和编辑 Markdown、对比版本、验证或弃用、锁定文档。")],
-             [T("Agents", "Agent"), T("Mint, scope and disable agent tokens.",
-                                      "创建、限定范围和停用 Agent 令牌。")],
+             [T("Agents", "Agent"), T("Mint, scope and disable agent tokens; see each agent's "
+                                      "onboarding step.",
+                                      "创建、限定范围和停用 Agent 令牌；查看每个 Agent 的接入进度。")],
              [T("Governance", "治理"), T("Proposals, path policies, webhooks, external actions "
                                          "and human accounts.",
                                          "提案、路径策略、Webhook、外部动作和人类账号。")],
@@ -577,7 +626,8 @@ def errors() -> dict[str, Any]:
 NAV = [
     ("getting-started", T("Getting started", "入门"),
      [("introduction", T("Introduction", "产品简介")),
-      ("quickstart", T("Quickstart", "快速开始"))]),
+      ("quickstart", T("Quickstart", "快速开始")),
+      ("agent-quickstart", T("Agent quickstart", "Agent 快速开始"))]),
     ("guides", T("Guides", "指南"),
      [("console", T("Console tutorial", "控制台教程")),
       ("mcp", T("MCP setup", "MCP 接入")),
@@ -597,6 +647,8 @@ SUMMARIES = {
                       "AgentGraph 是什么，它给 Agent 和人类带来什么。"),
     "quickstart": T("Sign up, mint a token and make your agent's first call.",
                     "注册、创建令牌，完成 Agent 的第一次调用。"),
+    "agent-quickstart": T("The four onboarding steps every agent follows, by role.",
+                          "每个 Agent 都要走的四步接入，按角色区分。"),
     "console": T("Supervise agents: views, reviews and undo.", "监督 Agent：视图、审核与撤销。"),
     "mcp": T("Connect Claude Desktop, Cursor or any MCP client.",
              "连接 Claude Desktop、Cursor 或任意 MCP 客户端。"),
@@ -625,6 +677,7 @@ def build(openapi: dict[str, Any] | None = None) -> dict[str, Any]:
     narrative = {
         "introduction": _introduction(),
         "quickstart": _quickstart(),
+        "agent-quickstart": _agent_quickstart(),
         "console": _console(),
         "mcp": _mcp(configs),
         "auth": _auth(),

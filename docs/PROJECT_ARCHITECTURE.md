@@ -175,7 +175,9 @@ E:\Codes\AgentGraph\
 │       ├── v3_14_budget_enforce.sql      # 强制退避、配额覆盖（工作区/租户）（AG-ST-15 拦截）
 │       ├── v3_15_leases.sql              # 统一租约、fencing token、孤儿计数、assignee（AG-CO-03）
 │       ├── v3_16_exports.sql             # 导出任务、导出包、导入记录（AG-ST-02）
-│       └── v3_17_events.sql              # 事件 seq（提交时分配）、类型化事件、订阅（AG-EV-01/02）
+│       ├── v3_17_events.sql              # 事件 seq（提交时分配）、类型化事件、订阅（AG-EV-01/02）
+│       ├── v3_18_onboarding_progress.sql # 控制台“开始使用”清单进度（按用户 + 工作区，RLS）
+│       └── v3_19_agent_onboarding.sql    # Agent MCP 引导状态机（agent_onboarding，RLS，历史回填）
 │   └── functions/                        # 每次启动在迁移之后应用的当前函数定义（如 notify_workspace_change）
 │
 ├── dashboard/
@@ -653,6 +655,14 @@ ruff check .
 | `app/engine/notion.py` | Notion/HTML 检测与 Markdown 转换；表格、标题、列表、链接与安全过滤 |
 | `dashboard/app/components/markdown.tsx` | GFM + sanitized raw HTML 渲染，兼容 Notion 表格 |
 | `dashboard/app/design-tokens.css` | Primitive → Semantic → Component 设计 Token |
+| `app/docs_site.py` | 公开文档站唯一数据源：从 OpenAPI（仅 `/v1`）、AGENT_GUIDE、错误码注册表生成中英双语页面 |
+| `scripts/gen_docs_site.py` | 生成 `dashboard/app/docs/site.generated.json`；`--check` 检测过期（测试同样检查） |
+| `app/api/public_docs.py` | 未构建前端时 `/docs/` 的纯 HTML 回退渲染 |
+| `dashboard/app/docs/` | 文档站页面（`/docs/`、`/docs/<slug>/`），移动端菜单、语言切换、API/错误码筛选 |
+| `app/services/human_onboarding.py` | 控制台 6 步“开始使用”清单：自动检测、跳过、关闭、重新打开 |
+| `app/services/agent_onboarding.py` | Agent 引导：状态机、`next_call`、轻量提示、角色首个动作、`agent.*` 审计、指标概览 |
+| `dashboard/app/components/onboarding.tsx` | 清单卡片、铸造令牌后的 MCP 配置与连接测试、Agent 引导状态徽章 |
+| `scripts/deploy_tlines.sh` | Tlines 部署：数据库备份、旧镜像打标签、构建重启、校验、自动/手动回滚 |
 | `scripts/webhook_receiver.py` | Bot 侧签名 Webhook 接收器：校验时间戳/HMAC，写入 JSONL outbox |
 | `app/services/tasks.py` | 失败认领/续租/释放/交接/审核/升级写入 `TASK_*_FAILED` 时间线 |
 | `POST /v1/admin/workspaces/{id}/agent-tokens/{token_id}/rotate` | Agent 身份不变、密钥立即轮换 |
@@ -752,6 +762,9 @@ rank fusion 合并两路排名，默认只查 VERIFIED 且非 tainted 文档。�
   hash embedding 仍是词法近似，真实语义质量需 OpenAI/Ollama。
 - Docker CMD 增加 `--proxy-headers --forwarded-allow-ips=*`；Caddy HTTP 308
   跳 HTTPS，生产 `/docs` 已在浏览器验证。
+- 自 v3.19 起 `/docs/` 为公开文档站（无需登录，不含 `/v1/admin` 与任何密钥）；
+  Swagger UI 移至 `/api-reference`，与 `/openapi.json` 一样在
+  `DOCS_REQUIRE_AUTH=true` 时需要 HTTP Basic（密码为 admin token）。
 - 可丢弃的测试工作区可用
   `DELETE /v1/admin/workspaces/{id}?confirm=<精确名称>` 级联删除；生产清理优先
   归档/导出，不把硬删除当日常操作。

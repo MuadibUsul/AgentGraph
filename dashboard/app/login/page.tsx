@@ -198,6 +198,7 @@ export default function LoginPage() {
           </span>
         </a>
         <div className="auth-header-actions">
+          <a className="auth-docs-link" href="/docs/">{t("Docs")}</a>
           <LanguageToggle />
         </div>
       </header>

@@ -7,6 +7,7 @@ import { AuditView } from "./components/audit";
 import { Blackboard } from "./components/blackboard";
 import { DocumentsView } from "./components/documents";
 import { GovernanceView } from "./components/governance";
+import { AgentConnect, GettingStarted, type OnboardingStepId } from "./components/onboarding";
 import { LanguageToggle, useI18n } from "./i18n";
 import {
   CreateTaskModal,
@@ -76,6 +77,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
   if (!path.startsWith(prefix)) return path;
   const rest = path.slice(prefix.length);
   if (rest === "/stats") return "/v1/human/workspace";
+  if (rest === "/agent-onboarding") return "/v1/human/agent-onboarding";
   if (rest === "/agent-tokens" || rest.startsWith("/agent-tokens/")) {
     return `/v1/human${rest}`;
   }
@@ -172,6 +174,10 @@ export default function ConsolePage() {
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
 
   const [showCreateTask, setShowCreateTask] = useState(false);
+  // Getting-started checklist (signed-in people only): refresh and reopen.
+  const [onboardingTick, setOnboardingTick] = useState(0);
+  const [checklistOpen, setChecklistOpen] = useState(false);
+  const [mintSignal, setMintSignal] = useState(0);
   const [creatingTask, setCreatingTask] = useState(false);
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null);
   const [taskBusy, setTaskBusy] = useState(false);
@@ -382,6 +388,22 @@ export default function ConsolePage() {
   }
 
   const api: ApiRequest = request;
+
+  // Opening the audit trail is the checklist's last step; report it once.
+  const auditVisited = useRef(false);
+  useEffect(() => {
+    if (!sessionMode || tab !== "audit" || auditVisited.current) return;
+    auditVisited.current = true;
+    void api("/v1/human/onboarding", {
+      method: "POST",
+      body: JSON.stringify({ action: "complete", step: "view_audit" }),
+    })
+      .then(() => setOnboardingTick((value) => value + 1))
+      .catch(() => {
+        // Optional bookkeeping; never interrupt the console.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, sessionMode]);
 
   async function probe(base: string) {
     try {
@@ -1075,6 +1097,36 @@ export default function ConsolePage() {
     document.getElementById(`view-tab-${next.id}`)?.focus();
   }
 
+  async function reopenChecklist() {
+    try {
+      await api("/v1/human/onboarding", {
+        method: "POST",
+        body: JSON.stringify({ action: "reopen" }),
+      });
+    } catch {
+      // Still show it locally; the next load re-reads the stored state.
+    }
+    setChecklistOpen(true);
+    setOnboardingTick((tick) => tick + 1);
+  }
+
+  function navigateOnboarding(step: OnboardingStepId) {
+    if (step === "create_token") {
+      setTab("agents");
+      setMintSignal((value) => value + 1);
+    } else if (step === "connect_mcp") {
+      setTab("agents");
+      window.open("/docs/mcp/", "_blank", "noopener");
+    } else if (step === "first_content") {
+      setTab("tasks");
+      setShowCreateTask(true);
+    } else if (step === "human_review") {
+      setTab("tasks");
+    } else if (step === "view_audit") {
+      setTab("audit");
+    }
+  }
+
   const tabs: Array<{ id: Tab; label: string; count?: number; alert?: number; icon: JSX.Element }> = [
     { id: "blackboard", label: t("Blackboard"), count: slots.length, icon: <IconBoard /> },
     { id: "tasks", label: t("Tasks"), count: tasks.length, alert: approvals.length, icon: <IconTasks /> },
@@ -1174,6 +1226,13 @@ export default function ConsolePage() {
           ))}
         </nav>
 
+        <nav className="sidebar-help" aria-label={t("Help")}>
+          <span>{t("Help")}</span>
+          <a href="/docs/quickstart/" target="_blank" rel="noreferrer">{t("Quickstart")}</a>
+          <a href="/docs/console/" target="_blank" rel="noreferrer">{t("Console tutorial")}</a>
+          <a href="/docs/mcp/" target="_blank" rel="noreferrer">{t("MCP setup")}</a>
+        </nav>
+
         {sessionMode ? (
           <div className="session-card">
             <div className="session-card-head">
@@ -1223,8 +1282,17 @@ export default function ConsolePage() {
           </div>
           <div className="topbar-actions">
             <LanguageToggle />
-            <a className="button ghost" href={`${normalizeBase(apiBase)}/docs`} target="_blank" rel="noreferrer">
-              {t("API docs")}
+            {sessionMode && (
+              <button
+                type="button"
+                className="button ghost"
+                onClick={() => void reopenChecklist()}
+              >
+                {t("Getting started")}
+              </button>
+            )}
+            <a className="button ghost" href="/docs/" target="_blank" rel="noreferrer">
+              {t("Docs")}
             </a>
             <button
               type="button"
@@ -1371,6 +1439,16 @@ export default function ConsolePage() {
                 </div>
               </div>
 
+              {sessionMode && (
+                <GettingStarted
+                  request={api}
+                  refreshKey={onboardingTick}
+                  forceOpen={checklistOpen}
+                  onClosed={() => setChecklistOpen(false)}
+                  onNavigate={navigateOnboarding}
+                />
+              )}
+
               <div className="tab-bar" role="tablist" aria-label={t("Workspace views")}>
                 {tabs.map((item) => (
                   <button
@@ -1466,6 +1544,7 @@ export default function ConsolePage() {
                       }}
                       onKey={(key, name) => setKeyReveal({ key, name, kind: "agent" })}
                       notify={setNotice}
+                      openCreateSignal={mintSignal}
                     />
                   )}
                   {tab === "governance" && (
@@ -1648,13 +1727,24 @@ export default function ConsolePage() {
               {copied ? t("Copied") : <><IconCopy /> {t("Copy")}</>}
             </button>
           </div>
-          <div className="key-note">
-            {t("Use it as")} <code>Authorization: Bearer …</code>.{" "}
-            {t("Agent runtimes should instead receive a scoped")}{" "}
-            <code>agt_</code> {t("token from the Agents tab.")}
-          </div>
+          {keyReveal.kind === "agent" ? (
+            <AgentConnect apiBase={apiBase} agentKey={keyReveal.key} />
+          ) : (
+            <div className="key-note">
+              {t("Use it as")} <code>Authorization: Bearer …</code>.{" "}
+              {t("Agent runtimes should instead receive a scoped")}{" "}
+              <code>agt_</code> {t("token from the Agents tab.")}
+            </div>
+          )}
           <div className="modal-actions">
-            <button type="button" className="button primary" onClick={() => setKeyReveal(null)}>
+            <button
+              type="button"
+              className="button primary"
+              onClick={() => {
+                setKeyReveal(null);
+                setOnboardingTick((tick) => tick + 1);
+              }}
+            >
               {t("I’ve stored it")}
             </button>
           </div>

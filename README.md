@@ -73,8 +73,11 @@ docker compose up -d --build
 
 Open:
 
-- Human console: http://localhost:8000/dashboard/
-- API docs: http://localhost:8000/docs
+- Human console: http://localhost:8000/dashboard/ (new accounts get a
+  dismissible **Getting started** checklist)
+- Documentation (public, EN/中文): http://localhost:8000/docs/ — quickstart,
+  console tutorial, MCP setup, agent quickstart, REST reference, error codes
+- Interactive Swagger UI (operators): http://localhost:8000/api-reference
 - MCP streamable HTTP: http://localhost:8000/mcp/
 
 Create a workspace (the commander key is shown once):
@@ -103,6 +106,14 @@ The production deployment on the Tlines server stores the admin token in
 `/home/deploy/agentgraph/.env` (`ADMIN_TOKEN`, mode 600). The console is available
 at `https://agentgraph.fusionpropulsion.space/dashboard/`
 (`https://agentgraph.104-207-82-85.nip.io/dashboard/` remains a fallback).
+
+Deploy updates with `scripts/deploy_tlines.sh deploy` from the server checkout.
+It backs up the database to `backups/agentgraph-<stamp>.sql.gz`, tags the
+running image as `agentgraph:rollback-<stamp>`, rebuilds, restarts and verifies
+`/readyz`, public `/docs/`, `/api-reference` → 401, MCP, security headers and the
+schema version. A failed verification rolls back automatically; manual paths are
+`scripts/deploy_tlines.sh rollback <stamp>` (image + database restore) and
+`rollback-image <stamp>` (image only; migrations are additive).
 
 Or use the admin API:
 
@@ -452,8 +463,10 @@ The token determines the role and namespaces; the host must be allowed by
 `mcp-session-id`; a missing session id is expected, not a lost session. Send
 `initialize` and `tools/list` on each new client connection as needed.
 
-Production `/docs` and `/openapi.json` are protected by HTTP Basic when
-`DOCS_REQUIRE_AUTH=true`; use any username and the admin token as the password.
+`/docs/` is the public documentation site and needs no login. The interactive
+Swagger UI moved to `/api-reference`; it and `/openapi.json` are protected by
+HTTP Basic when `DOCS_REQUIRE_AUTH=true` (any username, the admin token as the
+password).
 
 ### stdio MCP (local / self-hosted)
 
@@ -484,9 +497,42 @@ Production `/docs` and `/openapi.json` are protected by HTTP Basic when
 - **Documents** — namespace tree, verification/trust badges, frontmatter
   properties, Markdown preview/editor, history browser, Verify/Deprecate and
   human lock.
-- **Agents** — mint/disable scoped tokens, role and namespace visibility.
+- **Agents** — mint/disable scoped tokens, role and namespace visibility, a
+  copyable MCP config with **Test connection** after minting, and each token's
+  onboarding state (oriented → constitution acked → namespace readme → first
+  action) with workspace-level rates.
 - **Audit** — session batches with before/after diffs, conflict-aware undo and
   an explicit Force retry.
+
+- **Getting started** — a six-step checklist for new accounts (learn the
+  workspace, mint a token, connect MCP and call `get_orientation`, first
+  task/document, a human review, the audit trail). Four steps are detected from
+  workspace data, progress is stored per user (`GET/POST /v1/human/onboarding`),
+  steps can be skipped, and it never pops up again once closed; the topbar
+  **Getting started** button reopens it. Empty states offer the next action and
+  a link to the matching guide.
+
+The documentation site at `/docs/` is generated, not hand-written:
+`app/docs_site.py` builds it from the live OpenAPI schema (public `/v1` routes
+only), `AGENT_GUIDE` and the error-code registry, and
+`python scripts/gen_docs_site.py` writes `dashboard/app/docs/site.generated.json`
+(`--check` fails when it is stale; a test does the same). Without a dashboard
+build the API serves the same content as plain HTML.
+
+### Agent onboarding over MCP
+
+The MCP `initialize` instructions start with "Call get_orientation first before
+any other tool", and `get_orientation` is listed first. Its response carries an
+`onboarding` block — `state` (`new`, `oriented`, `needs_ack`,
+`needs_namespace_readme`, `needs_first_action`, `active`), `step`/`total_steps`,
+`next_call {tool, args}`, up to three `required_reading` items, `completed_steps`
+and `do_not`. Until the agent is `active`, later tool responses include a small
+`onboarding` hint; nothing is ever blocked. The role's first action completes
+onboarding: SCOUT reads `raw_inbox` then writes a draft or proposal, ANALYST
+creates or claims a task, AUDITOR reviews, EXECUTOR claims. Progress lives in
+`agent_onboarding` (migration `v3_19`, RLS) and transitions are audited once each
+as `agent.oriented`, `agent.acknowledged`, `agent.namespace_read`,
+`agent.first_action` and `agent.onboarded`. See `/docs/agent-quickstart/`.
 
 The console is a Next.js 14 static export. The production image builds it in a
 multi-stage Docker build and FastAPI serves it at `/dashboard/`.
@@ -725,9 +771,10 @@ scripts/smoke_test.py      deployment smoke test
   human/admin action.
 - `GET /v1/auth/me` requires a human account session and returns `401
   human_session_required` for workspace/agent keys instead of a 500.
-- Production sets `DOCS_REQUIRE_AUTH=true`: `/docs` and `/openapi.json` use HTTP
-  Basic with the admin token as the password (username is ignored). This keeps
-  the schema available to operators without exposing it publicly.
+- Production sets `DOCS_REQUIRE_AUTH=true`: `/api-reference` (Swagger UI) and
+  `/openapi.json` use HTTP Basic with the admin token as the password (username
+  is ignored). The public `/docs/` site lists only `/v1` endpoints (never
+  `/v1/admin`) and no operator-only error codes or secrets; tests enforce it.
 - Search results carry an RRF relevance `score`; a default semantic threshold
   removes low-relevance matches, and gibberish queries return an empty list.
 - Uvicorn runs with `--proxy-headers`; Caddy terminates HTTPS and redirects HTTP

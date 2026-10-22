@@ -387,7 +387,20 @@ export function DocumentsView({
           />
         </div>
         {documents.length === 0 ? (
-          <Empty title={t("No documents")} detail={t("Create one or let an agent hand off an artifact.")} />
+          <Empty
+            title={t("No documents")}
+            detail={t("Create one or let an agent hand off an artifact.")}
+            action={
+              <div className="empty-actions">
+                <button type="button" className="button primary small" onClick={() => setShowCreate(true)}>
+                  <IconPlus /> {t("Create document")}
+                </button>
+                <a className="button ghost small" href="/docs/workflows/" target="_blank" rel="noreferrer">
+                  {t("How documents work")}
+                </a>
+              </div>
+            }
+          />
         ) : (
           grouped.map(([namespace, docs]) => (
             <div key={namespace} className="doc-group">
