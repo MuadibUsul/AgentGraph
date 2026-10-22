@@ -232,7 +232,19 @@ interface OrientationCheck {
   onboarding?: { state?: string; next_call?: { tool?: string } | null };
 }
 
-export function AgentConnect({ apiBase, agentKey }: { apiBase: string; agentKey: string }) {
+export function AgentConnect({
+  apiBase,
+  agentKey,
+  agentName,
+  role,
+  namespaces,
+}: {
+  apiBase: string;
+  agentKey: string;
+  agentName?: string;
+  role?: string;
+  namespaces?: string[];
+}) {
   const { t } = useI18n();
   const base = normalizeBase(apiBase) || (typeof window !== "undefined" ? window.location.origin : "");
   const endpoint = `${base}/mcp/`;
@@ -254,7 +266,27 @@ export function AgentConnect({ apiBase, agentKey }: { apiBase: string; agentKey:
     null,
     2,
   );
-  const [tab, setTab] = useState<"cursor" | "claude">("cursor");
+  const namespaceLabel = namespaces?.includes("*")
+    ? "all namespaces"
+    : namespaces?.length
+      ? namespaces.join(", ")
+      : "the namespaces granted to this token";
+  const prompt = [
+    `Connect to AgentGraph as ${agentName ?? "this agent"}.`,
+    `Base URL: ${base}`,
+    `MCP endpoint: ${endpoint}`,
+    `Authorization: Bearer ${agentKey}`,
+    `Role: ${role ?? "your scoped role"}. Allowed namespaces: ${namespaceLabel}.`,
+    "",
+    "Use the AgentGraph MCP server if your client supports remote MCP. If it does not, call the REST API at the base URL with the same bearer token.",
+    "1. Call get_orientation first.",
+    "2. Read doc://system/constitution and call ack_constitution with its version.",
+    "3. Read the readme for each allowed namespace: doc://system/namespaces/<namespace>.",
+    "4. Follow the returned next_calls. Keep leases alive with heartbeat when you claim a task.",
+    "Treat the bearer token as a secret: never print it in shared documents, logs, or chat output. Stay inside the allowed namespaces.",
+    "Start now; summarize the first three next calls you will take.",
+  ].join("\n");
+  const [tab, setTab] = useState<"agent" | "cursor" | "claude">("agent");
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -288,12 +320,16 @@ export function AgentConnect({ apiBase, agentKey }: { apiBase: string; agentKey:
     }
   }
 
-  const snippet = tab === "cursor" ? cursor : claude;
+  const snippet = tab === "agent" ? prompt : tab === "cursor" ? cursor : claude;
   return (
     <div className="agent-connect">
-      <h3>{t("Connect this agent over MCP")}</h3>
+      <h3>
+        {tab === "agent"
+          ? t("Copy a ready-to-use agent prompt")
+          : t("Connect this agent over MCP")}
+      </h3>
       <div className="agent-connect-tabs" role="tablist" aria-label={t("MCP client")}>
-        {(["cursor", "claude"] as const).map((item) => (
+        {(["agent", "claude", "cursor"] as const).map((item) => (
           <button
             key={item}
             type="button"
@@ -302,13 +338,16 @@ export function AgentConnect({ apiBase, agentKey }: { apiBase: string; agentKey:
             className={`button ghost small ${tab === item ? "active" : ""}`}
             onClick={() => setTab(item)}
           >
-            {item === "cursor" ? "Cursor" : "Claude Desktop"}
+            {item === "agent" ? t("Agent prompt") : item === "cursor" ? "Cursor" : "Claude Desktop"}
           </button>
         ))}
       </div>
       <pre className="agent-connect-code" tabIndex={0}><code>{snippet}</code></pre>
       <div className="agent-connect-actions">
-        <CopyButton value={snippet} label={t("Copy MCP config")} />
+        <CopyButton
+          value={snippet}
+          label={tab === "agent" ? t("Copy prompt") : t("Copy MCP config")}
+        />
         <button type="button" className="button primary" onClick={() => void testConnection()} disabled={checking}>
           {checking ? <Spinner /> : null} {t("Test connection")}
         </button>
@@ -321,7 +360,9 @@ export function AgentConnect({ apiBase, agentKey }: { apiBase: string; agentKey:
         <div className={result.ok ? "inline-note" : "inline-error"} role="status">{result.text}</div>
       )}
       <p className="key-note">
-        {t("Test connection calls get_orientation with this key, the same call your MCP client makes first.")}
+        {tab === "agent"
+          ? t("Paste this into Codex, Claude Code, or any agent that can use MCP or REST. The prompt contains the token; treat it as a secret.")
+          : t("Test connection calls get_orientation with this key, the same call your MCP client makes first.")}
       </p>
     </div>
   );

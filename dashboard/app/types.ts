@@ -257,6 +257,8 @@ export interface KeyReveal {
   key: string;
   name: string;
   kind: "workspace" | "rotated" | "agent";
+  role?: string;
+  namespaces?: string[];
 }
 
 export interface TaintSource {

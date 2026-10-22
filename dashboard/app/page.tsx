@@ -1547,7 +1547,15 @@ export default function ConsolePage() {
                       onRefresh={async () => {
                         await loadWorkspace(selectedWorkspace.id, true);
                       }}
-                      onKey={(key, name) => setKeyReveal({ key, name, kind: "agent" })}
+                      onKey={(key, name, token) =>
+                        setKeyReveal({
+                          key,
+                          name,
+                          kind: "agent",
+                          role: token?.role_scope,
+                          namespaces: token?.allowed_namespaces,
+                        })
+                      }
                       notify={setNotice}
                       openCreateSignal={mintSignal}
                     />
@@ -1740,7 +1748,13 @@ export default function ConsolePage() {
             </button>
           </div>
           {keyReveal.kind === "agent" ? (
-            <AgentConnect apiBase={apiBase} agentKey={keyReveal.key} />
+            <AgentConnect
+              apiBase={apiBase}
+              agentKey={keyReveal.key}
+              agentName={keyReveal.name}
+              role={keyReveal.role}
+              namespaces={keyReveal.namespaces}
+            />
           ) : (
             <div className="key-note">
               {t("Use it as")} <code>Authorization: Bearer …</code>.{" "}

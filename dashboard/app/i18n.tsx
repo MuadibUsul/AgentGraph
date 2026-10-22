@@ -758,6 +758,11 @@ const ZH: Record<string, string> = {
   "Connected as {agent} ({role}). Next step for the agent: {next}.": "已连接，身份为 {agent}（{role}）。Agent 的下一步：{next}。",
   "Connection failed: {reason}": "连接失败：{reason}",
   "Connect this agent over MCP": "通过 MCP 连接这个 Agent",
+  "Agent prompt": "Agent 提示词",
+  "Copy a ready-to-use agent prompt": "复制可直接使用的 Agent 提示词",
+  "Copy prompt": "复制提示词",
+  "Paste this into Codex, Claude Code, or any agent that can use MCP or REST. The prompt contains the token; treat it as a secret.":
+    "粘贴到 Codex、Claude Code 或任何支持 MCP/REST 的 Agent 中。提示词包含令牌，请按密钥保管。",
   "MCP client": "MCP 客户端",
   "Copy MCP config": "复制 MCP 配置",
   "Test connection": "测试连接",
@@ -770,6 +775,8 @@ const ZH: Record<string, string> = {
   "MCP setup guide": "MCP 接入教程",
   "Onboarding": "接入进度",
   "After minting you can copy a ready MCP config and test the connection.": "创建后可以直接复制 MCP 配置并测试连接。",
+  "After minting you can copy the key, a ready-to-use agent prompt, or an MCP config.":
+    "创建后可以复制密钥、可直接使用的 Agent 提示词，或 MCP 配置。",
   "Tokens and roles": "令牌与角色",
   "Create a task for your agents, or let an ANALYST agent plan one. Agents claim READY tasks under a lease and hand them back for your review.": "为 Agent 创建一个任务，或让 ANALYST 角色的 Agent 来规划。Agent 会在租约下认领 READY 任务，完成后交回给你审核。",
   "How tasks work": "任务如何运作",

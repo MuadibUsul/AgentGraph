@@ -95,7 +95,7 @@ export function AgentsView({
   tokens: AgentToken[];
   request: ApiRequest;
   onRefresh: () => Promise<void>;
-  onKey: (key: string, name: string) => void;
+  onKey: (key: string, name: string, token?: AgentToken) => void;
   notify: (message: string) => void;
   openCreateSignal?: number;
 }) {
@@ -244,7 +244,7 @@ export function AgentsView({
       setSelectedNamespaces(["*"]);
       setNamespaceQuery("");
       setNamespaceOpen(false);
-      onKey(result.api_key, result.token.agent_signature);
+      onKey(result.api_key, result.token.agent_signature, result.token);
       await onRefresh();
       notify(t("Agent token for {name} minted.", { name: result.token.agent_signature }));
     } catch (caught) {
@@ -534,7 +534,7 @@ export function AgentsView({
               </small>
             </div>
             <div className="inline-note">
-              {t("After minting you can copy a ready MCP config and test the connection.")}{" "}
+              {t("After minting you can copy the key, a ready-to-use agent prompt, or an MCP config.")}{" "}
               <a href="/docs/auth/" target="_blank" rel="noreferrer">{t("Tokens and roles")}</a>
             </div>
             {role === "SCOUT" && (
