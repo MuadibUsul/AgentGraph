@@ -444,6 +444,8 @@ async def orphan_task(
     continuation = None
     if holder:
         continuation = await _auto_continuation(session, task, lease, holder, reason)
+        task.continuation = {"namespace": CONTINUATION_NAMESPACE, "doc_key": continuation}
+        task.continuation_at = now
     task.orphaned_from = holder
     task.orphan_count = (task.orphan_count or 0) + 1
     escalate = task.orphan_count >= settings.orphan_escalation_threshold
@@ -514,8 +516,10 @@ async def flag_missed_heartbeats(session: AsyncSession, limit: int = 200) -> int
         last = lease.last_heartbeat_at or lease.acquired_at
         if last + timedelta(seconds=lease.heartbeat_interval_s) > now:
             continue
-        lease.heartbeat_missed_at = now
         task = await session.get(CollabTask, lease.resource_id)
+        if task is not None and task.status is TaskStatus.WAITING_HUMAN:
+            continue  # paused while a human decides (AG-CO-05)
+        lease.heartbeat_missed_at = now
         await append_event(
             session,
             workspace_id=lease.workspace_id,

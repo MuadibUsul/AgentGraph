@@ -1062,12 +1062,14 @@ async def upsert_document(
             },
             namespace=namespace,
         )
+        await _deliver_mentions(session, principal, request, document, previous=None)
         if commit:
             await session.commit()
         return await _mutation_response(session, document, batch)
 
     require_permission(principal, "doc:write")
     ensure_namespace(principal, existing.namespace)
+    previous_content = existing.content
     if request.expected_version == 0 and at_least(LATEST_VERSION):
         # Creating over an existing alias is refused, never an overwrite.
         raise ApiError(
@@ -1224,9 +1226,33 @@ async def upsert_document(
         },
         namespace=namespace,
     )
+    await _deliver_mentions(session, principal, request, document, previous=previous_content)
     if commit:
         await session.commit()
     return await _mutation_response(session, document, batch)
+
+
+async def _deliver_mentions(
+    session: AsyncSession,
+    principal: Principal,
+    request: DocumentUpsertRequest,
+    document: SharedDocument,
+    *,
+    previous: str | None,
+) -> None:
+    """AG-EV-03: explicit mentions, plus @refs that are new in this version."""
+    from app.services import collab
+
+    explicit = list(getattr(request, "mentions", None) or [])
+    known = set(collab.parse_mentions(None, previous)) if previous else set()
+    found = [ref for ref in collab.parse_mentions(None, document.content) if ref not in known]
+    mentions = collab.parse_mentions(explicit + found, None)
+    await collab.deliver_mentions(
+        session, principal, mentions,
+        refs={"doc_key": document.doc_key, "id": document.canonical_id,
+              "title": document.title, "version": document.version},
+        namespace=document.namespace,
+    )
 
 
 _SECTION_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")

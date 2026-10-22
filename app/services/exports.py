@@ -96,6 +96,7 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "token_access_log": ("audit_log.jsonl", ()),
     "agent_directory": ("objects.jsonl", ()),
     "agent_aliases": ("objects.jsonl", ()),
+    "escalations": ("objects.jsonl", ()),
     # Replayed after a restore or import so erased data stays erased (AG-TC-07).
     "redaction_log": ("audit_log.jsonl", ()),
 }

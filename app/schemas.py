@@ -116,6 +116,18 @@ class NextTaskSpec(StrictModel):
         return self
 
 
+class DocRef(StrictModel):
+    namespace: str = Field(default="default", max_length=64)
+    doc_key: str = Field(min_length=1, max_length=256)
+    version: int | None = Field(default=None, ge=1, description="null: pinned at first claim")
+
+
+class OutputTo(StrictModel):
+    namespace: str = Field(default="default", max_length=64)
+    doc_key: str | None = Field(default=None, max_length=256)
+    doc_key_pattern: str | None = Field(default=None, max_length=256)
+
+
 class TaskCreateRequest(StrictModel):
     task_key: str | None = Field(
         default=None, pattern=_KEY_PATTERN + "$", max_length=128
@@ -134,6 +146,16 @@ class TaskCreateRequest(StrictModel):
         pattern=r"^(agent|human):[A-Za-z0-9_.:@-]{1,150}$",
         description="agent:<agent_id> or human:<user_id>; only they may claim",
     )
+    # AG-CO-02: pointers, not copies.
+    context_docs: list[DocRef] = Field(default_factory=list, max_length=20)
+    allow_missing_context: bool = False
+    done_definition: str | None = Field(default=None, max_length=2_000)
+    output_to: OutputTo | None = None
+    required_role: str | None = Field(default=None, max_length=32)
+    required_capabilities: list[str] = Field(default_factory=list, max_length=10)
+    kind: Literal["work", "question", "escalation", "peer_review"] = "work"
+    require_continuation: bool = False
+    mentions: list[str] = Field(default_factory=list, max_length=20)
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
 
@@ -174,6 +196,8 @@ class TaskClaimRequest(StrictModel):
         default=None, ge=60, le=3_600,
         description="Lease TTL; heartbeat every ttl/3 (default 900 under 2026-11)",
     )
+    include_context: bool = True
+    context_max_bytes: int = Field(default=262_144, ge=1_024, le=4_194_304)
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
 
@@ -280,8 +304,23 @@ class TaskReviewRequest(StrictModel):
         return _clean_agent(value)
 
 
+class EscalationOption(StrictModel):
+    id: str = Field(min_length=1, max_length=64)
+    label: str | None = Field(default=None, max_length=200)
+    consequence: str | None = Field(default=None, max_length=500)
+
+
 class TaskEscalateRequest(StrictModel):
     reason: str = Field(min_length=1, max_length=8_000)
+    # AG-CO-05: a question with options; blocking pauses the task and its lease.
+    question: str | None = Field(default=None, max_length=2_000)
+    options: list[EscalationOption] = Field(default_factory=list, max_length=5)
+    recommended_option: str | None = Field(default=None, max_length=64)
+    context_docs: list[DocRef] = Field(default_factory=list, max_length=20)
+    blocking: bool = True
+    due_at: datetime | None = None
+    default_on_timeout: str | None = Field(default=None, max_length=64)
+    route_to: str | None = Field(default=None, max_length=160)
     expected_version: int | None = Field(default=None, ge=1)
     fencing_token: int | None = Field(
         default=None, ge=0,
@@ -411,6 +450,10 @@ class DocumentUpsertRequest(StrictModel):
     expected_version: int = Field(ge=0)
     namespace: Namespace | None = Field(
         default=None, pattern=_NAMESPACE_PATTERN + "$"
+    )
+    mentions: list[str] = Field(
+        default_factory=list, max_length=20,
+        description="agent:<id> / human:<id> to notify (AG-EV-03); @agent:<id> in content too",
     )
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
@@ -745,6 +788,16 @@ class TaskSummary(BaseModel):
     orphan_count: int = 0
     tainted: bool = False
     taint_sources: list[Any] = Field(default_factory=list)
+    kind: str = "work"
+    required_role: str | None = None
+    context_docs_count: int = 0
+    done_definition_preview: str | None = None
+    output_to: dict[str, Any] | None = None
+    continuation: dict[str, Any] | None = None
+    parent_task_key: str | None = None
+    root_task_key: str | None = None
+    lead: str | None = None
+    children_done: bool = False
     updated_at: datetime
     updated_stamp: dict[str, Any] | None = None
 
@@ -758,6 +811,15 @@ class TaskOut(TaskSummary):
     reject_history: list[Any] = Field(default_factory=list)
     review_round: int = 0
     review_history: list[Any] = Field(default_factory=list)
+    context_docs: list[Any] = Field(default_factory=list)
+    context_versions_pinned: dict[str, Any] | None = None
+    done_definition: str | None = None
+    required_capabilities: list[str] = Field(default_factory=list)
+    require_continuation: bool = False
+    output_summary: str | None = None
+    rollup: list[Any] = Field(default_factory=list)
+    mentions: list[Any] = Field(default_factory=list)
+    children_summary: dict[str, Any] | None = None
     created_by: str
     created_by_label: str | None = None
     created_at: datetime
@@ -770,6 +832,7 @@ class TaskListResponse(BaseModel):
 class TaskActionResponse(BaseModel):
     task: TaskOut
     escalated: bool = False
+    escalation: dict[str, Any] | None = None
     effective_status: TaskStatus | None = None
     reassigned: bool | None = None
     artifact_uri: str | None = None
@@ -1081,12 +1144,64 @@ class RightsCloseRequest(StrictModel):
     notes: str | None = Field(default=None, max_length=5_000)
 
 
+class ContinuationTried(StrictModel):
+    approach: str = Field(min_length=1, max_length=1_000)
+    result: Literal["worked", "failed", "partial"]
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class ContinuationRequest(StrictModel):
+    done: list[str] = Field(default_factory=list, max_length=100)
+    tried: list[ContinuationTried] = Field(default_factory=list, max_length=100)
+    avoid: list[str] = Field(default_factory=list, max_length=100)
+    next_steps: list[str] = Field(default_factory=list, max_length=100)
+    open_questions: list[str] = Field(default_factory=list, max_length=100)
+    artifacts: list[DocRef] = Field(default_factory=list, max_length=50)
+    state: dict[str, Any] = Field(default_factory=dict)
+    handoff: bool = False
+    handoff_to: str | None = Field(default=None, max_length=160)
+    brief: dict[str, Any] | None = Field(
+        default=None, description="handoff=true: the L1 brief (summary etc.)")
+
+    @field_validator("state")
+    @classmethod
+    def _state_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if _serialized_size(value) > 16_384:
+            raise ValueError("state is larger than 16 KB")
+        return value
+
+
+class SubtasksRequest(StrictModel):
+    tasks: list[TaskCreateRequest] = Field(min_length=1, max_length=20)
+    lead: str | None = Field(default=None, max_length=160)
+
+
+class EscalationCreateRequest(StrictModel):
+    question: str = Field(min_length=1, max_length=2_000)
+    options: list[EscalationOption] = Field(default_factory=list, max_length=5)
+    recommended_option: str | None = Field(default=None, max_length=64)
+    context_docs: list[DocRef] = Field(default_factory=list, max_length=20)
+    due_at: datetime | None = None
+    default_on_timeout: str | None = Field(default=None, max_length=64)
+    route_to: str | None = Field(default=None, max_length=160)
+
+
+class EscalationResolveRequest(StrictModel):
+    option_id: str | None = Field(default=None, max_length=64)
+    answer: str | None = Field(default=None, max_length=4_000)
+    note: str | None = Field(default=None, max_length=2_000)
+
+
 class TaskContextResponse(BaseModel):
     task: TaskOut
     lease: LeaseOut | None = None
     upstream_briefs: list[dict[str, Any]] = Field(default_factory=list)
     slots: list[SlotOut] = Field(default_factory=list)
     documents: list[DocumentSummary] = Field(default_factory=list)
+    context: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="context_docs (continuation first), pinned to versions (AG-CO-02/04)",
+    )
     session_batch_id: uuid.UUID | None = None
 
 

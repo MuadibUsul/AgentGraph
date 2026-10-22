@@ -43,6 +43,10 @@ async def lease_reaper_loop() -> None:
                 from app.services.rights import upkeep as rights_upkeep
 
                 await rights_upkeep()
+                from app.services.collab import escalation_upkeep
+
+                async with async_session_factory() as upkeep_session:
+                    await escalation_upkeep(upkeep_session)
                 purged = await purge_due_tenants(session)
                 if purged:
                     logger.info("purged %s tenant(s) after the deletion grace period", purged)

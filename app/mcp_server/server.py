@@ -35,6 +35,7 @@ from app.models import Tenant
 from app.schemas import (
     REVIEW_APPROVE_STATUSES,
     REVIEW_REJECT_STATUSES,
+    ContinuationRequest,
     DocumentArchiveRequest,
     DocumentBatchUpsertItem,
     DocumentBatchUpsertRequest,
@@ -49,6 +50,7 @@ from app.schemas import (
     ProposalVoteRequest,
     RegisterPartsRequest,
     SlotPatchRequest,
+    SubtasksRequest,
     TaskClaimRequest,
     TaskCreateRequest,
     TaskEscalateRequest,
@@ -64,6 +66,7 @@ from app.services import idempotency, indexer, token_tree
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
+from app.services import tasks as task_service
 from app.services.common import set_event_platform
 from app.services.lineage import stamp_for
 from app.stamp_context import set_current_stamp
@@ -109,6 +112,8 @@ IDEMPOTENT_TOOLS = frozenset(
         "register_agent",
         "update_agent",
         "set_status",
+        "write_continuation",
+        "create_subtasks",
     }
 )
 _CONTENT_BLOCK = TypeAdapter(types.ContentBlock)
@@ -717,10 +722,26 @@ async def create_task(
     depends_on: list[str] | None = None,
     max_retries: int | None = None,
     status: Literal["TODO", "READY"] = "READY",
+    assignee: str | None = None,
+    context_docs: list[dict[str, Any]] | None = None,
+    allow_missing_context: bool = False,
+    done_definition: str | None = None,
+    output_to: dict[str, Any] | None = None,
+    required_role: str | None = None,
+    required_capabilities: list[str] | None = None,
+    kind: Literal["work", "question", "escalation", "peer_review"] = "work",
+    require_continuation: bool = False,
+    mentions: list[str] | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Create a task for an agent role (EXECUTOR/ANALYST/AUDITOR).
+
+    Pass pointers, not copies: context_docs [{namespace, doc_key, version?}]
+    are pinned at the first claim and returned with it; done_definition and
+    output_to {namespace, doc_key | doc_key_pattern} say what done means and
+    where the result goes. assignee / required_role / required_capabilities
+    limit who may claim. mentions (agent:<id>, human:<id>) notify principals.
 
     SCOUT is intentionally not claimable; raw collection work belongs in a
     raw_inbox document. depends_on task keys create dependency links and keep
@@ -741,6 +762,16 @@ async def create_task(
                 input_context=input_context or {},
                 depends_on=depends_on or [],
                 max_retries=max_retries or settings.default_max_retries,
+                assignee=assignee,
+                context_docs=context_docs or [],
+                allow_missing_context=allow_missing_context,
+                done_definition=done_definition,
+                output_to=output_to,
+                required_role=required_role,
+                required_capabilities=required_capabilities or [],
+                kind=kind,
+                require_continuation=require_continuation,
+                mentions=mentions or [],
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -916,10 +947,16 @@ async def agent_claim_and_read(
             le=3_600,
         ),
     ] = None,
+    include_context: bool = True,
+    context_max_bytes: Annotated[int, Field(ge=1_024, le=4_194_304)] = 262_144,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Claim a READY/HANDOFF task with a TTL lease and load its L1 context.
+
+    ``context`` holds the task's context_docs at their pinned versions, the
+    latest continuation pack first (is_continuation: true): read it before
+    anything else. Untrusted bodies come as untrusted_content.
 
     Returns the task, upstream L1 handoff briefs, referenced state slots and
     document summaries. L2 artifact bodies are intentionally not included;
@@ -934,6 +971,8 @@ async def agent_claim_and_read(
             body = TaskClaimRequest(
                 lease_seconds=lease_seconds,
                 lease_ttl_seconds=lease_ttl_seconds,
+                include_context=include_context,
+                context_max_bytes=context_max_bytes,
                 agent=agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -1059,10 +1098,24 @@ async def agent_escalate_to_human(
     reason: str,
     expected_version: int | None = None,
     fencing_token: int | None = None,
+    question: str | None = None,
+    options: list[dict[str, Any]] | None = None,
+    recommended_option: str | None = None,
+    context_docs: list[dict[str, Any]] | None = None,
+    blocking: bool = True,
+    due_at: datetime | None = None,
+    default_on_timeout: str | None = None,
+    route_to: str | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
-    """Stop and escalate a task to the human commander for a decision."""
+    """Stop and escalate a task to the human commander for a decision.
+
+    With ``question`` (and up to 5 options [{id, label, consequence}]) you keep
+    the task: it waits in WAITING_HUMAN with its lease paused, and you get an
+    escalation.resolved event with the decision, which is also appended to the
+    continuation pack. default_on_timeout applies at due_at.
+    """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
@@ -1070,6 +1123,14 @@ async def agent_escalate_to_human(
                 reason=reason,
                 expected_version=expected_version,
                 fencing_token=fencing_token,
+                question=question,
+                options=options or [],
+                recommended_option=recommended_option,
+                context_docs=context_docs or [],
+                blocking=blocking,
+                due_at=due_at,
+                default_on_timeout=default_on_timeout,
+                route_to=route_to,
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -1083,6 +1144,118 @@ async def agent_escalate_to_human(
     return _compact(result.model_dump(mode="json"))
 
 
+@mcp.tool(name="list_tasks")
+async def list_tasks(
+    status: str | None = None,
+    assigned_role: str | None = None,
+    namespace: str | None = None,
+    assignee: str | None = None,
+    required_role: str | None = None,
+    parent: str | None = None,
+    kind: str | None = None,
+    claimable_by_me: bool = False,
+    limit: Annotated[int, Field(ge=1, le=500)] = 50,
+) -> dict[str, Any]:
+    """List tasks. claimable_by_me=true: what you may claim now (role, assignee,
+    capabilities); assignee="me": tasks assigned to you; parent: a task's children.
+    status is a comma-separated list. This mirrors REST GET /v1/tasks.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await services.list_tasks(
+                session, principal,
+                statuses=[item.strip().upper() for item in status.split(",") if item.strip()]
+                if status else None,
+                assigned_role=assigned_role, namespace=namespace, limit=limit,
+                assignee=assignee, required_role=required_role, parent=parent, kind=kind,
+                claimable_by_me=claimable_by_me,
+            )
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="write_continuation")
+async def write_continuation(
+    task_key: str,
+    done: list[str] | None = None,
+    tried: list[dict[str, Any]] | None = None,
+    avoid: list[str] | None = None,
+    next_steps: list[str] | None = None,
+    open_questions: list[str] | None = None,
+    artifacts: list[dict[str, Any]] | None = None,
+    state: dict[str, Any] | None = None,
+    handoff: bool = False,
+    handoff_to: str | None = None,
+    brief: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write the task's continuation pack so the next holder starts where you stopped.
+
+    tried: [{approach, result: worked|failed|partial, note}]; artifacts: doc refs;
+    state: up to 16 KB of JSON. The next claim returns it first. handoff=true
+    also hands the task off (status HANDOFF). Write one before every handoff.
+    This mirrors REST POST /v1/tasks/{task_key}/continuation.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = ContinuationRequest(
+                done=done or [], tried=tried or [], avoid=avoid or [],
+                next_steps=next_steps or [], open_questions=open_questions or [],
+                artifacts=artifacts or [], state=state or {}, handoff=handoff,
+                handoff_to=handoff_to, brief=brief,
+            )
+            result = await task_service.write_continuation(session, principal, task_key, body)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="create_subtasks")
+async def create_subtasks(
+    task_key: str,
+    tasks: list[dict[str, Any]],
+    lead: str | None = None,
+) -> dict[str, Any]:
+    """Split a task you hold (or lead) into up to 20 subtasks, atomically.
+
+    Each item takes create_task's fields. Children default to the parent's
+    namespace; a child's submission needs brief.summary, which rolls up into the
+    parent; the lead gets task.children_done when all are done. Trees are at
+    most 4 levels deep. This mirrors REST POST /v1/tasks/{task_key}/subtasks.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = SubtasksRequest(tasks=tasks, lead=lead)
+            result = await task_service.create_subtasks(session, principal, task_key, body)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_task_tree")
+async def get_task_tree(
+    task_key: str,
+    depth: Annotated[int, Field(ge=1, le=4)] = 2,
+    include: list[Literal["summary", "rollup"]] | None = None,
+) -> dict[str, Any]:
+    """The task tree under a task (at most 500 nodes) with children summaries."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await task_service.get_task_tree(
+                session, principal, task_key, depth=depth, include=include or ["summary"])
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 @mcp.tool(name="upsert_shared_doc")
 async def upsert_shared_doc(
     doc_key: str,
@@ -1093,10 +1266,14 @@ async def upsert_shared_doc(
     namespace: str | None = None,
     include_content: bool = False,
     return_current_on_conflict: bool = False,
+    mentions: list[str] | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Create or update a shared Markdown document with JSON properties.
+
+    mentions (agent:<id>, human:<id>) and new @agent:<id> refs in the body
+    send those principals a mention.created event.
 
     expected_version=0 creates; otherwise pass the current version. Human-locked
     documents reject agent writes. SCOUT tokens may only create documents in
@@ -1113,6 +1290,7 @@ async def upsert_shared_doc(
                 frontmatter=frontmatter or {},
                 expected_version=expected_version,
                 namespace=namespace,
+                mentions=mentions or [],
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )

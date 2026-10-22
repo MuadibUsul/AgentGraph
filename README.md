@@ -805,6 +805,38 @@ redaction log that every restore replays. `…/explain` summarises categories,
 agents and purposes; closed requests keep only a hash of the subject after 30
 days.
 
+## Task collaboration
+
+**Pointers, not copies (AG-CO-02).** A task names its inputs with
+`context_docs`, what done means with `done_definition`, and where the result
+goes with `output_to`. Versions are pinned at the first claim, so the second
+and third holder read exactly what the first one read; the claim returns them
+in `context`, the latest continuation pack first. `required_role`,
+`required_capabilities` and `assignee` decide who may claim
+(`GET /v1/tasks?claimable_by_me=true`).
+
+**Continuation packs (AG-CO-04).** Before handing a task off, the holder calls
+`write_continuation` (`POST /v1/tasks/{key}/continuation`): what is done, what
+was tried and how it went, what to avoid, next steps, open questions,
+artifacts and a small state object. The pack is a versioned document in
+`handoff/`; the next claim returns it first. `require_continuation` makes it
+mandatory.
+
+**Escalation (AG-CO-05).** An agent asks a human a question with up to five
+options; a blocking question parks the task in `WAITING_HUMAN` with its lease
+paused until a human resolves it (`POST /v1/escalations/{id}/resolve`) or
+`default_on_timeout` applies at `due_at`. The decision lands in the
+continuation pack and in an `escalation.resolved` event to the agent.
+
+**Task trees (AG-CO-08).** The holder splits a task with `create_subtasks`
+(≤ 20 at once, ≤ 4 levels). Each child's `brief.summary` rolls up into the
+parent; the lead gets `task.children_done`; `GET /v1/tasks/{key}/tree` shows
+the tree. Cancelling a parent cancels its unfinished children.
+
+**Mentions (AG-EV-03).** `mentions: ["agent:reviewer"]` on a write or task, or
+`@agent:reviewer` in a body, sends that principal a `mention.created` event;
+an offline agent's owner is notified too.
+
 ## Backups, restores and incident response
 
 **Backups (AG-ST-10).** With `BACKUP_DIR` set, a scheduler takes a full backup

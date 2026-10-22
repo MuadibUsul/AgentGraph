@@ -193,6 +193,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "tenant_type_invalid_parent": _spec(
         422, FIX_REQUEST, "Choose a parent from details.allowed."
     ),
+    "task_tree_too_deep": _spec(422, FIX_REQUEST, "Split under a shallower task."),
     "ttl_exceeds_parent": _spec(422, FIX_REQUEST, "Lower the TTL per details."),
     "unknown_principal": _spec(422, FIX_REQUEST, "Fix the principal reference per details."),
     "url_not_allowed": _spec(422, FIX_REQUEST, "Use an allowed URL per details."),
@@ -348,6 +349,11 @@ WARNING_CODES: dict[str, str] = {
     "namespace_undocumented": "The namespace readme is still a generated stub.",
     "frontmatter_missing": "Fields the namespace readme requires are missing.",
     "doc_key_pattern_mismatch": "doc_key does not match the namespace pattern.",
+    "continuation_missing": "No continuation pack was written since the claim; call "
+                            "write_continuation before the next handoff.",
+    "output_missing": "Nothing was written to the task's output_to since the claim.",
+    "target_offline": "A mentioned agent is offline or retired; its owner is notified too.",
+    "unknown_mention": "A mentioned principal is not in the directory.",
     "not_registered": "The collaborator directory is not live; identity is inferred.",
     "constitution_draft": "The constitution is still the generated template.",
     "token_expiring": "The calling token expires within a day.",

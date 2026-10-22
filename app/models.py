@@ -52,8 +52,12 @@ class TaskStatus(str, enum.Enum):
     HANDOFF = "HANDOFF"
     AWAITING_HUMAN = "AWAITING_HUMAN"
     ESCALATED_TO_HUMAN = "ESCALATED_TO_HUMAN"
+    # AG-CO-05: the holder asked a human and waits; the lease is paused.
+    WAITING_HUMAN = "WAITING_HUMAN"
     DONE = "DONE"
     FAILED = "FAILED"
+    # AG-CO-08: cancelled with a cancelled parent.
+    CANCELLED = "CANCELLED"
 
 
 class LinkType(str, enum.Enum):
@@ -582,6 +586,40 @@ class CollabTask(Base):
         Integer, nullable=False, default=0, server_default=text("0")
     )
     assignee: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    # AG-CO-02 pointers, AG-CO-04 continuation, AG-CO-08 tree (v3.23).
+    context_docs: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    context_versions_pinned: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    done_definition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_to: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    required_role: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    required_capabilities: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list, server_default=text("'{}'"))
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="work", server_default=text("'work'"))
+    require_continuation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    continuation: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    continuation_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    parent_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("collab_tasks.id", ondelete="SET NULL"), nullable=True)
+    root_task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    parent_task_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    root_task_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tree_depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    lead: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    children_done: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    rollup: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    lease_paused_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    mentions: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     tainted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE")
     )

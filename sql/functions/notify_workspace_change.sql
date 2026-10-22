@@ -120,6 +120,11 @@ BEGIN
             WHEN 'TOKEN_EXPIRING' THEN 'token.expiring'
             WHEN 'AGENT_REGISTERED' THEN 'agent.registered'
             WHEN 'AGENT_STATUS_CHANGED' THEN 'agent.status_changed'
+            WHEN 'MENTION_CREATED' THEN 'mention.created'
+            WHEN 'ESCALATION_RESOLVED' THEN 'escalation.resolved'
+            WHEN 'ESCALATION_REMINDER' THEN 'escalation.reminder'
+            WHEN 'TASK_CHILDREN_DONE' THEN 'task.children_done'
+            WHEN 'TASK_CONTINUATION' THEN 'task.continuation_written'
             ELSE 'timeline.' || lower(COALESCE(NULLIF(row_data->>'event_type', ''), 'event'))
         END;
         IF jsonb_typeof(row_data->'payload'->'targets') = 'array' THEN

@@ -75,6 +75,12 @@ EVENT_TYPES: dict[str, str] = {
     "token.expiring": "A token expires within 10 minutes (targets: its parent).",
     "agent.registered": "An agent joined the directory (targets: the workspace's humans).",
     "agent.status_changed": "An agent's directory status changed.",
+    "mention.created": "A document or task mentions a principal (targets: the mentioned, "
+                       "and the owner of an offline agent).",
+    "escalation.resolved": "A human decided an escalation (targets: the agent that asked).",
+    "escalation.reminder": "An escalation is still open (targets: the routed human).",
+    "task.children_done": "Every subtask of a task is done (targets: the lead).",
+    "task.continuation_written": "A continuation pack was written for a task.",
     "security.incident_notice": "A security incident notice for this organisation "
                                 "(targets: the notified owners).",
     "timeline.*": "Application event that repeats a row change (e.g. timeline.task_claimed).",

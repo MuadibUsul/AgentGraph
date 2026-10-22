@@ -673,6 +673,7 @@ ruff check .
 | `app/services/directory.py` | 协作者名录：注册、查询、状态、离线扫描、遗留身份认领、按 2026-11 输出 `agent:`/`human:` 引用 |
 | `app/services/members.py` | 成员与角色：邀请、改角色、移除（吊销或转交令牌）、沿树继承 owner/admin、切换工作区 |
 | `app/services/rights.py` | 个人权利请求：定位、导出、假名化、遮盖、删除、说明、提醒与最小化、恢复后重放遮盖日志 |
+| `app/services/collab.py` | 任务协作：上下文指针与版本钉住、认领角色检查、续跑包、@提及、升级给人（WAITING_HUMAN 暂停租约）、子任务树与汇总、级联取消 |
 | `scripts/deploy_tlines.sh` | Tlines 部署：数据库备份、旧镜像打标签、构建重启、校验、自动/手动回滚 |
 | `scripts/webhook_receiver.py` | Bot 侧签名 Webhook 接收器：校验时间戳/HMAC，写入 JSONL outbox |
 | `app/services/tasks.py` | 失败认领/续租/释放/交接/审核/升级写入 `TASK_*_FAILED` 时间线 |

@@ -21,6 +21,7 @@ from app.schemas import (
     AgentUpdateRequest,
     AuditListResponse,
     ConstitutionAckRequest,
+    ContinuationRequest,
     DereferenceBatchRequest,
     DereferenceBatchResponse,
     DereferenceRequest,
@@ -41,6 +42,8 @@ from app.schemas import (
     DocumentVerifyRequest,
     DocumentVersionListResponse,
     DocumentVersionOut,
+    EscalationCreateRequest,
+    EscalationResolveRequest,
     ExportRequest,
     ExternalActionCreateRequest,
     ExternalActionListResponse,
@@ -69,6 +72,7 @@ from app.schemas import (
     SlotPatchRequest,
     SlotReplaceRequest,
     SubscriptionRequest,
+    SubtasksRequest,
     TaskActionResponse,
     TaskClaimRequest,
     TaskContextResponse,
@@ -99,6 +103,7 @@ from app.services import exports as export_service
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
+from app.services import tasks as task_service
 
 router = APIRouter(prefix="/v1", tags=["AgentGraph v3"])
 
@@ -328,6 +333,14 @@ async def list_tasks(
     assigned_role: str | None = Query(default=None),
     namespace: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
+    assignee: str | None = Query(default=None, max_length=160,
+                                 description="agent:<id>, human:<id> or me"),
+    required_role: str | None = Query(default=None, max_length=32),
+    parent: str | None = Query(default=None, max_length=128,
+                               description="children of this task"),
+    kind: str | None = Query(default=None, max_length=16),
+    claimable_by_me: bool = Query(default=False,
+                                  description="claimable now by the caller (role, assignee)"),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> TaskListResponse:
@@ -338,6 +351,11 @@ async def list_tasks(
         assigned_role=assigned_role,
         namespace=namespace,
         limit=limit,
+        assignee=assignee,
+        required_role=required_role,
+        parent=parent,
+        kind=kind,
+        claimable_by_me=claimable_by_me,
     )
 
 
@@ -491,6 +509,71 @@ async def escalate_task(
     session: AsyncSession = Depends(get_db),
 ) -> TaskActionResponse:
     return await services.escalate_task(session, principal, task_key, body)
+
+
+@router.post("/tasks/{task_key}/continuation",
+             summary="Write the task's continuation pack (optionally hand off)")
+async def write_continuation(
+    task_key: str,
+    body: ContinuationRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.write_continuation(session, principal, task_key, body)
+
+
+@router.post("/tasks/{task_key}/subtasks", status_code=201,
+             summary="Split a task into up to 20 subtasks (holder or lead)")
+async def create_subtasks(
+    task_key: str,
+    body: SubtasksRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.create_subtasks(session, principal, task_key, body)
+
+
+@router.get("/tasks/{task_key}/tree", summary="The task tree under a task (at most 500 nodes)")
+async def get_task_tree(
+    task_key: str,
+    depth: int = Query(default=2, ge=1, le=4),
+    include: str = Query(default="summary", description="comma list: summary, rollup"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.get_task_tree(
+        session, principal, task_key, depth=depth,
+        include=[item.strip() for item in include.split(",") if item.strip()])
+
+
+@router.post("/escalations", status_code=201,
+             summary="Ask a human a question that blocks no task")
+async def create_escalation(
+    body: EscalationCreateRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.create_escalation(session, principal, body)
+
+
+@router.get("/escalations", summary="Escalations of the workspace")
+async def list_escalations(
+    status: str | None = Query(default=None, pattern="^(open|resolved)$"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.list_escalations(session, principal, status=status)
+
+
+@router.post("/escalations/{escalation_id}/resolve",
+             summary="Decide an escalation (humans only); the task resumes")
+async def resolve_escalation(
+    escalation_id: str,
+    body: EscalationResolveRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.resolve_escalation(session, principal, escalation_id, body)
 
 
 # ------------------------------------------------------------------ slots

@@ -115,6 +115,7 @@ do not edit by hand. Every error body is
 | `quota_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Stay within the parent's limit. |
 | `rollup_summary_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a rollup summary. |
 | `subject_identifier_required` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
+| `task_tree_too_deep` | 422 | `fix_request` | `fix_request_then_resend` | Split under a shallower task. |
 | `tenant_cycle` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `tenant_depth_exceeded` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `tenant_type_invalid_parent` | 422 | `fix_request` | `fix_request_then_resend` | Choose a parent from details.allowed. |
@@ -201,6 +202,10 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 | `namespace_undocumented` | The namespace readme is still a generated stub. |
 | `frontmatter_missing` | Fields the namespace readme requires are missing. |
 | `doc_key_pattern_mismatch` | doc_key does not match the namespace pattern. |
+| `continuation_missing` | No continuation pack was written since the claim; call write_continuation before the next handoff. |
+| `output_missing` | Nothing was written to the task's output_to since the claim. |
+| `target_offline` | A mentioned agent is offline or retired; its owner is notified too. |
+| `unknown_mention` | A mentioned principal is not in the directory. |
 | `not_registered` | The collaborator directory is not live; identity is inferred. |
 | `constitution_draft` | The constitution is still the generated template. |
 | `token_expiring` | The calling token expires within a day. |

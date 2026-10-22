@@ -233,6 +233,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `quota_exceeds_parent` | 422 | `fix_request` |
 | `rollup_summary_required` | 422 | `fix_request` |
 | `subject_identifier_required` | 422 | `fix_request` |
+| `task_tree_too_deep` | 422 | `fix_request` |
 | `tenant_cycle` | 422 | `fix_request` |
 | `tenant_depth_exceeded` | 422 | `fix_request` |
 | `tenant_type_invalid_parent` | 422 | `fix_request` |
