@@ -44,6 +44,10 @@ Until you finish, responses carry `onboarding` with `state`, `completed_steps` a
 - `agent_claim_and_read`: Claim a task with a lease and read its L1 context.
 - `agent_handoff_task`: Hand off with an L1 brief and optional artifact.
 - `review_task`: Approve, reject or send back for rework.
+- `record_gate_result`: Report a CI / tests / acceptance gate result.
+- `get_audit_view`: Spec, output and gates of a task, for an independent audit.
+- `report_change_claim`: Report a change made outside AgentGraph (PR, commit).
+- `verify_change_claim`: AUDITOR: verify or refute a change claim.
 - `agent_escalate_to_human`: Ask a human to decide.
 - `request_human_review`: Flag a proposal or task for a human.
 - `agent_patch_shared_state`: RFC 6902 JSON Patch on a state slot.
@@ -183,6 +187,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `alias_taken` | 409 | `fix_request` |
 | `alias_tombstoned` | 409 | `fix_request` |
 | `artifact_archived` | 409 | `fix_request` |
+| `auto_release_cap_reached` | 409 | `fix_request` |
 | `claim_required` | 409 | `fix_request` |
 | `dependency_cycle` | 409 | `fix_request` |
 | `google_email_mismatch` | 409 | `fix_request` |
@@ -196,13 +201,17 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `not_a_log_document` | 409 | `fix_request` |
 | `policy_exists` | 409 | `fix_request` |
 | `proposal_required` | 409 | `fix_request` |
+| `quality_circuit_open` | 409 | `fix_request` |
+| `quality_gates_unmet` | 409 | `fix_request` |
 | `task_exists` | 409 | `fix_request` |
 | `tenant_has_children` | 409 | `fix_request` |
 | `workspace_confirmation_mismatch` | 409 | `fix_request` |
 | `batch_too_large` | 413 | `fix_request` |
 | `content_too_large` | 413 | `fix_request` |
 | `payload_too_large` | 413 | `fix_request` |
+| `acceptance_items_incomplete` | 422 | `fix_request` |
 | `ambiguous_artifact` | 422 | `fix_request` |
+| `audit_view_required` | 422 | `fix_request` |
 | `budget_exceeds_parent` | 422 | `fix_request` |
 | `checksum_mismatch` | 422 | `fix_request` |
 | `context_doc_not_found` | 422 | `fix_request` |
@@ -258,6 +267,8 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `unauthorized` | 401 | `reauth` |
 | `renewal_requires_parent` | 403 | `reauth` |
 | `NAMESPACE_FORBIDDEN` | 403 | `abandon` |
+| `acceptance_locked` | 403 | `abandon` |
+| `acceptance_self_report` | 403 | `abandon` |
 | `depth_limit_exceeded` | 403 | `abandon` |
 | `forbidden` | 403 | `abandon` |
 | `issue_not_permitted` | 403 | `abandon` |
@@ -273,7 +284,10 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `lease_not_found` | 404 | `abandon` |
 | `not_found` | 404 | `abandon` |
 | `already_registered` | 409 | `abandon` |
+| `circuit_not_open` | 409 | `abandon` |
+| `claim_already_refuted` | 409 | `abandon` |
 | `document_archived` | 409 | `abandon` |
+| `escape_closed` | 409 | `abandon` |
 | `external_action_error` | 409 | `abandon` |
 | `id_collision` | 409 | `abandon` |
 | `invalid_state_transition` | 409 | `abandon` |
@@ -287,6 +301,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `queue_ticket_expired` | 409 | `abandon` |
 | `request_closed` | 409 | `abandon` |
 | `retention_not_met` | 409 | `abandon` |
+| `sample_unavailable` | 409 | `abandon` |
 | `stale_fencing_token` | 409 | `abandon` |
 | `task_not_reviewable` | 409 | `abandon` |
 | `token_already_expired` | 409 | `abandon` |

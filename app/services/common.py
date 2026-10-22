@@ -174,6 +174,8 @@ def task_out(task: CollabTask) -> TaskOut:
     return TaskOut(
         **summary.model_dump(),
         description=task.description,
+        acceptance=task.acceptance or [],
+        acceptance_locked=bool(task.acceptance_locked),
         input_context=task.input_context or {},
         output_artifact=task.output_artifact or {},
         handoff_brief=task.handoff_brief,

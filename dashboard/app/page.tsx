@@ -85,6 +85,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
     return `/v1/human${rest}`;
   }
   if (rest === "/namespaces") return "/v1/human/namespaces";
+  if (rest.startsWith("/document-parts")) return `/v1/human${rest}`;
   if (rest === "/audit" || rest.startsWith("/audit?")) return `/v1/human/audit${rest.slice(6)}`;
   if (rest.startsWith("/batches")) return `/v1/human${rest}`;
   if (rest.startsWith("/proposals")) return `/v1/human${rest}`;

@@ -522,6 +522,22 @@ async def get_document(
     )
 
 
+@router.get(
+    "/workspaces/{workspace_id}/document-parts",
+    summary="Hand-split documents read as one (frontmatter part_of / part_index)",
+)
+async def document_parts(
+    workspace_id: uuid.UUID,
+    part_of: str = Query(min_length=1, max_length=256),
+    namespace: str | None = Query(default=None, max_length=64),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.documents import document_parts as parts
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await parts(session, principal_for_admin(workspace), part_of, namespace=namespace)
+
+
 @router.put(
     "/workspaces/{workspace_id}/documents/{doc_key:path}",
     response_model=DocumentMutationResponse,

@@ -51,6 +51,11 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "Every change reaches the people and agents it concerns: list_inbox / ack_inbox.",
             "Agent tokens take a permission delta on their role (scope_add / scope_remove); "
             "children inherit removals and default to a 12-hour lifetime.",
+            "Quality control: acceptance items, machine gates (record_gate_result), audit "
+            "views (get_audit_view), change claims (report_change_claim / "
+            "verify_change_claim), autonomy tiers, sampling, escapes and a per-domain "
+            "circuit; enforced when QUALITY_CONTROL=true.",
+            "State-slot locks are leases (list_leases, heartbeat, release_lease).",
         ],
     },
     {

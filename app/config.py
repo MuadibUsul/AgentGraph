@@ -98,6 +98,21 @@ class Settings(BaseSettings):
     # enables it (PRD gate: root/branch split, lineage and revocation first).
     child_token_issuance: bool = False
 
+    # ------------------------------------- quality control 1.0 (v3.32)
+    # Gate results, audits, claims, samples and escapes are always recorded;
+    # QUALITY_CONTROL=true enforces the release matrix (tiers, gates, audit
+    # view, cited clauses, circuit) on reviews and hand-offs.
+    quality_control: bool = False
+    quality_tier1_sample_rate: float = Field(default=0.10, ge=0, le=1)  # Q-1
+    quality_tier2_sample_rate: float = Field(default=0.20, ge=0, le=1)  # Q-2
+    quality_auto_merge_daily_cap: int = Field(default=20, ge=0)  # Q-3
+    quality_circuit_failures: int = Field(default=3, ge=1)  # Q-4
+    quality_promotion_min_completed: int = Field(default=30, ge=1)  # Q-6
+    quality_promotion_max_escape_rate: float = Field(default=0.02, ge=0, le=1)  # Q-6
+    quality_demotion_escape_rate: float = Field(default=0.05, ge=0, le=1)  # Q-7
+    quality_risk_artifact_bytes: int = Field(default=200_000, ge=1)  # Q-9
+    quality_sample_overdue_days: int = Field(default=7, ge=1)  # Q-10
+
     # ------------------------------------------- backups (AG-ST-10, R1.3)
     # Archives go to BACKUP_DIR, which must live on other storage than the
     # database (another disk, an NFS/object-storage mount). Unset = no backups.

@@ -7,6 +7,7 @@ import { MarkdownContent } from "./markdown";
 import type {
   ApiRequest,
   DocumentDetail,
+  DocumentParts,
   DocumentSummary,
   DocumentVersion,
   DocumentVersionSummary,
@@ -102,6 +103,12 @@ export function DocumentsView({
   );
   const [versionBusy, setVersionBusy] = useState(false);
   const [versionError, setVersionError] = useState<string | null>(null);
+  const [merged, setMerged] = useState<DocumentParts | null>(null);
+  const [mergedBusy, setMergedBusy] = useState(false);
+  const partOf =
+    selected && typeof selected.frontmatter?.part_of === "string"
+      ? (selected.frontmatter.part_of as string)
+      : null;
 
   useEffect(() => {
     if (!selected) return;
@@ -280,6 +287,23 @@ export function DocumentsView({
       setError(caught instanceof Error ? caught.message : t("Unable to deprecate document"));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function openMerged() {
+    if (!partOf) return;
+    setMergedBusy(true);
+    setError(null);
+    try {
+      setMerged(
+        await request<DocumentParts>(
+          `/v1/admin/workspaces/${workspaceId}/document-parts?part_of=${encodeURIComponent(partOf)}`,
+        ),
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("Unable to load the parts"));
+    } finally {
+      setMergedBusy(false);
     }
   }
 
@@ -553,6 +577,17 @@ export function DocumentsView({
                 <button type="button" className="button ghost" onClick={openHistory}>
                   {t("History")}
                 </button>
+                {partOf && (
+                  <button
+                    type="button"
+                    className="button ghost"
+                    onClick={() => void openMerged()}
+                    disabled={mergedBusy}
+                    title={t("This document is one part of {name}", { name: partOf })}
+                  >
+                    {mergedBusy ? <Spinner /> : <IconDocuments size={13} />} {t("Read all parts")}
+                  </button>
+                )}
                 {selected.verification_status !== "VERIFIED" && (
                   <button type="button" className="button ghost" onClick={verifyDocument} disabled={busy}>
                     {busy ? <Spinner /> : <IconCheck />} {t("Verify")}
@@ -692,6 +727,38 @@ export function DocumentsView({
               )}
             </div>
           </div>
+        </Modal>
+      )}
+
+      {merged && (
+        <Modal
+          title={merged.part_of}
+          subtitle={t("{count} parts read as one, in part_index order.", { count: merged.count })}
+          onClose={() => setMerged(null)}
+          footer={
+            <button type="button" className="button ghost" onClick={() => setMerged(null)}>
+              {t("Close")}
+            </button>
+          }
+        >
+          {merged.truncated && (
+            <div className="inline-note">{t("Too long to show in full; later parts are left out.")}</div>
+          )}
+          {merged.parts.map((part) => (
+            <section key={`${part.namespace}/${part.doc_key}`} className="merged-part">
+              <div className="doc-meta">
+                <button type="button" className="button ghost small" onClick={() => {
+                  setMerged(null);
+                  onSelect(part.doc_key);
+                }}>
+                  {part.title || part.doc_key}
+                </button>
+                <span>v{part.version}</span>
+                {part.tainted && <span className="pill rose">{t("Tainted provenance")}</span>}
+              </div>
+              <MarkdownContent content={part.content} />
+            </section>
+          ))}
         </Modal>
       )}
 

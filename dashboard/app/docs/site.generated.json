@@ -231,7 +231,7 @@
      "type": "p"
     },
     {
-     "text": "# AgentGraph agent guide\n\nGenerated from code by `scripts/gen_agent_guide.py`; do not edit by hand.\n\n## Connect\n\n- REST base `/v1`, MCP streamable HTTP at `/mcp/` (stateless: no session id; every request is authenticated on its own).\n- Authenticate with `Authorization: Bearer <workspace-or-agent-key>`.\n- Declare semantics with the `AgentGraph-Version` header: default `2026-10-21`, latest `2026-11`.\n- First call: `get_orientation` (REST `GET /v1/orientation`).\n\n## Onboarding (4 steps)\n\n1. `get_orientation`.\n2. Read `system/constitution` and call `ack_constitution(version)`.\n3. Read your namespace readme: `dereference(doc://system/namespaces/<ns>)`.\n4. Your role's first read, then first action:\n   - SCOUT: read `raw_inbox`, then write a draft or `propose_document_change`.\n   - ANALYST: read your namespace, then `create_task` or claim a task.\n   - AUDITOR: read the REVIEWING queue, then `review_task`.\n   - EXECUTOR: read claimable tasks, then `agent_claim_and_read`.\n\nUntil you finish, responses carry `onboarding` with `state`, `completed_steps` and\n`next_call`. Nothing is blocked; the hints stop once you are `active`.\n\n## Primitives\n\n- `get_orientation`: First call after connecting: who you are, the constitution, namespaces, collaborators, your tasks and what to read next.\n- `workspace_sync`: L0 map (tasks, slot/doc keys) and incremental changes via since=<cursor>.\n- `list_documents`: Complete, cursor-paginated enumeration of documents (the census).\n- `query_workspace`: Ranked semantic + keyword discovery; NOT exhaustive.\n- `dereference`: Read one document (doc://<key> or doc_… id); ranges and parts.\n- `dereference_many`: Read up to 25 documents in one call.\n- `upsert_shared_doc`: Create (expected_version=0) or update a document.\n- `upsert_many`: Write up to 25 documents atomically.\n- `patch_doc_section`: Replace one Markdown section by heading.\n- `rename_document`: Change an alias; the canonical id never changes.\n- `register_parts`: Record hand-split documents as ordered parts.\n- `register_namespace`: Register a namespace before writing to it.\n- `list_namespaces`: Registered namespaces, readmes and your access.\n- `archive_document`: Soft-archive instead of deleting.\n- `restore_document`: Undo an archive.\n- `create_task`: Create a task.\n- `agent_claim_and_read`: Claim a task with a lease and read its L1 context.\n- `agent_handoff_task`: Hand off with an L1 brief and optional artifact.\n- `review_task`: Approve, reject or send back for rework.\n- `agent_escalate_to_human`: Ask a human to decide.\n- `request_human_review`: Flag a proposal or task for a human.\n- `agent_patch_shared_state`: RFC 6902 JSON Patch on a state slot.\n- `propose_document_change`: Propose an edit a human applies (required for system/*).\n- `vote_on_proposal`: Score another agent's proposal.\n- `list_document_proposals`: List proposals.\n- `draft_external_action`: Draft an outbound call for human approval.\n- `get_token`: Inspect a token (self, ancestors, own subtree).\n- `get_lineage`: Token chain from the workspace root token.\n- `list_token_tree`: Descendant tokens of your own subtree.\n- `explain_write`: Who wrote a version and with what grant.\n- `ack_constitution`: Record that you read the current constitution version.\n- `get_usage`: Embedding tokens, writes, would-be limits and circuits.\n- `get_index_status`: Indexing backlog; writes under 2026-11 are searchable later.\n- `heartbeat`: Keep a task lease alive every heartbeat_interval_s (ttl/3).\n- `release_lease`: Give up a lease; the task returns to READY.\n- `list_leases`: Your leases and how they ended.\n- `export_workspace`: Export in the storage format (owner/workspace key; agents need a grant).\n- `get_export`: Export status and download link.\n- `list_exports`: Exports of your tenant.\n- `poll_events`: Events after a cursor; long-poll up to 25 s; dedupe by event_id.\n- `subscribe`: Subscribe to namespace/doc_key prefixes for poll_events.\n- `list_subscriptions`: Your subscriptions (one default from get_orientation).\n- `unsubscribe`: Remove a subscription.\n- `get_api_docs`: This guide by section.\n\n## Which read to use\n\n- `list_documents`: complete enumeration with cursors; use it for audits, exports and reconciliation.\n- `query_workspace`: best matches for a question; not exhaustive, at most 50 results.\n- `workspace_sync`: the L0 map and incremental changes since a cursor.\n\n## Trust defaults\n\n- Agent writes start as DRAFT/UNTRUSTED; humans verify.\n- `query_workspace` hides other agents' unverified drafts unless `include_unverified=true`; your own drafts are included (`include_own_unverified=true` by default).\n- `system/*` (constitution, namespace readmes) is written by humans; agents use `propose_document_change`.\n\n## Limits\n\n- `max_content_bytes`: 1048576\n- `dereference_range_max_bytes`: 262144\n- `expanded_parts_max_bytes`: 4194304\n- `batch_upsert_max`: 25\n- `batch_dereference_max`: 25\n- `query_limit_max`: 50\n- `list_limit_max`: 500\n- `idempotency_window_hours`: 24\n- `requests_per_minute_default`: 600\n- `sse_revalidate_seconds`: 30\n- `write_rate_per_minute`: 60\n- `write_burst`: 20\n- `query_rate_per_minute`: 120\n- `max_in_flight_per_token`: 4\n- `max_streams_per_token`: 1\n- `backoff_max_seconds`: 60\n- `embedding_tokens_per_day`: 2000000\n\n## Reviews\n\n- approve next_status: DONE, HANDOFF, READY\n- reject next_status: READY, IN_PROGRESS (IN_PROGRESS returns the task to its executor for rework)\n\n## Errors and retries\n\nEvery error carries `code`, `class`, `action`, `retryable`, `retry_after_ms`.\nOn 429/503 wait for `Retry-After` before resending. The server enforces it: an early retry is refused, doubles the next wait, and repeated early retries open a short `circuit_open` (reason `ignored_backoff`).\n\n- `retry_after`: Wait for Retry-After, then resend unchanged with the same idempotency key.\n- `retry_backoff`: Retry with full-jitter exponential backoff, at most 5 times, with the same idempotency key.\n- `refresh_and_retry`: Merge or resync using the current state in details (current_version etc.), then retry once on that new state.\n- `fix_request`: Never resend unchanged; correct the request using details first.\n- `reauth`: Stop; ask the parent token holder or a human for a valid credential.\n- `abandon`: Give up this action, release local state (e.g. leases) and re-read global state if needed.\n- `escalate_human`: Stop automatic retries; call agent_escalate_to_human or wait for a human.\n\nBackoff: `sleep_ms = max(retry_after_ms, random(0, min(cap_ms, base_ms * 2**attempt)))`, base 500 ms, cap 30000 ms, at most 5 attempts. Resend with the same `Idempotency-Key` (REST) / `idempotency_key` (MCP).\n\nEvents are delivered at least once; deduplicate by `event_id`.\n\n## Leases\n\n- `agent_claim_and_read` returns `lease` with `lease_id`, `fencing_token`, `ttl_seconds` and `heartbeat_interval_s` (ttl/3).\n- Call `heartbeat(lease_id)` on that interval; any task write by the holder also counts. A lease that runs out returns the task to READY as an orphan, with an auto-generated continuation under `handoff/`.\n- Pass `fencing_token` with task writes: an older token gets `stale_fencing_token`; a lost lease gets `lease_lost` (API 2026-11).\n\n## Tokens and lineage\n\nEvery write is stamped with the token, the chain from the workspace root token and the grant it held; see `explain_write`, `get_token`, `get_lineage`.\n\n- The root token only manages tokens; the workspace key and console tokens are branches of it. Your effective grant is the intersection along your chain.\n- `issue_child_token(scopes, agent, purpose, namespaces?, ttl_seconds?)` gives another agent a subset of your grant (needs `token:issue`); the secret is returned once. Children live 1 hour by default and never outlive you.\n- `revoke_token(token_id, reason)` ends a token and its whole subtree at once; `renew_token(token_id, ttl_seconds)` is for an ancestor, never yourself. A `token_expiring` warning means: ask your parent to renew.\n- Register once with `register_agent(agent_id, ...)` (issued tokens are registered at birth); find others with `list_agents` and set `set_status(active|idle)`.\n\n## Error codes\n\n| code | HTTP | class |\n|---|---|---|\n| `backup_in_progress` | 409 | `retry_after` |\n| `contention` | 409 | `retry_after` |\n| `export_in_progress` | 409 | `retry_after` |\n| `idempotency_in_progress` | 409 | `retry_after` |\n| `embedding_budget_exceeded` | 429 | `retry_after` |\n| `rate_limited` | 429 | `retry_after` |\n| `sse_capacity` | 429 | `retry_after` |\n| `overloaded` | 503 | `retry_after` |\n| `internal_error` | 500 | `retry_backoff` |\n| `embedding_failed` | 502 | `retry_backoff` |\n| `database_unavailable` | 503 | `retry_backoff` |\n| `google_unavailable` | 503 | `retry_backoff` |\n| `tenant_context_unavailable` | 503 | `retry_backoff` |\n| `proposal_conflict` | 409 | `refresh_and_retry` |\n| `rebase_conflict` | 409 | `refresh_and_retry` |\n| `section_conflict` | 409 | `refresh_and_retry` |\n| `undo_conflict` | 409 | `refresh_and_retry` |\n| `version_conflict` | 409 | `refresh_and_retry` |\n| `cursor_expired` | 410 | `refresh_and_retry` |\n| `cursor_invalid` | 400 | `fix_request` |\n| `http_error` | 400 | `fix_request` |\n| `invalid_cursor` | 400 | `fix_request` |\n| `tenant_id_not_allowed` | 400 | `fix_request` |\n| `tool_error` | 400 | `fix_request` |\n| `unsupported_api_version` | 400 | `fix_request` |\n| `unsupported_artifact_uri` | 400 | `fix_request` |\n| `google_email_unverified` | 401 | `fix_request` |\n| `field_not_writable` | 403 | `fix_request` |\n| `outbound_host_forbidden` | 403 | `fix_request` |\n| `outbound_private_address` | 403 | `fix_request` |\n| `system_namespace_protected` | 403 | `fix_request` |\n| `unknown_tool` | 404 | `fix_request` |\n| `account_exists` | 409 | `fix_request` |\n| `account_link_required` | 409 | `fix_request` |\n| `admin_access_required` | 409 | `fix_request` |\n| `agent_id_taken` | 409 | `fix_request` |\n| `agent_token_exists` | 409 | `fix_request` |\n| `alias_taken` | 409 | `fix_request` |\n| `alias_tombstoned` | 409 | `fix_request` |\n| `artifact_archived` | 409 | `fix_request` |\n| `claim_required` | 409 | `fix_request` |\n| `dependency_cycle` | 409 | `fix_request` |\n| `google_email_mismatch` | 409 | `fix_request` |\n| `google_identity_conflict` | 409 | `fix_request` |\n| `human_user_exists` | 409 | `fix_request` |\n| `idempotency_key_reused` | 409 | `fix_request` |\n| `increment_out_of_order` | 409 | `fix_request` |\n| `last_owner_required` | 409 | `fix_request` |\n| `locate_required` | 409 | `fix_request` |\n| `log_document_append_only` | 409 | `fix_request` |\n| `not_a_log_document` | 409 | `fix_request` |\n| `policy_exists` | 409 | `fix_request` |\n| `proposal_required` | 409 | `fix_request` |\n| `task_exists` | 409 | `fix_request` |\n| `tenant_has_children` | 409 | `fix_request` |\n| `workspace_confirmation_mismatch` | 409 | `fix_request` |\n| `batch_too_large` | 413 | `fix_request` |\n| `content_too_large` | 413 | `fix_request` |\n| `payload_too_large` | 413 | `fix_request` |\n| `ambiguous_artifact` | 422 | `fix_request` |\n| `budget_exceeds_parent` | 422 | `fix_request` |\n| `checksum_mismatch` | 422 | `fix_request` |\n| `context_doc_not_found` | 422 | `fix_request` |\n| `continuation_required` | 422 | `fix_request` |\n| `duplicate_key_in_batch` | 422 | `fix_request` |\n| `export_format_unsupported` | 422 | `fix_request` |\n| `insecure_target_url` | 422 | `fix_request` |\n| `invalid_address` | 422 | `fix_request` |\n| `invalid_dependency` | 422 | `fix_request` |\n| `invalid_filter` | 422 | `fix_request` |\n| `invalid_filter_operator` | 422 | `fix_request` |\n| `invalid_filter_value` | 422 | `fix_request` |\n| `invalid_handoff_brief` | 422 | `fix_request` |\n| `invalid_json_patch` | 422 | `fix_request` |\n| `invalid_last_event_id` | 422 | `fix_request` |\n| `invalid_section` | 422 | `fix_request` |\n| `invalid_sort` | 422 | `fix_request` |\n| `invalid_stream_filter` | 422 | `fix_request` |\n| `invalid_target_url` | 422 | `fix_request` |\n| `invalid_task_status` | 422 | `fix_request` |\n| `invalid_verification_status` | 422 | `fix_request` |\n| `limit_too_large` | 422 | `fix_request` |\n| `namespace_not_registered` | 422 | `fix_request` |\n| `notice_template_incomplete` | 422 | `fix_request` |\n| `offset_not_supported` | 422 | `fix_request` |\n| `policy_loosening_not_allowed` | 422 | `fix_request` |\n| `policy_schema_violation` | 422 | `fix_request` |\n| `policy_size_limit` | 422 | `fix_request` |\n| `quota_exceeds_parent` | 422 | `fix_request` |\n| `review_feedback_required` | 422 | `fix_request` |\n| `review_note_required` | 422 | `fix_request` |\n| `rollup_summary_required` | 422 | `fix_request` |\n| `scope_unknown` | 422 | `fix_request` |\n| `subject_identifier_required` | 422 | `fix_request` |\n| `task_tree_too_deep` | 422 | `fix_request` |\n| `tenant_cycle` | 422 | `fix_request` |\n| `tenant_depth_exceeded` | 422 | `fix_request` |\n| `tenant_type_invalid_parent` | 422 | `fix_request` |\n| `too_many_headers` | 422 | `fix_request` |\n| `ttl_exceeds_parent` | 422 | `fix_request` |\n| `unknown_principal` | 422 | `fix_request` |\n| `url_not_allowed` | 422 | `fix_request` |\n| `validation_error` | 422 | `fix_request` |\n| `google_audience_mismatch` | 401 | `reauth` |\n| `google_identity_mismatch` | 401 | `reauth` |\n| `google_token_invalid` | 401 | `reauth` |\n| `human_session_required` | 401 | `reauth` |\n| `invalid_api_key` | 401 | `reauth` |\n| `invalid_credentials` | 401 | `reauth` |\n| `token_expired` | 401 | `reauth` |\n| `token_invalid` | 401 | `reauth` |\n| `token_revoked` | 401 | `reauth` |\n| `unauthorized` | 401 | `reauth` |\n| `renewal_requires_parent` | 403 | `reauth` |\n| `NAMESPACE_FORBIDDEN` | 403 | `abandon` |\n| `depth_limit_exceeded` | 403 | `abandon` |\n| `forbidden` | 403 | `abandon` |\n| `issue_not_permitted` | 403 | `abandon` |\n| `not_assignee` | 403 | `abandon` |\n| `not_lease_holder` | 403 | `abandon` |\n| `review_sealed` | 403 | `abandon` |\n| `role_mismatch` | 403 | `abandon` |\n| `role_not_assignable` | 403 | `abandon` |\n| `root_token_data_access_denied` | 403 | `abandon` |\n| `scope_escalation` | 403 | `abandon` |\n| `self_vote_forbidden` | 403 | `abandon` |\n| `signup_disabled` | 403 | `abandon` |\n| `lease_not_found` | 404 | `abandon` |\n| `not_found` | 404 | `abandon` |\n| `already_registered` | 409 | `abandon` |\n| `document_archived` | 409 | `abandon` |\n| `external_action_error` | 409 | `abandon` |\n| `id_collision` | 409 | `abandon` |\n| `invalid_state_transition` | 409 | `abandon` |\n| `invalid_transition` | 409 | `abandon` |\n| `lease_conflict` | 409 | `abandon` |\n| `lease_lost` | 409 | `abandon` |\n| `lineage_unavailable` | 409 | `abandon` |\n| `link_exists` | 409 | `abandon` |\n| `nothing_to_probe` | 409 | `abandon` |\n| `proposal_not_pending` | 409 | `abandon` |\n| `queue_ticket_expired` | 409 | `abandon` |\n| `request_closed` | 409 | `abandon` |\n| `retention_not_met` | 409 | `abandon` |\n| `stale_fencing_token` | 409 | `abandon` |\n| `task_not_reviewable` | 409 | `abandon` |\n| `token_already_expired` | 409 | `abandon` |\n| `gone` | 410 | `abandon` |\n| `reviewer_conflict` | 422 | `abandon` |\n| `share_cross_root_not_allowed` | 422 | `abandon` |\n| `budget_exceeded` | 402 | `escalate_human` |\n| `quota_exceeded` | 402 | `escalate_human` |\n| `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` |\n| `feature_disabled` | 403 | `escalate_human` |\n| `tenant_deleting` | 403 | `escalate_human` |\n| `tenant_suspended` | 403 | `escalate_human` |\n| `backup_chain_broken` | 409 | `escalate_human` |\n| `backups_not_configured` | 409 | `escalate_human` |\n| `confirmation_required` | 409 | `escalate_human` |\n| `escalated_to_human` | 409 | `escalate_human` |\n| `incident_not_confirmed` | 409 | `escalate_human` |\n| `staging_not_configured` | 409 | `escalate_human` |\n| `taint_blocked` | 409 | `escalate_human` |\n| `tree_quota_exceeded` | 409 | `escalate_human` |\n| `budget_exhausted` | 429 | `escalate_human` |\n| `circuit_open` | 429 | `escalate_human` |\n| `mcp_not_configured` | 500 | `escalate_human` |\n| `admin_disabled` | 503 | `escalate_human` |\n| `google_login_not_configured` | 503 | `escalate_human` |\n",
+     "text": "# AgentGraph agent guide\n\nGenerated from code by `scripts/gen_agent_guide.py`; do not edit by hand.\n\n## Connect\n\n- REST base `/v1`, MCP streamable HTTP at `/mcp/` (stateless: no session id; every request is authenticated on its own).\n- Authenticate with `Authorization: Bearer <workspace-or-agent-key>`.\n- Declare semantics with the `AgentGraph-Version` header: default `2026-10-21`, latest `2026-11`.\n- First call: `get_orientation` (REST `GET /v1/orientation`).\n\n## Onboarding (4 steps)\n\n1. `get_orientation`.\n2. Read `system/constitution` and call `ack_constitution(version)`.\n3. Read your namespace readme: `dereference(doc://system/namespaces/<ns>)`.\n4. Your role's first read, then first action:\n   - SCOUT: read `raw_inbox`, then write a draft or `propose_document_change`.\n   - ANALYST: read your namespace, then `create_task` or claim a task.\n   - AUDITOR: read the REVIEWING queue, then `review_task`.\n   - EXECUTOR: read claimable tasks, then `agent_claim_and_read`.\n\nUntil you finish, responses carry `onboarding` with `state`, `completed_steps` and\n`next_call`. Nothing is blocked; the hints stop once you are `active`.\n\n## Primitives\n\n- `get_orientation`: First call after connecting: who you are, the constitution, namespaces, collaborators, your tasks and what to read next.\n- `workspace_sync`: L0 map (tasks, slot/doc keys) and incremental changes via since=<cursor>.\n- `list_documents`: Complete, cursor-paginated enumeration of documents (the census).\n- `query_workspace`: Ranked semantic + keyword discovery; NOT exhaustive.\n- `dereference`: Read one document (doc://<key> or doc_… id); ranges and parts.\n- `dereference_many`: Read up to 25 documents in one call.\n- `upsert_shared_doc`: Create (expected_version=0) or update a document.\n- `upsert_many`: Write up to 25 documents atomically.\n- `patch_doc_section`: Replace one Markdown section by heading.\n- `rename_document`: Change an alias; the canonical id never changes.\n- `register_parts`: Record hand-split documents as ordered parts.\n- `register_namespace`: Register a namespace before writing to it.\n- `list_namespaces`: Registered namespaces, readmes and your access.\n- `archive_document`: Soft-archive instead of deleting.\n- `restore_document`: Undo an archive.\n- `create_task`: Create a task.\n- `agent_claim_and_read`: Claim a task with a lease and read its L1 context.\n- `agent_handoff_task`: Hand off with an L1 brief and optional artifact.\n- `review_task`: Approve, reject or send back for rework.\n- `record_gate_result`: Report a CI / tests / acceptance gate result.\n- `get_audit_view`: Spec, output and gates of a task, for an independent audit.\n- `report_change_claim`: Report a change made outside AgentGraph (PR, commit).\n- `verify_change_claim`: AUDITOR: verify or refute a change claim.\n- `agent_escalate_to_human`: Ask a human to decide.\n- `request_human_review`: Flag a proposal or task for a human.\n- `agent_patch_shared_state`: RFC 6902 JSON Patch on a state slot.\n- `propose_document_change`: Propose an edit a human applies (required for system/*).\n- `vote_on_proposal`: Score another agent's proposal.\n- `list_document_proposals`: List proposals.\n- `draft_external_action`: Draft an outbound call for human approval.\n- `get_token`: Inspect a token (self, ancestors, own subtree).\n- `get_lineage`: Token chain from the workspace root token.\n- `list_token_tree`: Descendant tokens of your own subtree.\n- `explain_write`: Who wrote a version and with what grant.\n- `ack_constitution`: Record that you read the current constitution version.\n- `get_usage`: Embedding tokens, writes, would-be limits and circuits.\n- `get_index_status`: Indexing backlog; writes under 2026-11 are searchable later.\n- `heartbeat`: Keep a task lease alive every heartbeat_interval_s (ttl/3).\n- `release_lease`: Give up a lease; the task returns to READY.\n- `list_leases`: Your leases and how they ended.\n- `export_workspace`: Export in the storage format (owner/workspace key; agents need a grant).\n- `get_export`: Export status and download link.\n- `list_exports`: Exports of your tenant.\n- `poll_events`: Events after a cursor; long-poll up to 25 s; dedupe by event_id.\n- `subscribe`: Subscribe to namespace/doc_key prefixes for poll_events.\n- `list_subscriptions`: Your subscriptions (one default from get_orientation).\n- `unsubscribe`: Remove a subscription.\n- `get_api_docs`: This guide by section.\n\n## Which read to use\n\n- `list_documents`: complete enumeration with cursors; use it for audits, exports and reconciliation.\n- `query_workspace`: best matches for a question; not exhaustive, at most 50 results.\n- `workspace_sync`: the L0 map and incremental changes since a cursor.\n\n## Trust defaults\n\n- Agent writes start as DRAFT/UNTRUSTED; humans verify.\n- `query_workspace` hides other agents' unverified drafts unless `include_unverified=true`; your own drafts are included (`include_own_unverified=true` by default).\n- `system/*` (constitution, namespace readmes) is written by humans; agents use `propose_document_change`.\n\n## Limits\n\n- `max_content_bytes`: 1048576\n- `dereference_range_max_bytes`: 262144\n- `expanded_parts_max_bytes`: 4194304\n- `batch_upsert_max`: 25\n- `batch_dereference_max`: 25\n- `query_limit_max`: 50\n- `list_limit_max`: 500\n- `idempotency_window_hours`: 24\n- `requests_per_minute_default`: 600\n- `sse_revalidate_seconds`: 30\n- `write_rate_per_minute`: 60\n- `write_burst`: 20\n- `query_rate_per_minute`: 120\n- `max_in_flight_per_token`: 4\n- `max_streams_per_token`: 1\n- `backoff_max_seconds`: 60\n- `embedding_tokens_per_day`: 2000000\n\n## Reviews\n\n- approve next_status: DONE, HANDOFF, READY\n- reject next_status: READY, IN_PROGRESS (IN_PROGRESS returns the task to its executor for rework)\n\n## Errors and retries\n\nEvery error carries `code`, `class`, `action`, `retryable`, `retry_after_ms`.\nOn 429/503 wait for `Retry-After` before resending. The server enforces it: an early retry is refused, doubles the next wait, and repeated early retries open a short `circuit_open` (reason `ignored_backoff`).\n\n- `retry_after`: Wait for Retry-After, then resend unchanged with the same idempotency key.\n- `retry_backoff`: Retry with full-jitter exponential backoff, at most 5 times, with the same idempotency key.\n- `refresh_and_retry`: Merge or resync using the current state in details (current_version etc.), then retry once on that new state.\n- `fix_request`: Never resend unchanged; correct the request using details first.\n- `reauth`: Stop; ask the parent token holder or a human for a valid credential.\n- `abandon`: Give up this action, release local state (e.g. leases) and re-read global state if needed.\n- `escalate_human`: Stop automatic retries; call agent_escalate_to_human or wait for a human.\n\nBackoff: `sleep_ms = max(retry_after_ms, random(0, min(cap_ms, base_ms * 2**attempt)))`, base 500 ms, cap 30000 ms, at most 5 attempts. Resend with the same `Idempotency-Key` (REST) / `idempotency_key` (MCP).\n\nEvents are delivered at least once; deduplicate by `event_id`.\n\n## Leases\n\n- `agent_claim_and_read` returns `lease` with `lease_id`, `fencing_token`, `ttl_seconds` and `heartbeat_interval_s` (ttl/3).\n- Call `heartbeat(lease_id)` on that interval; any task write by the holder also counts. A lease that runs out returns the task to READY as an orphan, with an auto-generated continuation under `handoff/`.\n- Pass `fencing_token` with task writes: an older token gets `stale_fencing_token`; a lost lease gets `lease_lost` (API 2026-11).\n\n## Tokens and lineage\n\nEvery write is stamped with the token, the chain from the workspace root token and the grant it held; see `explain_write`, `get_token`, `get_lineage`.\n\n- The root token only manages tokens; the workspace key and console tokens are branches of it. Your effective grant is the intersection along your chain.\n- `issue_child_token(scopes, agent, purpose, namespaces?, ttl_seconds?)` gives another agent a subset of your grant (needs `token:issue`); the secret is returned once. Children live 1 hour by default and never outlive you.\n- `revoke_token(token_id, reason)` ends a token and its whole subtree at once; `renew_token(token_id, ttl_seconds)` is for an ancestor, never yourself. A `token_expiring` warning means: ask your parent to renew.\n- Register once with `register_agent(agent_id, ...)` (issued tokens are registered at birth); find others with `list_agents` and set `set_status(active|idle)`.\n\n## Error codes\n\n| code | HTTP | class |\n|---|---|---|\n| `backup_in_progress` | 409 | `retry_after` |\n| `contention` | 409 | `retry_after` |\n| `export_in_progress` | 409 | `retry_after` |\n| `idempotency_in_progress` | 409 | `retry_after` |\n| `embedding_budget_exceeded` | 429 | `retry_after` |\n| `rate_limited` | 429 | `retry_after` |\n| `sse_capacity` | 429 | `retry_after` |\n| `overloaded` | 503 | `retry_after` |\n| `internal_error` | 500 | `retry_backoff` |\n| `embedding_failed` | 502 | `retry_backoff` |\n| `database_unavailable` | 503 | `retry_backoff` |\n| `google_unavailable` | 503 | `retry_backoff` |\n| `tenant_context_unavailable` | 503 | `retry_backoff` |\n| `proposal_conflict` | 409 | `refresh_and_retry` |\n| `rebase_conflict` | 409 | `refresh_and_retry` |\n| `section_conflict` | 409 | `refresh_and_retry` |\n| `undo_conflict` | 409 | `refresh_and_retry` |\n| `version_conflict` | 409 | `refresh_and_retry` |\n| `cursor_expired` | 410 | `refresh_and_retry` |\n| `cursor_invalid` | 400 | `fix_request` |\n| `http_error` | 400 | `fix_request` |\n| `invalid_cursor` | 400 | `fix_request` |\n| `tenant_id_not_allowed` | 400 | `fix_request` |\n| `tool_error` | 400 | `fix_request` |\n| `unsupported_api_version` | 400 | `fix_request` |\n| `unsupported_artifact_uri` | 400 | `fix_request` |\n| `google_email_unverified` | 401 | `fix_request` |\n| `field_not_writable` | 403 | `fix_request` |\n| `outbound_host_forbidden` | 403 | `fix_request` |\n| `outbound_private_address` | 403 | `fix_request` |\n| `system_namespace_protected` | 403 | `fix_request` |\n| `unknown_tool` | 404 | `fix_request` |\n| `account_exists` | 409 | `fix_request` |\n| `account_link_required` | 409 | `fix_request` |\n| `admin_access_required` | 409 | `fix_request` |\n| `agent_id_taken` | 409 | `fix_request` |\n| `agent_token_exists` | 409 | `fix_request` |\n| `alias_taken` | 409 | `fix_request` |\n| `alias_tombstoned` | 409 | `fix_request` |\n| `artifact_archived` | 409 | `fix_request` |\n| `auto_release_cap_reached` | 409 | `fix_request` |\n| `claim_required` | 409 | `fix_request` |\n| `dependency_cycle` | 409 | `fix_request` |\n| `google_email_mismatch` | 409 | `fix_request` |\n| `google_identity_conflict` | 409 | `fix_request` |\n| `human_user_exists` | 409 | `fix_request` |\n| `idempotency_key_reused` | 409 | `fix_request` |\n| `increment_out_of_order` | 409 | `fix_request` |\n| `last_owner_required` | 409 | `fix_request` |\n| `locate_required` | 409 | `fix_request` |\n| `log_document_append_only` | 409 | `fix_request` |\n| `not_a_log_document` | 409 | `fix_request` |\n| `policy_exists` | 409 | `fix_request` |\n| `proposal_required` | 409 | `fix_request` |\n| `quality_circuit_open` | 409 | `fix_request` |\n| `quality_gates_unmet` | 409 | `fix_request` |\n| `task_exists` | 409 | `fix_request` |\n| `tenant_has_children` | 409 | `fix_request` |\n| `workspace_confirmation_mismatch` | 409 | `fix_request` |\n| `batch_too_large` | 413 | `fix_request` |\n| `content_too_large` | 413 | `fix_request` |\n| `payload_too_large` | 413 | `fix_request` |\n| `acceptance_items_incomplete` | 422 | `fix_request` |\n| `ambiguous_artifact` | 422 | `fix_request` |\n| `audit_view_required` | 422 | `fix_request` |\n| `budget_exceeds_parent` | 422 | `fix_request` |\n| `checksum_mismatch` | 422 | `fix_request` |\n| `context_doc_not_found` | 422 | `fix_request` |\n| `continuation_required` | 422 | `fix_request` |\n| `duplicate_key_in_batch` | 422 | `fix_request` |\n| `export_format_unsupported` | 422 | `fix_request` |\n| `insecure_target_url` | 422 | `fix_request` |\n| `invalid_address` | 422 | `fix_request` |\n| `invalid_dependency` | 422 | `fix_request` |\n| `invalid_filter` | 422 | `fix_request` |\n| `invalid_filter_operator` | 422 | `fix_request` |\n| `invalid_filter_value` | 422 | `fix_request` |\n| `invalid_handoff_brief` | 422 | `fix_request` |\n| `invalid_json_patch` | 422 | `fix_request` |\n| `invalid_last_event_id` | 422 | `fix_request` |\n| `invalid_section` | 422 | `fix_request` |\n| `invalid_sort` | 422 | `fix_request` |\n| `invalid_stream_filter` | 422 | `fix_request` |\n| `invalid_target_url` | 422 | `fix_request` |\n| `invalid_task_status` | 422 | `fix_request` |\n| `invalid_verification_status` | 422 | `fix_request` |\n| `limit_too_large` | 422 | `fix_request` |\n| `namespace_not_registered` | 422 | `fix_request` |\n| `notice_template_incomplete` | 422 | `fix_request` |\n| `offset_not_supported` | 422 | `fix_request` |\n| `policy_loosening_not_allowed` | 422 | `fix_request` |\n| `policy_schema_violation` | 422 | `fix_request` |\n| `policy_size_limit` | 422 | `fix_request` |\n| `quota_exceeds_parent` | 422 | `fix_request` |\n| `review_feedback_required` | 422 | `fix_request` |\n| `review_note_required` | 422 | `fix_request` |\n| `rollup_summary_required` | 422 | `fix_request` |\n| `scope_unknown` | 422 | `fix_request` |\n| `subject_identifier_required` | 422 | `fix_request` |\n| `task_tree_too_deep` | 422 | `fix_request` |\n| `tenant_cycle` | 422 | `fix_request` |\n| `tenant_depth_exceeded` | 422 | `fix_request` |\n| `tenant_type_invalid_parent` | 422 | `fix_request` |\n| `too_many_headers` | 422 | `fix_request` |\n| `ttl_exceeds_parent` | 422 | `fix_request` |\n| `unknown_principal` | 422 | `fix_request` |\n| `url_not_allowed` | 422 | `fix_request` |\n| `validation_error` | 422 | `fix_request` |\n| `google_audience_mismatch` | 401 | `reauth` |\n| `google_identity_mismatch` | 401 | `reauth` |\n| `google_token_invalid` | 401 | `reauth` |\n| `human_session_required` | 401 | `reauth` |\n| `invalid_api_key` | 401 | `reauth` |\n| `invalid_credentials` | 401 | `reauth` |\n| `token_expired` | 401 | `reauth` |\n| `token_invalid` | 401 | `reauth` |\n| `token_revoked` | 401 | `reauth` |\n| `unauthorized` | 401 | `reauth` |\n| `renewal_requires_parent` | 403 | `reauth` |\n| `NAMESPACE_FORBIDDEN` | 403 | `abandon` |\n| `acceptance_locked` | 403 | `abandon` |\n| `acceptance_self_report` | 403 | `abandon` |\n| `depth_limit_exceeded` | 403 | `abandon` |\n| `forbidden` | 403 | `abandon` |\n| `issue_not_permitted` | 403 | `abandon` |\n| `not_assignee` | 403 | `abandon` |\n| `not_lease_holder` | 403 | `abandon` |\n| `review_sealed` | 403 | `abandon` |\n| `role_mismatch` | 403 | `abandon` |\n| `role_not_assignable` | 403 | `abandon` |\n| `root_token_data_access_denied` | 403 | `abandon` |\n| `scope_escalation` | 403 | `abandon` |\n| `self_vote_forbidden` | 403 | `abandon` |\n| `signup_disabled` | 403 | `abandon` |\n| `lease_not_found` | 404 | `abandon` |\n| `not_found` | 404 | `abandon` |\n| `already_registered` | 409 | `abandon` |\n| `circuit_not_open` | 409 | `abandon` |\n| `claim_already_refuted` | 409 | `abandon` |\n| `document_archived` | 409 | `abandon` |\n| `escape_closed` | 409 | `abandon` |\n| `external_action_error` | 409 | `abandon` |\n| `id_collision` | 409 | `abandon` |\n| `invalid_state_transition` | 409 | `abandon` |\n| `invalid_transition` | 409 | `abandon` |\n| `lease_conflict` | 409 | `abandon` |\n| `lease_lost` | 409 | `abandon` |\n| `lineage_unavailable` | 409 | `abandon` |\n| `link_exists` | 409 | `abandon` |\n| `nothing_to_probe` | 409 | `abandon` |\n| `proposal_not_pending` | 409 | `abandon` |\n| `queue_ticket_expired` | 409 | `abandon` |\n| `request_closed` | 409 | `abandon` |\n| `retention_not_met` | 409 | `abandon` |\n| `sample_unavailable` | 409 | `abandon` |\n| `stale_fencing_token` | 409 | `abandon` |\n| `task_not_reviewable` | 409 | `abandon` |\n| `token_already_expired` | 409 | `abandon` |\n| `gone` | 410 | `abandon` |\n| `reviewer_conflict` | 422 | `abandon` |\n| `share_cross_root_not_allowed` | 422 | `abandon` |\n| `budget_exceeded` | 402 | `escalate_human` |\n| `quota_exceeded` | 402 | `escalate_human` |\n| `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` |\n| `feature_disabled` | 403 | `escalate_human` |\n| `tenant_deleting` | 403 | `escalate_human` |\n| `tenant_suspended` | 403 | `escalate_human` |\n| `backup_chain_broken` | 409 | `escalate_human` |\n| `backups_not_configured` | 409 | `escalate_human` |\n| `confirmation_required` | 409 | `escalate_human` |\n| `escalated_to_human` | 409 | `escalate_human` |\n| `incident_not_confirmed` | 409 | `escalate_human` |\n| `staging_not_configured` | 409 | `escalate_human` |\n| `taint_blocked` | 409 | `escalate_human` |\n| `tree_quota_exceeded` | 409 | `escalate_human` |\n| `budget_exhausted` | 429 | `escalate_human` |\n| `circuit_open` | 429 | `escalate_human` |\n| `mcp_not_configured` | 500 | `escalate_human` |\n| `admin_disabled` | 503 | `escalate_human` |\n| `google_login_not_configured` | 503 | `escalate_human` |\n",
      "type": "markdown"
     }
    ],
@@ -3181,6 +3181,33 @@
        "summary": "Clear a runaway-loop circuit breaker for one token (owner)"
       },
       {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "part_of",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "namespace",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "path": "/v1/human/document-parts",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Hand-split documents read as one (frontmatter part_of / part_index)"
+      },
+      {
        "body": [
         {
          "description": "On 409 version_conflict include current_content (bodies <= 64 KiB)",
@@ -4056,6 +4083,292 @@
        "summary": "Reject a proposal"
       },
       {
+       "body": [
+        {
+         "description": "",
+         "name": "note",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "scope_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/human/quality/circuit/{scope_key}/close",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Close a domain's quality circuit (the next change is supervised)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "task_key",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "claim_id",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "source",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "severity",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "description",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "root_gate",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/human/quality/escapes",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Record a defect that escaped"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "status",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "fix_ref",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "waive_reason",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "root_gate",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "escape_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/human/quality/escapes/{escape_id}/resolve",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Close an escape: FIXED with the gate fix, or WAIVED with a reason"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/human/quality/poison",
+       "responses": [
+        "200"
+       ],
+       "summary": "Planted defects and whether they were caught"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "task",
+         "required": true,
+         "type": "TaskCreateRequest"
+        },
+        {
+         "description": "",
+         "name": "defect_description",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "expected_gate",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/human/quality/poison",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Plant a defect: a normal task whose mark agents never see"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "window",
+         "required": false,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/human/quality/report",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Quality report per domain"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "assigned",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "verdict",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "path": "/v1/human/quality/samples",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The sampling queue"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "verdict",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "root_gate",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "severity",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "description",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "sample_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/human/quality/samples/{sample_id}/verdict",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Judge a sample; DEFECT records an escape"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "scope_type",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "scope_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "tier",
+         "required": true,
+         "type": "integer"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [],
+       "path": "/v1/human/quality/tiers",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Set a domain's autonomy tier (promotion is a person's act)"
+      },
+      {
        "body": [],
        "description": "",
        "method": "POST",
@@ -4265,6 +4578,18 @@
          "name": "feedback",
          "required": false,
          "type": "string | null"
+        },
+        {
+         "description": "Per acceptance item results; an approval must cover every item with PASS",
+         "name": "items",
+         "required": false,
+         "type": "AuditItemResult[]"
+        },
+        {
+         "description": "Spec clauses the verdict rests on; required for a rejection when quality control is enforced",
+         "name": "cited_clauses",
+         "required": false,
+         "type": "string[]"
         },
         {
          "description": "",
@@ -5440,6 +5765,261 @@
        "body": [
         {
          "description": "",
+         "name": "external_ref",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "commit_sha",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "related_doc_key",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "related_task_key",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/quality/claims",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Report a change made outside AgentGraph (idempotent per ref and commit)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "verdict",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "evidence",
+         "required": false,
+         "type": "object"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "claim_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/quality/claims/{claim_id}/verify",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Verify or refute a change claim (AUDITOR tokens)"
+      },
+      {
+       "body": [
+        {
+         "description": "The task (key or canonical id)",
+         "name": "task_key",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "task_id",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "claim_id",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "gate_kind",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "status",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "source",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "{run_url, commit_sha, summary, counts:{passed,failed}}; ACCEPTANCE also carries items:[{item_id, result}]",
+         "name": "evidence",
+         "required": false,
+         "type": "object"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/quality/gate-results",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Report a machine gate result for a task or a change claim"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "window",
+         "required": false,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/quality/report",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Quality report per domain (workspace key or people)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "verdict",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "path": "/v1/quality/samples",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "RISK samples open to AUDITOR tokens, and your own"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "sample_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/quality/samples/{sample_id}/claim",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Claim a RISK sample (AUDITOR)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "verdict",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "root_gate",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "severity",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "description",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "sample_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/quality/samples/{sample_id}/verdict",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Judge a sample you claimed"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "ref",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/quality/tasks/{ref}/audit-view",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The audit view of a task: spec, output and gates, not the author's account"
+      }
+     ],
+     "group": "quality"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [
+        {
+         "description": "",
          "name": "query",
          "required": false,
          "type": "string | null"
@@ -6607,6 +7187,12 @@
          "type": "string[]"
         },
         {
+         "description": "Acceptance items the change is judged against; locked at the first claim",
+         "name": "acceptance",
+         "required": false,
+         "type": "AcceptanceItem[]"
+        },
+        {
          "description": "",
          "name": "agent",
          "required": false,
@@ -6628,6 +7214,39 @@
         "422"
        ],
        "summary": "Create a task"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "acceptance",
+         "required": true,
+         "type": "AcceptanceItem[]"
+        },
+        {
+         "description": "",
+         "name": "expected_version",
+         "required": false,
+         "type": "integer | null"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "ref",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tasks/{ref}/acceptance",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Replace a task's acceptance items (after the first claim: creator only)"
       },
       {
        "body": [],
@@ -7094,6 +7713,18 @@
          "name": "feedback",
          "required": false,
          "type": "string | null"
+        },
+        {
+         "description": "Per acceptance item results; an approval must cover every item with PASS",
+         "name": "items",
+         "required": false,
+         "type": "AuditItemResult[]"
+        },
+        {
+         "description": "Spec clauses the verdict rests on; required for a rejection when quality control is enforced",
+         "name": "cited_clauses",
+         "required": false,
+         "type": "string[]"
         },
         {
          "description": "",
@@ -9221,6 +9852,14 @@
      {
       "action": "fix_request_then_resend",
       "class": "fix_request",
+      "code": "auto_release_cap_reached",
+      "http": 409,
+      "retryable": false,
+      "rule": "Hand off to REVIEWING; an audit releases it today."
+     },
+     {
+      "action": "fix_request_then_resend",
+      "class": "fix_request",
       "code": "claim_required",
       "http": 409,
       "retryable": false,
@@ -9325,6 +9964,22 @@
      {
       "action": "fix_request_then_resend",
       "class": "fix_request",
+      "code": "quality_circuit_open",
+      "http": 409,
+      "retryable": false,
+      "rule": "The domain's circuit is open: hand off to REVIEWING."
+     },
+     {
+      "action": "fix_request_then_resend",
+      "class": "fix_request",
+      "code": "quality_gates_unmet",
+      "http": 409,
+      "retryable": false,
+      "rule": "Report the gates in details.missing as PASS, then retry."
+     },
+     {
+      "action": "fix_request_then_resend",
+      "class": "fix_request",
       "code": "task_exists",
       "http": 409,
       "retryable": false,
@@ -9373,10 +10028,26 @@
      {
       "action": "fix_request_then_resend",
       "class": "fix_request",
+      "code": "acceptance_items_incomplete",
+      "http": 422,
+      "retryable": false,
+      "rule": "Give a PASS result for every acceptance item."
+     },
+     {
+      "action": "fix_request_then_resend",
+      "class": "fix_request",
       "code": "ambiguous_artifact",
       "http": 422,
       "retryable": false,
       "rule": "Provide artifact_text or artifact_uri, not both."
+     },
+     {
+      "action": "fix_request_then_resend",
+      "class": "fix_request",
+      "code": "audit_view_required",
+      "http": 422,
+      "retryable": false,
+      "rule": "Call get_audit_view, then resend."
      },
      {
       "action": "fix_request_then_resend",
@@ -9813,6 +10484,22 @@
      {
       "action": "abandon_and_release_local_state",
       "class": "abandon",
+      "code": "acceptance_locked",
+      "http": 403,
+      "retryable": false,
+      "rule": "Acceptance is locked after the first claim; ask the task's creator or a person."
+     },
+     {
+      "action": "abandon_and_release_local_state",
+      "class": "abandon",
+      "code": "acceptance_self_report",
+      "http": 403,
+      "retryable": false,
+      "rule": "The executor cannot report its own acceptance; another agent or a person must."
+     },
+     {
+      "action": "abandon_and_release_local_state",
+      "class": "abandon",
       "code": "depth_limit_exceeded",
       "http": 403,
       "retryable": false,
@@ -9933,10 +10620,34 @@
      {
       "action": "abandon_and_release_local_state",
       "class": "abandon",
+      "code": "circuit_not_open",
+      "http": 409,
+      "retryable": false,
+      "rule": "The domain's circuit is already closed."
+     },
+     {
+      "action": "abandon_and_release_local_state",
+      "class": "abandon",
+      "code": "claim_already_refuted",
+      "http": 409,
+      "retryable": false,
+      "rule": "The claim was refuted; report a new commit."
+     },
+     {
+      "action": "abandon_and_release_local_state",
+      "class": "abandon",
       "code": "document_archived",
       "http": 409,
       "retryable": false,
       "rule": "Give up, or ask for restore_document."
+     },
+     {
+      "action": "abandon_and_release_local_state",
+      "class": "abandon",
+      "code": "escape_closed",
+      "http": 409,
+      "retryable": false,
+      "rule": "The escape is already FIXED or WAIVED."
      },
      {
       "action": "abandon_and_release_local_state",
@@ -10041,6 +10752,14 @@
       "http": 409,
       "retryable": false,
       "rule": "Give up this action."
+     },
+     {
+      "action": "abandon_and_release_local_state",
+      "class": "abandon",
+      "code": "sample_unavailable",
+      "http": 409,
+      "retryable": false,
+      "rule": "Someone else took the sample or it was already judged."
      },
      {
       "action": "abandon_and_release_local_state",
@@ -10238,6 +10957,10 @@
       "meaning": "Fields the namespace readme requires are missing."
      },
      {
+      "code": "gate_source_downgraded",
+      "meaning": "Only a trusted runner reports RUNNER results; recorded as AGENT_CLAIM."
+     },
+     {
       "code": "keys_rotated",
       "meaning": "A restored workspace has new keys; rotate them and re-issue agent tokens."
      },
@@ -10264,6 +10987,10 @@
      {
       "code": "output_missing",
       "meaning": "Nothing was written to the task's output_to since the claim."
+     },
+     {
+      "code": "promotion_below_threshold",
+      "meaning": "The domain was promoted below the promotion threshold."
      },
      {
       "code": "quota_80_percent",

@@ -754,8 +754,8 @@ With `CHILD_TOKEN_ISSUANCE=true`, `POST /v1/tokens` / MCP `issue_child_token`
 issues a token that only narrows its issuer: scopes, read and write namespaces,
 expiry and budget are subsets, the effective grant is recomputed along the chain
 on every request, depth is limited (`max_token_depth`, default 2) and whole
-trees are capped (20 active per branch, 100 per workspace). Children live one
-hour by default (branches 30 days). `POST /v1/tokens/{id}/revoke` always
+trees are capped (20 active per branch, 100 per workspace). Children live 12
+hours by default, at most 72 (branches 30 days, at most 90). `POST /v1/tokens/{id}/revoke` always
 cascades to the subtree, releases its leases (`holder_revoked`), ends its long
 polls with 401 `token_revoked`, and with `taint_writes_since` taints what the
 subtree wrote and everything derived from it. `POST /v1/tokens/{id}/renew` is
@@ -960,6 +960,26 @@ agents call `get_orientation(since=<cursor or version>)` for only what changed.
 
 **Event log partitions.** The event log is partitioned by shard (namespace),
 16 hash partitions on one Postgres; the index worker serves shards in turn.
+
+Agent tokens also take a **permission delta** on their role package
+(`scope_add` / `scope_remove`, set by an admin or in the console's Edit dialog):
+effective permissions are (package + add) − remove, intersected with the chain's
+scopes. Children inherit the delta, and removals accumulate down the chain.
+`get_token` shows `permission_delta` and `effective_permissions`.
+
+## Quality control
+
+Gate results (`record_gate_result`), independent audits (`get_audit_view`, then
+`review_task` with per-item results and cited clauses), change claims for work
+outside AgentGraph (`report_change_claim`, `verify_change_claim`), per-domain
+autonomy tiers, sampling, escapes, planted defects and a circuit breaker are
+recorded in every workspace. With `QUALITY_CONTROL=true` the release matrix is
+enforced: tier 0 (the default) needs a person to release a change, tier 1 an
+audit from the audit view, tier 2 lets the executor release it when CI, tests
+and runner-reported acceptance passed. People manage tiers, samples, escapes and
+planted defects under `/v1/human/quality/*`; `GET /v1/quality/report` computes
+escape rate, gate pass rate, audit reject rate and catch rate per domain.
+See `docs/PRD_PROGRESS.md` for the rules and error codes.
 
 ## Backups, restores and incident response
 

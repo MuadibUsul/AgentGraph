@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import agent_guide, services
+from app import schemas as q_schemas
 from app.auth import Principal, ensure_namespace, get_principal, require_permission
 from app.database import get_db
 from app.error_registry import protocol_docs
@@ -1213,6 +1214,116 @@ async def ack_inbox(
     from app.services import inbox
 
     return await inbox.ack(session, principal, body.up_to_event_seq)
+
+
+# -------------------------------------------------------- quality control 1.0
+
+
+@router.post("/quality/gate-results", status_code=201,
+             summary="Report a machine gate result for a task or a change claim")
+async def record_gate_result(
+    body: q_schemas.GateResultRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.record_gate_result(session, principal, body)
+
+
+@router.get("/quality/tasks/{ref}/audit-view",
+            summary="The audit view of a task: spec, output and gates, not the author's account")
+async def get_audit_view(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.audit_view(session, principal, ref)
+
+
+@router.put("/tasks/{ref}/acceptance",
+            summary="Replace a task's acceptance items (after the first claim: creator only)")
+async def update_task_acceptance(
+    ref: str,
+    body: q_schemas.AcceptanceUpdateRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.update_acceptance(session, principal, ref, body)
+
+
+@router.post("/quality/claims", status_code=201,
+             summary="Report a change made outside AgentGraph (idempotent per ref and commit)")
+async def report_change_claim(
+    body: q_schemas.ChangeClaimRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.report_claim(session, principal, body)
+
+
+@router.post("/quality/claims/{claim_id}/verify",
+             summary="Verify or refute a change claim (AUDITOR tokens)")
+async def verify_change_claim(
+    claim_id: uuid.UUID,
+    body: q_schemas.ChangeClaimVerifyRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.verify_claim(session, principal, claim_id, body)
+
+
+@router.get("/quality/samples", summary="RISK samples open to AUDITOR tokens, and your own")
+async def list_quality_samples(
+    verdict: Literal["PENDING", "OK", "DEFECT"] | None = Query(default="PENDING"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.list_samples(session, principal, assigned=None, verdict=verdict)
+
+
+@router.post("/quality/samples/{sample_id}/claim", summary="Claim a RISK sample (AUDITOR)")
+async def claim_quality_sample(
+    sample_id: uuid.UUID,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.claim_sample(session, principal, sample_id)
+
+
+@router.post("/quality/samples/{sample_id}/verdict", summary="Judge a sample you claimed")
+async def quality_sample_verdict(
+    sample_id: uuid.UUID,
+    body: q_schemas.SampleVerdictRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.sample_verdict(session, principal, sample_id, body)
+
+
+@router.get("/quality/report", summary="Quality report per domain (workspace key or people)")
+async def quality_report(
+    window: Literal["7d", "30d"] = Query(default="30d"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.report(session, principal, window)
 
 
 # ------------------------------------------------------------------ phase 3

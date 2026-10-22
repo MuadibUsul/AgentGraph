@@ -29,6 +29,10 @@ def feature_flags() -> dict[str, dict[str, Any]]:
         "child_token_issuance": {
             "enabled": settings.child_token_issuance, "setting": "CHILD_TOKEN_ISSUANCE",
             "affects": ["issue_child_token", "POST /v1/tokens"]},
+        "quality_control": {
+            "enabled": settings.quality_control, "setting": "QUALITY_CONTROL",
+            "affects": ["review_task: tiers, gates, audit view, cited clauses",
+                        "handoff_task next_status=DONE (tier 2 auto release)"]},
         "budget_enforcement": {
             "enabled": settings.budget_mode == "enforce", "setting": "BUDGET_MODE",
             "value": settings.budget_mode,

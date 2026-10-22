@@ -128,6 +128,21 @@ class OutputTo(StrictModel):
     doc_key_pattern: str | None = Field(default=None, max_length=256)
 
 
+class AcceptanceItem(StrictModel):
+    """One acceptance item (quality control 1.0 §3.1)."""
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    text: str = Field(min_length=1, max_length=2_000)
+    kind: Literal["AUTO", "MANUAL"] = "MANUAL"
+
+
+def _unique_acceptance(items: list[AcceptanceItem]) -> list[AcceptanceItem]:
+    ids = [item.id for item in items]
+    if len(ids) != len(set(ids)):
+        raise ValueError("acceptance item ids must be unique")
+    return items
+
+
 class TaskCreateRequest(StrictModel):
     task_key: str | None = Field(
         default=None, pattern=_KEY_PATTERN + "$", max_length=128
@@ -156,8 +171,16 @@ class TaskCreateRequest(StrictModel):
     kind: Literal["work", "question", "escalation", "peer_review"] = "work"
     require_continuation: bool = False
     mentions: list[str] = Field(default_factory=list, max_length=20)
+    acceptance: list[AcceptanceItem] = Field(
+        default_factory=list, max_length=50,
+        description="Acceptance items the change is judged against; locked at the first claim")
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
+
+    @field_validator("acceptance")
+    @classmethod
+    def _acceptance(cls, value: list[AcceptanceItem]) -> list[AcceptanceItem]:
+        return _unique_acceptance(value)
 
     @field_validator("agent")
     @classmethod
@@ -285,9 +308,21 @@ REVIEW_APPROVE_STATUSES: tuple[str, ...] = ("DONE", "HANDOFF", "READY")
 REVIEW_REJECT_STATUSES: tuple[str, ...] = ("READY", "IN_PROGRESS")
 
 
+class AuditItemResult(StrictModel):
+    item_id: str = Field(min_length=1, max_length=64)
+    result: Literal["PASS", "FAIL"]
+
+
 class TaskReviewRequest(StrictModel):
     decision: Literal["approve", "reject"]
     feedback: str | None = Field(default=None, max_length=8_000)
+    items: list[AuditItemResult] = Field(
+        default_factory=list, max_length=50,
+        description="Per acceptance item results; an approval must cover every item with PASS")
+    cited_clauses: list[str] = Field(
+        default_factory=list, max_length=50,
+        description="Spec clauses the verdict rests on; required for a rejection when "
+                    "quality control is enforced")
     expected_version: int | None = Field(default=None, ge=1)
     next_status: str | None = Field(
         default=None,
@@ -861,6 +896,8 @@ class TaskSummary(BaseModel):
 
 class TaskOut(TaskSummary):
     description: str | None = None
+    acceptance: list[dict[str, Any]] = Field(default_factory=list)
+    acceptance_locked: bool = False
     input_context: dict[str, Any] = Field(default_factory=dict)
     output_artifact: dict[str, Any] = Field(default_factory=dict)
     handoff_brief: dict[str, Any] | None = None
@@ -2473,3 +2510,92 @@ class ReindexRequest(StrictModel):
 
 class InboxAckRequest(StrictModel):
     up_to_event_seq: int = Field(ge=0, description="Acknowledge everything up to this seq")
+
+
+# ----------------------------------------------------- quality control 1.0
+
+GateKind = Literal["CI", "TESTS", "ACCEPTANCE", "SPEC_LINT", "CUSTOM"]
+
+
+class AcceptanceUpdateRequest(StrictModel):
+    acceptance: list[AcceptanceItem] = Field(max_length=50)
+    expected_version: int | None = Field(default=None, ge=1)
+
+    @field_validator("acceptance")
+    @classmethod
+    def _acceptance(cls, value: list[AcceptanceItem]) -> list[AcceptanceItem]:
+        return _unique_acceptance(value)
+
+
+class GateResultRequest(StrictModel):
+    task_key: str | None = Field(default=None, max_length=128,
+                                 description="The task (key or canonical id)")
+    task_id: str | None = Field(default=None, max_length=64)
+    claim_id: uuid.UUID | None = None
+    gate_kind: GateKind
+    status: Literal["PASS", "FAIL", "ERROR", "SKIPPED"]
+    source: Literal["RUNNER", "AGENT_CLAIM"] = "AGENT_CLAIM"
+    evidence: dict[str, Any] = Field(
+        default_factory=dict,
+        description="{run_url, commit_sha, summary, counts:{passed,failed}}; ACCEPTANCE "
+                    "also carries items:[{item_id, result}]")
+
+    @model_validator(mode="after")
+    def _one_unit(self) -> GateResultRequest:
+        task = self.task_key or self.task_id
+        if bool(task) == bool(self.claim_id):
+            raise ValueError("name exactly one of task_key / task_id or claim_id")
+        if len(json.dumps(self.evidence, default=str)) > 16_000:
+            raise ValueError("evidence is limited to 16 KB")
+        return self
+
+
+class ChangeClaimRequest(StrictModel):
+    external_ref: str = Field(min_length=1, max_length=2_000)
+    commit_sha: str = Field(min_length=7, max_length=64, pattern=r"^[0-9a-fA-F]+$")
+    related_doc_key: str | None = Field(default=None, max_length=256)
+    related_task_key: str | None = Field(default=None, max_length=128)
+
+
+class ChangeClaimVerifyRequest(StrictModel):
+    verdict: Literal["VERIFIED", "REFUTED"]
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class SampleVerdictRequest(StrictModel):
+    verdict: Literal["OK", "DEFECT"]
+    root_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC", "NONE"] | None = None
+    severity: Literal["S1", "S2", "S3"] = "S3"
+    description: str | None = Field(default=None, max_length=8_000)
+
+
+class AutonomyTierRequest(StrictModel):
+    scope_type: Literal["NAMESPACE", "REPO_PATH"]
+    scope_key: str = Field(min_length=1, max_length=512)
+    tier: int = Field(ge=0, le=2)
+
+
+class CircuitCloseRequest(StrictModel):
+    note: str = Field(min_length=1, max_length=2_000)
+
+
+class EscapeCreateRequest(StrictModel):
+    task_key: str | None = Field(default=None, max_length=128)
+    claim_id: uuid.UUID | None = None
+    source: Literal["PROD_INCIDENT", "HUMAN_SAMPLE", "EXTERNAL_REPORT"] = "PROD_INCIDENT"
+    severity: Literal["S1", "S2", "S3"]
+    description: str = Field(min_length=1, max_length=8_000)
+    root_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC", "NONE"] | None = None
+
+
+class EscapeResolveRequest(StrictModel):
+    status: Literal["FIXED", "WAIVED"]
+    fix_ref: str | None = Field(default=None, max_length=2_000)
+    waive_reason: str | None = Field(default=None, max_length=2_000)
+    root_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC", "NONE"] | None = None
+
+
+class PoisonTaskRequest(StrictModel):
+    task: TaskCreateRequest
+    defect_description: str = Field(min_length=1, max_length=8_000)
+    expected_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC"]

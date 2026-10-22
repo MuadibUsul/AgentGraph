@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import schemas as q_schemas
 from app import services
 from app.auth import Principal, get_human_account, get_human_principal, get_human_writer
 from app.database import get_db
@@ -960,3 +961,125 @@ async def merge_legacy_identity(
     from app.services import directory
 
     return await directory.merge_legacy_identity(session, principal, body.legacy, body.agent_id)
+
+
+# -------------------------------------------------------- quality control 1.0
+
+
+@router.put("/quality/tiers", summary="Set a domain's autonomy tier (promotion is a person's act)")
+async def set_quality_tier(
+    body: q_schemas.AutonomyTierRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.set_tier(session, principal, body)
+
+
+@router.post("/quality/circuit/{scope_key:path}/close",
+             summary="Close a domain's quality circuit (the next change is supervised)")
+async def close_quality_circuit(
+    scope_key: str,
+    body: q_schemas.CircuitCloseRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.close_circuit(session, principal, scope_key, body.note)
+
+
+@router.get("/quality/samples", summary="The sampling queue")
+async def list_human_samples(
+    assigned: str | None = Query(default="human", max_length=256),
+    verdict: str | None = Query(default="PENDING", pattern="^(PENDING|OK|DEFECT)$"),
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.list_samples(session, principal, assigned=assigned, verdict=verdict)
+
+
+@router.post("/quality/samples/{sample_id}/verdict",
+             summary="Judge a sample; DEFECT records an escape")
+async def human_sample_verdict(
+    sample_id: uuid.UUID,
+    body: q_schemas.SampleVerdictRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.sample_verdict(session, principal, sample_id, body)
+
+
+@router.post("/quality/escapes", status_code=201, summary="Record a defect that escaped")
+async def create_quality_escape(
+    body: q_schemas.EscapeCreateRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.create_escape(session, principal, body)
+
+
+@router.post("/quality/escapes/{escape_id}/resolve",
+             summary="Close an escape: FIXED with the gate fix, or WAIVED with a reason")
+async def resolve_quality_escape(
+    escape_id: uuid.UUID,
+    body: q_schemas.EscapeResolveRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.resolve_escape(session, principal, escape_id, body)
+
+
+@router.post("/quality/poison", status_code=201,
+             summary="Plant a defect: a normal task whose mark agents never see")
+async def create_quality_poison(
+    body: q_schemas.PoisonTaskRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.create_poison(session, principal, body)
+
+
+@router.get("/quality/poison", summary="Planted defects and whether they were caught")
+async def list_quality_poison(
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.list_poison(session, principal)
+
+
+@router.get("/quality/report", summary="Quality report per domain")
+async def human_quality_report(
+    window: str = Query(default="30d", pattern="^(7d|30d)$"),
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import quality
+
+    return await quality.report(session, principal, window)
+
+
+@router.get("/document-parts",
+            summary="Hand-split documents read as one (frontmatter part_of / part_index)")
+async def human_document_parts(
+    part_of: str = Query(min_length=1, max_length=256),
+    namespace: str | None = Query(default=None, max_length=64),
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.documents import document_parts
+
+    return await document_parts(session, principal, part_of, namespace=namespace)

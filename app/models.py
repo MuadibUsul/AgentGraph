@@ -622,6 +622,11 @@ class CollabTask(Base):
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     context_versions_pinned: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     done_definition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Quality control 1.0: acceptance items, locked at the first claim (v3.32).
+    acceptance: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    acceptance_locked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"))
     output_to: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     required_role: Mapped[str | None] = mapped_column(String(32), nullable=True)

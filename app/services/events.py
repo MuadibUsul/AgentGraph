@@ -101,6 +101,9 @@ EVENT_TYPES: dict[str, str] = {
     "escalation.reminder": "An escalation is still open (targets: the routed human).",
     "task.children_done": "Every subtask of a task is done (targets: the lead).",
     "task.continuation_written": "A continuation pack was written for a task.",
+    "quality.circuit_opened": "A domain's quality circuit opened; its tier is lowered by one.",
+    "quality.tier_demoted": "A domain's autonomy tier was lowered after escapes.",
+    "quality.claim_refuted": "A change claim was refuted by an auditor or a person.",
     "security.incident_notice": "A security incident notice for this organisation "
                                 "(targets: the notified owners).",
     "timeline.*": "Application event that repeats a row change (e.g. timeline.task_claimed).",

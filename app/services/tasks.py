@@ -59,7 +59,7 @@ from app.schemas import (
     TaskRenewRequest,
     TaskReviewRequest,
 )
-from app.services import access_log, agent_onboarding, collab
+from app.services import access_log, agent_onboarding, collab, quality
 from app.services import addresses as address_service
 from app.services import leases as lease_service
 from app.services.common import (
@@ -420,6 +420,7 @@ async def _create_task_core(
         updated_at=utcnow(),
     )
     collab.apply_new_fields(task, request)
+    task.acceptance = [item.model_dump() for item in getattr(request, "acceptance", None) or []]
     if parent is not None:
         task.parent_task_id = parent.id
         task.parent_task_key = parent.task_key
@@ -596,6 +597,7 @@ async def claim_task(
     ttl = lease_service.ttl_for(request.lease_ttl_seconds, request.lease_seconds)
     task.status = TaskStatus.IN_PROGRESS
     task.claimed_by = agent
+    task.acceptance_locked = True  # quality control 1.0 §3.1
     task.lease_owner = agent
     task.lease_expires_at = now + timedelta(seconds=ttl)
     task.version += 1
@@ -896,10 +898,14 @@ async def handoff_task(
         task.review_feedback = None
         task.reviewed_by = None
 
+    auto_release: dict[str, Any] | None = None
     if request.next_status == "DONE" and not principal.is_human:
-        raise Forbidden(
-            "agents must hand off to REVIEWING; only a human can mark a task DONE"
-        )
+        if not quality.enforced():
+            raise Forbidden(
+                "agents must hand off to REVIEWING; only a human can mark a task DONE"
+            )
+        # Quality control tier 2: gates passed, acceptance from a trusted runner.
+        auto_release = await quality.check_auto_release(session, principal, task)
     if request.human_feedback is not None and not principal.is_human:
         raise Forbidden("human_feedback is reserved for human reviewers")
     before = task_snapshot(task)
@@ -942,6 +948,8 @@ async def handoff_task(
     )
     if task.status is TaskStatus.DONE:
         await _release_dependents(session, task, principal)
+        await quality.released(session, principal.workspace.id, task,
+                               path="AUTO" if auto_release else "HUMAN", info=auto_release)
 
     next_task: CollabTask | None = None
     if request.create_next is not None:
@@ -1020,6 +1028,7 @@ async def review_task(
         )
     _check_version(task, request.expected_version)
     _check_lease(task, agent)
+    audit = await quality.before_review(session, principal, task, request, agent)
     before = task_snapshot(task)
     human_decision = principal.is_human and principal.is_commander
     escalated = False
@@ -1032,7 +1041,7 @@ async def review_task(
         # review_feedback means "not yet addressed"; an approval leaves none.
         task.review_feedback = None
         task.review_history = _resolve_review_history(task.review_history)
-        next_status = request.next_status or "DONE"
+        next_status = audit["next_status"] or request.next_status or "DONE"
         task.status = TaskStatus(next_status)
         if human_decision:
             task.human_feedback = request.feedback
@@ -1142,6 +1151,7 @@ async def review_task(
         },
         namespace=task.namespace,
     )
+    await quality.after_review(session, principal, task, request, audit)
     await session.commit()
     return TaskActionResponse(
         task=task_out(task),

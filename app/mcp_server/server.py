@@ -761,10 +761,14 @@ async def create_task(
     kind: Literal["work", "question", "escalation", "peer_review"] = "work",
     require_continuation: bool = False,
     mentions: list[str] | None = None,
+    acceptance: list[dict[str, Any]] | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Create a task for an agent role (EXECUTOR/ANALYST/AUDITOR).
+
+    acceptance [{id, text, kind: AUTO|MANUAL}] lists what the change is judged
+    against; it locks at the first claim and an approval must PASS every item.
 
     Pass pointers, not copies: context_docs [{namespace, doc_key, version?}]
     are pinned at the first claim and returned with it; done_definition and
@@ -801,6 +805,7 @@ async def create_task(
                 kind=kind,
                 require_continuation=require_continuation,
                 mentions=mentions or [],
+                acceptance=acceptance or [],
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -822,6 +827,8 @@ async def review_task(
         str | None,
         Field(description=TaskReviewRequest.model_fields["next_status"].description),
     ] = None,
+    items: list[dict[str, Any]] | None = None,
+    cited_clauses: list[str] | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -829,7 +836,10 @@ async def review_task(
 
     AWAITING_HUMAN and ESCALATED_TO_HUMAN require an actual human account;
     workspace automation keys cannot resolve them. Rejections increment the
-    ping-pong counter and may escalate to human.
+    ping-pong counter and may escalate to human. items [{item_id, result:
+    PASS|FAIL}] judge each acceptance item (an approval passes them all);
+    cited_clauses name the spec clauses a rejection rests on. Read
+    get_audit_view first: under quality control an approval needs it.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -839,6 +849,8 @@ async def review_task(
                 feedback=feedback,
                 expected_version=expected_version,
                 next_status=next_status,
+                items=items or [],
+                cited_clauses=cited_clauses or [],
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -1769,6 +1781,105 @@ async def ack_inbox(up_to_event_seq: Annotated[int, Field(ge=0)]) -> dict[str, A
         principal = await _principal_for_call(session)
         try:
             result = await inbox.ack(session, principal, up_to_event_seq)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="record_gate_result")
+async def record_gate_result(
+    gate_kind: Literal["CI", "TESTS", "ACCEPTANCE", "SPEC_LINT", "CUSTOM"],
+    status: Literal["PASS", "FAIL", "ERROR", "SKIPPED"],
+    task_key: str | None = None,
+    claim_id: uuid.UUID | None = None,
+    source: Literal["RUNNER", "AGENT_CLAIM"] = "AGENT_CLAIM",
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Report a machine gate result for a task (task_key) or a change claim
+    (claim_id). evidence: {run_url, commit_sha, summary, counts:{passed,
+    failed}}; ACCEPTANCE adds items:[{item_id, result}] covering every
+    acceptance item. The executor may not report its own ACCEPTANCE (403
+    acceptance_self_report). The latest result per gate kind counts."""
+    from app.schemas import GateResultRequest
+    from app.services import quality
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = GateResultRequest(task_key=task_key, claim_id=claim_id, gate_kind=gate_kind,
+                                     status=status, source=source, evidence=evidence or {})
+            result = await quality.record_gate_result(session, principal, body)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_audit_view")
+async def get_audit_view(task_key: str) -> dict[str, Any]:
+    """The audit view of a task: title, description, acceptance, the output and
+    the gate results, plus earlier verdicts. It leaves out the author's hand-off
+    brief and full input context on purpose: judge the output against the spec.
+    Under quality control an approval needs this view opened in the same round."""
+    from app.services import quality
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await quality.audit_view(session, principal, task_key)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="report_change_claim")
+async def report_change_claim(
+    external_ref: str,
+    commit_sha: str,
+    related_doc_key: str | None = None,
+    related_task_key: str | None = None,
+) -> dict[str, Any]:
+    """After a change outside AgentGraph (a push, a PR), report it: the PR or
+    commit URL, the commit sha, and the doc or task it belongs to. The claim is
+    unverified until an AUDITOR or a person verifies it. Reporting the same ref
+    and commit again returns the same claim."""
+    from app.schemas import ChangeClaimRequest
+    from app.services import quality
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = ChangeClaimRequest(external_ref=external_ref, commit_sha=commit_sha,
+                                      related_doc_key=related_doc_key,
+                                      related_task_key=related_task_key)
+            result = await quality.report_claim(session, principal, body)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="verify_change_claim")
+async def verify_change_claim(
+    claim_id: uuid.UUID,
+    verdict: Literal["VERIFIED", "REFUTED"],
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """AUDITOR tokens: check a change claim read-only at its external_ref (the
+    commit exists, the PR state) and record VERIFIED or REFUTED with how you
+    checked in evidence. The reporter cannot verify its own claim."""
+    from app.schemas import ChangeClaimVerifyRequest
+    from app.services import quality
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = ChangeClaimVerifyRequest(verdict=verdict, evidence=evidence or {})
+            result = await quality.verify_claim(session, principal, claim_id, body)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)

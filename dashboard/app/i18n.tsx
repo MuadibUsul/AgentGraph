@@ -15,6 +15,12 @@ import { setFormatLanguage, type FormatLanguage } from "./types";
 export type Language = FormatLanguage;
 
 const ZH: Record<string, string> = {
+  // Merged reading of hand-split documents
+  "Unable to load the parts": "无法加载分篇",
+  "This document is one part of {name}": "本文档是 {name} 的一部分",
+  "Read all parts": "合并阅读全部分篇",
+  "{count} parts read as one, in part_index order.": "共 {count} 篇，按 part_index 顺序合并阅读。",
+  "Too long to show in full; later parts are left out.": "内容过长，后面的分篇未显示。",
   // Token delegation
   "{name} updated.": "{name} 已更新。",
   "Edit {name}": "编辑 {name}",

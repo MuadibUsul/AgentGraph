@@ -3092,3 +3092,49 @@ async def register_parts(
         "session_batch_id": str(batch),
     }
 
+
+
+PARTS_MAX = 100
+PARTS_BYTES_MAX = 2_000_000
+
+
+async def document_parts(session: AsyncSession, principal: Principal, part_of: str, *,
+                         namespace: str | None = None) -> dict[str, Any]:
+    """AG-TC-04 point 4: read hand-split documents as one. Parts carry
+    ``part_of`` (the whole's name) and ``part_index`` in their frontmatter."""
+    require_permission(principal, "doc:read")
+    conditions: list[Any] = [
+        SharedDocument.workspace_id == principal.workspace.id,
+        SharedDocument.archived_at.is_(None),
+        SharedDocument.frontmatter["part_of"].astext == part_of,
+    ]
+    if namespace:
+        ensure_namespace(principal, namespace)
+        conditions.append(SharedDocument.namespace == namespace)
+    else:
+        allowed = _allowed_namespaces(principal)
+        if allowed is not None:
+            conditions.append(SharedDocument.namespace.in_(allowed))
+    rows = (await session.execute(
+        select(SharedDocument).where(*conditions).limit(PARTS_MAX + 1))).scalars().all()
+
+    def order(doc: SharedDocument) -> tuple[int, Any, str]:
+        index = (doc.frontmatter or {}).get("part_index")
+        try:
+            return (0, float(index), doc.doc_key)
+        except (TypeError, ValueError):
+            return (1, 0, doc.doc_key)
+
+    parts, size, truncated = [], 0, len(rows) > PARTS_MAX
+    for doc in sorted(rows[:PARTS_MAX], key=order):
+        content = doc.content or ""
+        if size + len(content) > PARTS_BYTES_MAX:
+            truncated = True
+            break
+        size += len(content)
+        parts.append({"doc_key": doc.doc_key, "namespace": doc.namespace, "title": doc.title,
+                      "version": doc.version,
+                      "part_index": (doc.frontmatter or {}).get("part_index"),
+                      "verification_status": doc.verification_status,
+                      "tainted": bool(doc.tainted), "content": content})
+    return {"part_of": part_of, "count": len(parts), "truncated": truncated, "parts": parts}

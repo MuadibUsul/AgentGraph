@@ -134,6 +134,11 @@ EPHEMERAL = frozenset({
     "retrieval_eval_runs", "retrieval_probes", "tenant_signing_keys",
     # The deployment's own release history.
     "platform_releases",
+    # Quality control (v3.32): the pipeline's operating record in this
+    # deployment (gates, audits, samples, escapes, circuit, tiers, planted
+    # defects). Tiers are re-granted by people after a move, never copied.
+    "change_claims", "quality_gate_runs", "audits", "autonomy_tiers", "defect_escapes",
+    "audit_samples", "quality_circuit", "poison_marks", "audit_view_marks", "quality_releases",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")

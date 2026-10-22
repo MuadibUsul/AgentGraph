@@ -221,6 +221,9 @@ BEGIN
             WHEN 'ESCALATION_REMINDER' THEN 'escalation.reminder'
             WHEN 'TASK_CHILDREN_DONE' THEN 'task.children_done'
             WHEN 'TASK_CONTINUATION' THEN 'task.continuation_written'
+            WHEN 'QUALITY_CIRCUIT_OPENED' THEN 'quality.circuit_opened'
+            WHEN 'QUALITY_TIER_DEMOTED' THEN 'quality.tier_demoted'
+            WHEN 'QUALITY_CLAIM_REFUTED' THEN 'quality.claim_refuted'
             ELSE 'timeline.' || lower(COALESCE(NULLIF(row_data->>'event_type', ''), 'event'))
         END;
         IF jsonb_typeof(row_data->'payload'->'targets') = 'array' THEN
