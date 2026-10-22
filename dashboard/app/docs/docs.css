@@ -1,5 +1,22 @@
 /* Public documentation site: same tokens as the console, reading layout. */
 
+html,
+body {
+  background: var(--ds-surface-page);
+}
+
+/* The public docs use full-page navigation so the URLs stay at /docs/*.
+   A cross-document transition keeps the old page painted while the next one
+   loads instead of flashing an unstyled white frame. */
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 160ms;
+}
+
 .docs-shell {
   min-height: 100vh;
   background: var(--ds-surface-page);
@@ -331,5 +348,12 @@
 
   .docs-brand-sub {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
   }
 }

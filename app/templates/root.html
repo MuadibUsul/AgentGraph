@@ -364,6 +364,18 @@ document.getElementById("copy").addEventListener("click", async () => {
   }
   setTimeout(() => { label.textContent = "COPY RESPONSE"; }, 1600);
 });
+try {
+  const hasConsole = Boolean(
+    localStorage.getItem("agentgraph.session_token") ||
+    localStorage.getItem("agentgraph.admin_token") ||
+    sessionStorage.getItem("agentgraph.admin_token")
+  );
+  if (!hasConsole) {
+    document.querySelector("a.entry")?.setAttribute("href", "/dashboard/login/");
+  }
+} catch {
+  // Storage can be unavailable; keep the guarded /dashboard/ fallback.
+}
 </script>
 <script>
 (() => {

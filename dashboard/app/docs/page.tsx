@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 
 import { DocsView } from "./docs-view";
-import "./docs.css";
 
 export const metadata: Metadata = {
   title: "AgentGraph Docs",

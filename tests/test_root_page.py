@@ -35,6 +35,9 @@ def test_human_root_page_keeps_json_shape_and_marks_console_entry():
     assert "COPY RESPONSE" in page
     assert 'href="/?format=json"' in page
     assert '<span class="value">3.2.1</span>' in page
+    assert "agentgraph.session_token" in page
+    assert "agentgraph.admin_token" in page
+    assert '"/dashboard/login/"' in page
 
 
 def test_human_root_page_without_dashboard_renders_null_without_a_link():

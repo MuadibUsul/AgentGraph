@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 
 import { DocsView } from "../docs-view";
 import { pageTitle, site } from "../site";
-import "../docs.css";
 
 export const dynamicParams = false;
 
