@@ -161,8 +161,10 @@ async def test_expired_lease_orphans_task_with_continuation(client, admin_header
     assert current["orphaned_from"] == signature and current["orphan_count"] == 1
     events = await _events(workspace["workspace"]["id"], "LEASE_EXPIRED", task["task_key"])
     assert len(events) == 1
+    # The successor is an ordinary agent, not the workspace key.
+    successor, _, _ = await _agent(client, admin_headers, workspace)
     continuation = await client.get(
-        f"/v1/documents/handoff/{task['canonical_id'].lower()}", headers=workspace["headers"]
+        f"/v1/documents/handoff/{task['canonical_id'].lower()}", headers=successor
     )
     assert continuation.status_code == 200, continuation.text
     assert continuation.json()["frontmatter"]["auto_generated"] is True

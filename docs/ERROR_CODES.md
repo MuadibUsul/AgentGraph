@@ -70,6 +70,7 @@ do not edit by hand. Every error body is
 | `google_identity_conflict` | 409 | `fix_request` | `fix_request_then_resend` | Unlink the other identity first. |
 | `human_user_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another email. |
 | `idempotency_key_reused` | 409 | `fix_request` | `use_new_idempotency_key` | Generate a new idempotency key; confirm this is a different request. |
+| `increment_out_of_order` | 409 | `fix_request` | `fix_request_then_resend` | Import details.prev_export_id first, then this increment. |
 | `last_owner_required` | 409 | `fix_request` | `fix_request_then_resend` | Assign another owner first. |
 | `locate_required` | 409 | `fix_request` | `fix_request_then_resend` | Run locate_personal_data first. |
 | `log_document_append_only` | 409 | `fix_request` | `append_entries` | Use append_entries instead. |
@@ -80,6 +81,7 @@ do not edit by hand. Every error body is
 | `workspace_confirmation_mismatch` | 409 | `fix_request` | `fix_request_then_resend` | Confirm with the exact name. |
 | `batch_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Split the batch per details. |
 | `content_too_large` | 413 | `fix_request` | `split_into_parts` | Split into parts (details.action). |
+| `payload_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Send a smaller archive (details.limit_bytes). |
 | `ambiguous_artifact` | 422 | `fix_request` | `fix_request_then_resend` | Provide artifact_text or artifact_uri, not both. |
 | `budget_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Lower the budget per details. |
 | `checksum_mismatch` | 422 | `fix_request` | `fix_request_then_resend` | Download the export again, then import. |
@@ -186,6 +188,7 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 
 | code | meaning |
 |---|---|
+| `secrets_not_imported` | Imported tokens must be rotated and users must reset passwords. |
 | `alias_redirected` | Read through a renamed alias; use the current alias or id. |
 | `legacy_alias` | Address predates the grammar; accepted, but 2026-11 rejects new ones. |
 | `dangling_ref` | A $ref or part does not resolve; stored as written. |

@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     token_chars_per_token: float = 4.0
     max_workspace_map_items: int = 300
     max_page_size: int = 500
+    # HMAC key for list cursors (AG-ST-01); derived from the database URL
+    # when unset, so cursors survive restarts of the same deployment.
+    cursor_signing_secret: str | None = None
+    list_cursor_ttl_hours: int = Field(default=24, ge=1, le=720)
+    # Exports (AG-ST-02): manual exports per tenant per hour, how long an
+    # archive stays downloadable, and the largest archive an import accepts.
+    exports_per_hour: int = Field(default=4, ge=1, le=1_000)
+    export_retention_days: int = Field(default=30, ge=1, le=3_650)
+    max_import_bytes: int = Field(default=512 * 1024 * 1024, ge=1_024)
 
     # ----------------------------------------------------- proposals / policy
     proposals_enabled: bool = True

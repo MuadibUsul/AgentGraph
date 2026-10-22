@@ -5,12 +5,13 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import services
 from app.auth import Principal, get_human_account, get_human_principal, get_human_writer
 from app.database import get_db
-from app.errors import Forbidden
+from app.errors import ApiError, Forbidden
 from app.schemas import (
     AdminDocumentCreateRequest,
     AgentTokenCreatedResponse,
@@ -64,6 +65,7 @@ from app.schemas import (
     WorkspaceStatsResponse,
 )
 from app.services import budget as budget_service
+from app.services import exports as export_service
 from app.services import leases as lease_service
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
@@ -738,6 +740,30 @@ async def tenant(
     session: AsyncSession = Depends(get_db),
 ) -> TenantOut:
     return await tenant_service.describe_tenant(session, principal.tenant_id)
+
+
+@router.get(
+    "/tenant/final-export",
+    summary="The final export taken when deletion was confirmed (?download=true for the zip)",
+)
+async def tenant_final_export(
+    download: bool = Query(default=False),
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+):
+    if principal.human_role != "OWNER":
+        raise Forbidden("only a tenant owner may download the final export")
+    tenant = await tenant_service.describe_tenant(session, principal.tenant_id)
+    if not tenant.final_export_id:
+        raise ApiError(404, "not_found", "no final export: deletion has not been confirmed",
+                       details={"tenant": principal.tenant_id})
+    if not download:
+        return await export_service.get_export(principal, tenant.final_export_id)
+    data, row = await export_service.download(principal, tenant.final_export_id)
+    return Response(content=data, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{row["id"]}.zip"',
+        "X-Manifest-SHA256": row["manifest_sha256"] or "",
+    })
 
 
 @router.post(

@@ -57,6 +57,7 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
+from app.services import exports as export_service
 from app.services import idempotency, indexer
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
@@ -1398,6 +1399,61 @@ async def list_leases(
     return _compact(result.model_dump(mode="json"))
 
 
+@mcp.tool(name="export_workspace")
+async def export_workspace(
+    scope: Literal["tenant", "workspace", "namespace"] = "tenant",
+    scope_ref: str | None = None,
+    since_export_id: str | None = None,
+    include_history: bool = True,
+    include_subtree: bool = True,
+    include: list[Literal["documents", "versions", "doc_edges", "grants", "events",
+                          "audit_log"]] | None = None,
+) -> dict[str, Any]:
+    """Start an export in the agentgraph-export/1 storage format; poll get_export.
+
+    Needs the workspace key (workspace or namespace scope), a human owner or the
+    admin console: agent tokens are not granted export. since_export_id makes an
+    incremental export that, applied after its base, equals a full export.
+    """
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        result = await export_service.request_export(
+            principal, scope=scope, scope_ref=scope_ref, since_export_id=since_export_id,
+            include_history=include_history, include_subtree=include_subtree, include=include,
+        )
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_export")
+async def get_export(export_id: str) -> dict[str, Any]:
+    """Export status, progress, counts, seq range, manifest_sha256 and download_url."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        result = await export_service.get_export(principal, export_id)
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_exports")
+async def list_exports(
+    scope: Literal["tenant", "workspace", "namespace"] | None = None,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """Exports of your tenant, newest first."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+    try:
+        result = await export_service.list_exports(principal, scope=scope, cursor=cursor)
+    except ApiError as exc:
+        raise _api_error(exc) from exc
+    return _compact(result)
+
+
 @mcp.tool(name="get_usage")
 async def get_usage(window: Literal["day", "week", "month"] = "day") -> dict[str, Any]:
     """Embedding tokens used vs quota, writes, would-be limits and open circuits.
@@ -1612,23 +1668,29 @@ async def draft_external_action(
 async def list_documents(
     namespace: str | None = None,
     cursor: str | None = None,
-    limit: int = 100,
+    limit: Annotated[int, Field(ge=1, le=500)] = 100,
+    order: Literal["doc_key_asc", "updated_at_asc"] | None = None,
     include_archived: bool = False,
-    include_unverified: bool = False,
-    include_tainted: bool = False,
+    include_unverified: bool | None = None,
+    include_tainted: bool | None = None,
+    include_cold: bool = True,
+    fields: list[str] | None = None,
     filters: dict[str, Any] | None = None,
     verification_status: str | None = None,
     tainted: bool | None = None,
     updated_after: datetime | None = None,
     updated_before: datetime | None = None,
-    sort: str = "updated_desc",
+    sort: Literal["updated_desc", "updated_asc"] | None = None,
 ) -> dict[str, Any]:
-    """Exhaustively enumerate documents in a namespace with an opaque cursor.
+    """Complete, cursor-paginated census of documents (not ranked, no vectors).
 
-    Order is stable by (updated_at, id). Pass the returned next_cursor back as
-    cursor; next_cursor=null means enumeration is complete. Archived documents
-    are excluded unless include_archived=true. filters supports frontmatter
-    equality and {eq, gte, lte, gt, lt, exists} operators.
+    With order (the default under API 2026-11) the walk is by doc_key_asc or
+    (updated_at, doc_key): every document appears exactly once, and the first
+    page's snapshot_count is the exact total. All trust states are included
+    unless include_unverified/include_tainted=false. Pass next_cursor back
+    unchanged with the same filters; next_cursor=null means done. Cursors last
+    24 h (cursor_expired). fields narrows each item; no content is returned.
+    Legacy sort=updated_desc|updated_asc keeps the 3.2.1 listing.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -1648,6 +1710,8 @@ async def list_documents(
                 updated_after=updated_after,
                 updated_before=updated_before,
                 sort=sort,
+                order=order,
+                fields=fields,
             )
         except ApiError as exc:
             raise _api_error(exc) from exc

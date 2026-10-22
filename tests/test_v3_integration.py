@@ -710,6 +710,9 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         "heartbeat",
                         "release_lease",
                         "list_leases",
+                        "export_workspace",
+                        "get_export",
+                        "list_exports",
                         "get_api_docs",
                     }
                     sync = await session.call_tool("workspace_sync", {})
@@ -1097,6 +1100,9 @@ async def test_dashboard_root_and_openapi(client):
         "heartbeat",
         "release_lease",
         "list_leases",
+        "export_workspace",
+        "get_export",
+        "list_exports",
         "propose_document_change",
         "vote_on_proposal",
         "list_document_proposals",

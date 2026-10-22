@@ -47,6 +47,9 @@ Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.
 - `heartbeat`: Keep a task lease alive every heartbeat_interval_s (ttl/3).
 - `release_lease`: Give up a lease; the task returns to READY.
 - `list_leases`: Your leases and how they ended.
+- `export_workspace`: Export in the storage format (owner/workspace key; agents need a grant).
+- `get_export`: Export status and download link.
+- `list_exports`: Exports of your tenant.
 - `get_api_docs`: This guide by section.
 
 ## Which read to use
@@ -162,6 +165,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `google_identity_conflict` | 409 | `fix_request` |
 | `human_user_exists` | 409 | `fix_request` |
 | `idempotency_key_reused` | 409 | `fix_request` |
+| `increment_out_of_order` | 409 | `fix_request` |
 | `last_owner_required` | 409 | `fix_request` |
 | `locate_required` | 409 | `fix_request` |
 | `log_document_append_only` | 409 | `fix_request` |
@@ -172,6 +176,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `workspace_confirmation_mismatch` | 409 | `fix_request` |
 | `batch_too_large` | 413 | `fix_request` |
 | `content_too_large` | 413 | `fix_request` |
+| `payload_too_large` | 413 | `fix_request` |
 | `ambiguous_artifact` | 422 | `fix_request` |
 | `budget_exceeds_parent` | 422 | `fix_request` |
 | `checksum_mismatch` | 422 | `fix_request` |

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import agent_guide, services
@@ -38,6 +38,7 @@ from app.schemas import (
     DocumentVerifyRequest,
     DocumentVersionListResponse,
     DocumentVersionOut,
+    ExportRequest,
     ExternalActionCreateRequest,
     ExternalActionListResponse,
     ExternalActionOut,
@@ -85,6 +86,7 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
+from app.services import exports as export_service
 from app.services import indexer
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
@@ -476,17 +478,29 @@ async def get_slot(
 )
 async def list_documents(
     namespace: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100_000),
     cursor: str | None = Query(default=None),
     offset: int | None = Query(default=None, ge=0),
     include_archived: bool = Query(default=False),
-    include_unverified: bool = Query(default=False),
-    include_tainted: bool = Query(default=False),
+    include_unverified: bool | None = Query(
+        default=None, description="Default true for the census order, false for sort"
+    ),
+    include_tainted: bool | None = Query(default=None),
+    include_cold: bool = Query(default=True, description="Accepted; no cold tier yet"),
     verification_status: str | None = Query(default=None),
     tainted: bool | None = Query(default=None),
     updated_after: datetime | None = Query(default=None),
     updated_before: datetime | None = Query(default=None),
-    sort: str = Query(default="updated_desc"),
+    sort: str | None = Query(
+        default=None, description="Legacy listing: updated_desc | updated_asc"
+    ),
+    order: str | None = Query(
+        default=None,
+        description="Census: doc_key_asc | updated_at_asc (default under 2026-11)",
+    ),
+    fields: list[str] | None = Query(
+        default=None, description="Return only these fields (repeat or comma-separate)"
+    ),
     written_by_subtree: str | None = Query(
         default=None, description="tok_… id: documents written by this token or its subtree"
     ),
@@ -499,6 +513,8 @@ async def list_documents(
             "offset_not_supported",
             "offset pagination is not supported; pass next_cursor as cursor",
         )
+    if fields is not None:
+        fields = [item.strip() for value in fields for item in value.split(",") if item.strip()]
     return await services.list_documents(
         session,
         principal,
@@ -513,6 +529,8 @@ async def list_documents(
         updated_after=updated_after,
         updated_before=updated_before,
         sort=sort,
+        order=order,
+        fields=fields,
         written_by_subtree=written_by_subtree,
     )
 
@@ -829,6 +847,63 @@ async def workspace_usage(
     return UsageOut(
         **await services.month_usage(session, principal.workspace.id)
     )
+
+
+@router.post(
+    "/exports",
+    status_code=202,
+    summary="Start a tenant/workspace/namespace export (AG-ST-02); poll GET /v1/exports/{id}",
+)
+async def create_export(
+    body: ExportRequest, principal: Principal = Depends(get_principal)
+) -> dict:
+    return await export_service.request_export(principal, **body.model_dump())
+
+
+@router.get("/exports", summary="Exports of your tenant, newest first")
+async def list_exports(
+    scope: str | None = Query(default=None, pattern="^(tenant|workspace|namespace)$"),
+    cursor: str | None = Query(default=None, max_length=40),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await export_service.list_exports(principal, scope=scope, cursor=cursor, limit=limit)
+
+
+@router.get("/exports/{export_id}", summary="Export status, counts and download link")
+async def get_export(export_id: str, principal: Principal = Depends(get_principal)) -> dict:
+    return await export_service.get_export(principal, export_id)
+
+
+@router.get("/exports/{export_id}/download", summary="The export archive (zip)")
+async def download_export(
+    export_id: str, principal: Principal = Depends(get_principal)
+) -> Response:
+    data, row = await export_service.download(principal, export_id)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{export_id}.zip"',
+            "X-Manifest-SHA256": row["manifest_sha256"] or "",
+        },
+    )
+
+
+@router.post(
+    "/imports",
+    status_code=201,
+    summary="Import an export archive (zip body) as a new workspace/tenant or an increment",
+)
+async def create_import(
+    request: Request,
+    target: str = Query(default="new_workspace",
+                        pattern="^(new_workspace|new_tenant|increment)$"),
+    verify: bool = Query(default=True),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    data = await request.body()
+    return await export_service.import_archive(principal, data, target=target, verify=verify)
 
 
 @router.get(

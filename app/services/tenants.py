@@ -153,7 +153,14 @@ def _maybe_start_deletion(tenant: Tenant) -> None:
     if tenant.deletion_admin_confirmed_at and tenant.deletion_owner_confirmed_at:
         _set_status(tenant, "deleting", "deletion confirmed by operator and owner")
         tenant.purge_after = utcnow() + timedelta(days=settings.tenant_deletion_grace_days)
-        # The final full export (AG-ST-02) is attached here once exports exist.
+
+
+async def _final_export(tenant: Tenant) -> None:
+    """Once deletion starts, take the final full export the owner can download."""
+    if tenant.status == "deleting" and not tenant.final_export_id:
+        from app.services.exports import start_final_export
+
+        await start_final_export(tenant.id)
 
 
 async def admin_confirm_deletion(
@@ -164,6 +171,8 @@ async def admin_confirm_deletion(
     tenant.deletion_admin_confirmed_at = utcnow()
     _maybe_start_deletion(tenant)
     await session.commit()
+    await _final_export(tenant)
+    session.expire_all()
     return await describe_tenant(session, tenant_id)
 
 
@@ -182,7 +191,10 @@ async def owner_confirm_deletion(
     tenant.deletion_owner_confirmed_by = principal.agent_signature
     _maybe_start_deletion(tenant)
     await session.commit()
-    return await describe_tenant(session, tenant.id)
+    tenant_id = tenant.id
+    await _final_export(tenant)
+    session.expire_all()
+    return await describe_tenant(session, tenant_id)
 
 
 def _clear_deletion(tenant: Tenant) -> None:

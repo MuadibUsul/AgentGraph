@@ -60,6 +60,9 @@ PRIMITIVES: dict[str, str] = {
     "heartbeat": "Keep a task lease alive every heartbeat_interval_s (ttl/3).",
     "release_lease": "Give up a lease; the task returns to READY.",
     "list_leases": "Your leases and how they ended.",
+    "export_workspace": "Export in the storage format (owner/workspace key; agents need a grant).",
+    "get_export": "Export status and download link.",
+    "list_exports": "Exports of your tenant.",
     "get_api_docs": "This guide by section.",
 }
 
