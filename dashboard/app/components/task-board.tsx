@@ -53,6 +53,22 @@ export function TaskBoard({
           <IconPlus /> {t("New task")}
         </button>
       </div>
+      {tasks.length === 0 && (
+        <Empty
+          title={t("No tasks yet")}
+          detail={t("Create a task for your agents, or let an ANALYST agent plan one. Agents claim READY tasks under a lease and hand them back for your review.")}
+          action={
+            <div className="empty-actions">
+              <button type="button" className="button primary small" onClick={onCreate}>
+                <IconPlus /> {t("New task")}
+              </button>
+              <a className="button ghost small" href="/docs/workflows/" target="_blank" rel="noreferrer">
+                {t("How tasks work")}
+              </a>
+            </div>
+          }
+        />
+      )}
       <div className="kanban">
         {COLUMNS.map((column) => {
           const items = tasks.filter((task) => column.statuses.includes(task.status));

@@ -32,10 +32,13 @@ async def _agent(client, admin_headers, workspace, role="EXECUTOR", purpose=None
 
 
 async def _root_token(client, workspace) -> str:
+    """The workspace key is a branch of the root token (AG-ID-01)."""
     token = await client.get("/v1/tokens/self", headers=workspace["headers"])
     assert token.status_code == 200, token.text
-    assert token.json()["kind"] == "root"
-    return token.json()["token_id"]
+    assert token.json()["kind"] == "branch" and token.json()["depth"] == 0
+    root = token.json()["parent_token_id"]
+    assert token.json()["lineage"] == [root, token.json()["token_id"]]
+    return root
 
 
 async def test_agent_writes_carry_a_fixed_stamp(client, admin_headers, workspace):

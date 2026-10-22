@@ -14,7 +14,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN addgroup --system app && adduser --system --ingroup app app
+# A fixed uid lets operators own bind mounts such as /backups (uid 10001).
+RUN addgroup --system --gid 10001 app && adduser --system --uid 10001 --ingroup app app
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
@@ -24,7 +25,7 @@ COPY sql ./sql
 COPY scripts ./scripts
 COPY --from=dashboard /dashboard/out ./dashboard/out
 
-RUN chown -R app:app /app
+RUN mkdir -p /backups && chown -R app:app /app /backups && chmod 700 /backups
 USER app
 
 EXPOSE 8000

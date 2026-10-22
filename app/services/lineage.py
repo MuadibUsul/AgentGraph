@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import PERMISSIONS, AuthKind, Principal, RoleScope
+from app.auth import PERMISSIONS, SCOPE_PERMISSIONS, AuthKind, Principal, RoleScope
 from app.database import async_session_factory
 from app.errors import Forbidden, NotFound
 from app.models import AgentToken, DocumentVersion, GrantSnapshot, HumanUser, Workspace
@@ -63,6 +63,28 @@ def _token_budget(token: AgentToken) -> dict[str, Any]:
         "per_minute_limit": token.per_minute_limit,
         "monthly_token_budget": token.monthly_token_budget,
     }
+
+
+def _token_grant(token: AgentToken) -> dict[str, Any]:
+    grant = _effective_grant(
+        role=token.role_scope.value,
+        namespaces=list(token.allowed_namespaces or ["*"]),
+        depth=token.depth,
+        budget=_token_budget(token),
+    )
+    if token.scopes is not None:
+        allowed = set()
+        for scope in token.scopes:
+            allowed |= SCOPE_PERMISSIONS.get(scope, frozenset())
+        grant["scopes"] = [item for item in grant["scopes"] if item == "*" or item in allowed]
+        if "*" in grant["scopes"]:
+            grant["scopes"] = sorted(allowed)
+        grant["token_scopes"] = sorted(token.scopes)
+    if token.write_namespaces is not None:
+        grant["write_namespaces"] = sorted(token.write_namespaces)
+    grant["can_issue"] = bool(token.can_issue)
+    grant["max_descendants"] = int(token.max_descendants or 0)
+    return grant
 
 
 def _root_grant() -> dict[str, Any]:
@@ -132,11 +154,39 @@ async def snapshot_root(
         principal_id="workspace_root",
         grant=_root_grant(),
         parent_hash=None,
-        purpose="workspace root key",
+        purpose="workspace root token (token management only)",
         ttl_seconds=None,
         issued_at=workspace.created_at if backfilled else None,
         issuer_stamp=ADMIN_STAMP if not backfilled else None,
         backfilled=backfilled,
+    )
+    session.add(snapshot)
+    await session.flush()
+    return snapshot
+
+
+async def snapshot_key(session: AsyncSession, workspace: Workspace) -> GrantSnapshot:
+    """The workspace key as a branch of the root (AG-ID-01 point 5)."""
+    existing = await _latest_snapshot(session, workspace.key_token_id)
+    if existing is not None and existing.token_kind == "branch":
+        return existing
+    root = await snapshot_root(session, workspace, backfilled=True)
+    grant = _root_grant()
+    grant["depth"] = 1
+    grant["can_issue"] = True
+    snapshot = _new_snapshot(
+        workspace_id=workspace.id,
+        token_id=workspace.key_token_id,
+        kind="branch",
+        parent_token_id=workspace.root_token_id,
+        principal_id="workspace_key",
+        grant=grant,
+        parent_hash=root.grant_hash,
+        purpose="workspace key (commander rights, a branch of the root since 3.21)",
+        ttl_seconds=None,
+        issued_at=None,
+        issuer_stamp=None,
+        backfilled=True,
     )
     session.add(snapshot)
     await session.flush()
@@ -153,6 +203,11 @@ async def snapshot_token(
 ) -> GrantSnapshot:
     """Record the token's grant as issued (or as changed by an update)."""
     root = await snapshot_root(session, workspace, backfilled=True)
+    parent_hash = root.grant_hash
+    if token.parent_token_id and token.parent_token_id != workspace.root_token_id:
+        parent = await _latest_snapshot(session, token.parent_token_id)
+        if parent is not None:
+            parent_hash = parent.grant_hash
     ttl = (
         int((token.expires_at - token.created_at).total_seconds())
         if token.expires_at and token.created_at
@@ -164,13 +219,8 @@ async def snapshot_token(
         kind="branch" if token.depth <= 1 else "child",
         parent_token_id=token.parent_token_id or workspace.root_token_id,
         principal_id=token.agent_signature,
-        grant=_effective_grant(
-            role=token.role_scope.value,
-            namespaces=list(token.allowed_namespaces or ["*"]),
-            depth=token.depth,
-            budget=_token_budget(token),
-        ),
-        parent_hash=root.grant_hash,
+        grant=_token_grant(token),
+        parent_hash=parent_hash,
         purpose=token.purpose,
         ttl_seconds=ttl,
         issued_at=token.created_at if backfilled else None,
@@ -187,6 +237,13 @@ async def _ensure_snapshot_id(principal: Principal) -> str | None:
     workspace = principal.workspace
     async with async_session_factory() as session:
         if principal.auth_kind is AuthKind.WORKSPACE:
+            snapshot = await _latest_snapshot(session, workspace.key_token_id)
+            if snapshot is None or snapshot.token_kind != "branch":
+                fresh = await session.get(Workspace, workspace.id)
+                snapshot = await snapshot_key(session, fresh)
+                await session.commit()
+            return snapshot.id
+        if principal.auth_kind is AuthKind.ROOT:
             snapshot = await _latest_snapshot(session, workspace.root_token_id)
             if snapshot is None:
                 fresh = await session.get(Workspace, workspace.id)
@@ -228,9 +285,18 @@ async def stamp_for(principal: Principal) -> dict[str, Any]:
     snapshot_id = await _ensure_snapshot_id(principal)
     if principal.auth_kind is AuthKind.WORKSPACE:
         return {
+            "kind": "branch",
+            "principal_id": "workspace_key",
+            "principal": principal.agent_signature,
+            "token_id": workspace.key_token_id,
+            "chain": [workspace.root_token_id, workspace.key_token_id],
+            "grant_snapshot_id": snapshot_id,
+        }
+    if principal.auth_kind is AuthKind.ROOT:
+        return {
             "kind": "root",
             "principal_id": "workspace_root",
-            "principal": principal.agent_signature,
+            "principal": "workspace_root",
             "token_id": workspace.root_token_id,
             "chain": [workspace.root_token_id],
             "grant_snapshot_id": snapshot_id,
@@ -238,11 +304,14 @@ async def stamp_for(principal: Principal) -> dict[str, Any]:
     async with async_session_factory() as session:
         token = await session.get(AgentToken, principal.token_id)
     token_cid = token.canonical_id if token else None
-    chain = [token.root_token_id or workspace.root_token_id] if token else []
-    if token is not None and token.parent_token_id and token.parent_token_id not in chain:
-        chain.append(token.parent_token_id)
-    if token_cid:
-        chain.append(token_cid)
+    if token is not None and token.lineage:
+        chain = list(token.lineage)
+    else:
+        chain = [token.root_token_id or workspace.root_token_id] if token else []
+        if token is not None and token.parent_token_id and token.parent_token_id not in chain:
+            chain.append(token.parent_token_id)
+        if token_cid:
+            chain.append(token_cid)
     return {
         "kind": "branch" if (token is None or token.depth <= 1) else "child",
         "principal_id": principal.agent_signature,
@@ -257,21 +326,27 @@ async def stamp_for(principal: Principal) -> dict[str, Any]:
 
 
 def _token_view(token: AgentToken, *, active_descendants: int = 0) -> dict[str, Any]:
+    from app.services.token_tree import token_scopes
+
+    read = list(token.read_namespaces or token.allowed_namespaces or ["*"])
     return {
         "token_id": token.canonical_id,
         "kind": "branch" if token.depth <= 1 else "child",
-        "depth": token.depth,
+        "depth": token.depth - 1,
         "principal_id": token.agent_signature,
-        "scopes": _scopes(token.role_scope.value),
+        "agent_id": (token.agent_profile or {}).get("agent_id"),
+        "scopes": token_scopes(token),
         "role_scope": token.role_scope.value,
-        "namespaces": list(token.allowed_namespaces or ["*"]),
+        "namespaces": {"read": read, "write": list(token.write_namespaces or read)},
         "expires_at": token.expires_at,
         "revoked_at": token.revoked_at,
+        "revoke_reason": token.revoke_reason,
         "is_active": token.is_active,
         "parent_token_id": token.parent_token_id,
         "root_token_id": token.root_token_id,
-        "can_issue": False,
-        "max_descendants": 0,
+        "lineage": list(token.lineage or []),
+        "can_issue": bool(token.can_issue),
+        "max_descendants": int(token.max_descendants or 0),
         "active_descendants": active_descendants,
         "budget_state": _token_budget(token),
         "purpose": token.purpose,
@@ -283,16 +358,41 @@ def _root_view(workspace: Workspace) -> dict[str, Any]:
     return {
         "token_id": workspace.root_token_id,
         "kind": "root",
-        "depth": 0,
+        "depth": -1,
         "principal_id": "workspace_root",
-        "scopes": ["*"],
-        "role_scope": "COMMANDER",
-        "namespaces": ["*"],
+        "scopes": ["token:issue"],
+        "role_scope": None,
+        "namespaces": {"read": [], "write": []},
         "expires_at": None,
         "revoked_at": None,
         "is_active": True,
+        "has_secret": workspace.root_key_hash is not None,
+        "rotated_at": workspace.root_key_rotated_at,
         "parent_token_id": None,
         "root_token_id": workspace.root_token_id,
+        "lineage": [workspace.root_token_id],
+        "can_issue": True,
+        "issued_at": workspace.created_at,
+    }
+
+
+def _key_view(workspace: Workspace) -> dict[str, Any]:
+    from app.auth import SCOPES
+
+    return {
+        "token_id": workspace.key_token_id,
+        "kind": "branch",
+        "depth": 0,
+        "principal_id": "workspace_key",
+        "scopes": list(SCOPES),
+        "role_scope": "COMMANDER",
+        "namespaces": {"read": ["*"], "write": ["*"]},
+        "expires_at": None,
+        "revoked_at": None,
+        "is_active": True,
+        "parent_token_id": workspace.root_token_id,
+        "root_token_id": workspace.root_token_id,
+        "lineage": [workspace.root_token_id, workspace.key_token_id],
         "can_issue": True,
         "issued_at": workspace.created_at,
     }
@@ -325,6 +425,8 @@ def _descendants(tokens: list[AgentToken], token_id: str) -> list[AgentToken]:
 
 async def _self_token_id(session: AsyncSession, principal: Principal) -> str | None:
     if principal.auth_kind is AuthKind.WORKSPACE:
+        return principal.workspace.key_token_id
+    if principal.auth_kind is AuthKind.ROOT:
         return principal.workspace.root_token_id
     if principal.auth_kind is AuthKind.AGENT and principal.token_id is not None:
         token = await session.get(AgentToken, principal.token_id)
@@ -339,7 +441,12 @@ def _ancestors(tokens: list[AgentToken], workspace: Workspace, token_id: str) ->
     while current is not None and current not in chain:
         chain.append(current)
         token = by_id.get(current)
-        current = token.parent_token_id if token else None
+        if token is not None:
+            current = token.parent_token_id
+        elif current == workspace.key_token_id:
+            current = workspace.root_token_id
+        else:
+            current = None
     if workspace.root_token_id not in chain:
         chain.append(workspace.root_token_id)
     return list(reversed(chain))
@@ -349,7 +456,7 @@ async def _visible(
     session: AsyncSession, principal: Principal, tokens: list[AgentToken], target: str
 ) -> bool:
     """A token sees itself, its ancestors and its own subtree; humans see all."""
-    if principal.is_human or principal.auth_kind is AuthKind.WORKSPACE:
+    if principal.is_human or principal.auth_kind in (AuthKind.WORKSPACE, AuthKind.ROOT):
         return True
     own = await _self_token_id(session, principal)
     if own is None:
@@ -368,7 +475,14 @@ async def get_token(session: AsyncSession, principal: Principal, ref: str) -> di
         raise Forbidden("this token may only inspect itself, its ancestors and its subtree")
     if target == principal.workspace.root_token_id:
         view = _root_view(principal.workspace)
-        view["active_descendants"] = sum(1 for token in tokens if token.is_active)
+        view["active_descendants"] = sum(
+            1 for token in tokens if token.is_active and token.revoked_at is None)
+        return view
+    if target == principal.workspace.key_token_id:
+        view = _key_view(principal.workspace)
+        view["active_descendants"] = sum(
+            1 for token in _descendants(tokens, target)
+            if token.is_active and token.revoked_at is None)
         return view
     token = next((item for item in tokens if item.canonical_id == target), None)
     if token is None:
@@ -387,10 +501,24 @@ async def get_lineage(session: AsyncSession, principal: Principal, ref: str) -> 
     if not await _visible(session, principal, tokens, target):
         raise Forbidden("this token may only inspect itself, its ancestors and its subtree")
     by_id = {token.canonical_id: token for token in tokens}
-    if target != principal.workspace.root_token_id and target not in by_id:
+    if target not in (principal.workspace.root_token_id,
+                      principal.workspace.key_token_id) and target not in by_id:
         raise NotFound("token")
     chain = []
     for token_id in _ancestors(tokens, principal.workspace, target):
+        if token_id == principal.workspace.key_token_id:
+            chain.append(
+                {
+                    "token_id": token_id,
+                    "kind": "branch",
+                    "principal_id": "workspace_key",
+                    "display_name": f"{principal.workspace.name} (workspace key)",
+                    "issued_at": principal.workspace.created_at,
+                    "expires_at": None,
+                    "revoked_at": None,
+                }
+            )
+            continue
         if token_id == principal.workspace.root_token_id:
             chain.append(
                 {
@@ -433,7 +561,7 @@ async def list_token_tree(
     if target is None:
         raise NotFound("token")
     own = await _self_token_id(session, principal)
-    allowed = principal.is_human or principal.auth_kind is AuthKind.WORKSPACE
+    allowed = principal.is_human or principal.auth_kind in (AuthKind.WORKSPACE, AuthKind.ROOT)
     if not allowed and own is not None:
         # A token may list only its own subtree, never an ancestor's.
         allowed = target == own or target in {
@@ -480,7 +608,9 @@ async def explain_write(
             "token_id": snapshot.parent_token_id,
             "principal": (snapshot.issuer_stamp or {}).get("principal_id")
             or ("workspace_root" if snapshot.parent_token_id == principal.workspace.root_token_id
-                else None),
+                else ("workspace_key"
+                      if snapshot.parent_token_id == principal.workspace.key_token_id
+                      else None)),
         }
     grant = _snapshot_view(snapshot) if snapshot is not None else None
     return {
@@ -535,6 +665,7 @@ async def subtree_token_ids(
 
 __all__ = [
     "ADMIN_STAMP",
+    "snapshot_key",
     "current_stamp",
     "explain_write",
     "get_lineage",

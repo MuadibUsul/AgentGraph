@@ -7,8 +7,20 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-agentgraph}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-agentgraph}
+    # WAL archiving for point-in-time recovery (AG-ST-10): set PG_ARCHIVE_MODE=on
+    # and restart the db service. Segments go to the wal-archive volume; mount
+    # it from storage other than the database disk.
+    command:
+      - postgres
+      - -c
+      - archive_mode=${PG_ARCHIVE_MODE:-off}
+      - -c
+      - archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f
+      - -c
+      - archive_timeout=900
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ${WAL_ARCHIVE_DIR:-./backups/wal}:/wal-archive
       - ./sql/init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentgraph} -d ${POSTGRES_DB:-agentgraph}"]
@@ -52,6 +64,16 @@ services:
       OUTBOUND_ALLOW_PRIVATE_NETWORKS: "false"
       OUTBOUND_ALLOWED_HOSTS: ${OUTBOUND_ALLOWED_HOSTS:-[]}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Backups (AG-ST-10): archives go to /backups, mounted from BACKUP_HOST_DIR.
+      # Point it at storage other than the database disk, or set
+      # BACKUP_UPLOAD_COMMAND to copy each run off the machine.
+      BACKUP_DIR: ${BACKUP_DIR:-/backups}
+      BACKUP_UPLOAD_COMMAND: ${BACKUP_UPLOAD_COMMAND:-}
+      STAGING_DATABASE_URL: ${STAGING_DATABASE_URL:-}
+      SECURITY_CONTACT: ${SECURITY_CONTACT:-}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
+    volumes:
+      - ${BACKUP_HOST_DIR:-./backups/agentgraph}:/backups
     depends_on:
       db:
         condition: service_healthy

@@ -109,6 +109,7 @@ REGISTRY: dict[str, ErrorSpec] = {
         429, RETRY_AFTER, "Embedding byte budget for this minute is spent; wait."
     ),
     "sse_capacity": _spec(429, RETRY_AFTER, "Too many event streams; reconnect later."),
+    "backup_in_progress": _spec(409, RETRY_AFTER, "Another backup is running; retry later."),
     # --- retry_backoff
     "internal_error": _spec(
         500, RETRY_BACKOFF, "Back off and retry at most 5 times, then escalate_human."
@@ -192,6 +193,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "tenant_type_invalid_parent": _spec(
         422, FIX_REQUEST, "Choose a parent from details.allowed."
     ),
+    "task_tree_too_deep": _spec(422, FIX_REQUEST, "Split under a shallower task."),
     "ttl_exceeds_parent": _spec(422, FIX_REQUEST, "Lower the TTL per details."),
     "unknown_principal": _spec(422, FIX_REQUEST, "Fix the principal reference per details."),
     "url_not_allowed": _spec(422, FIX_REQUEST, "Use an allowed URL per details."),
@@ -273,6 +275,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "not_found": _spec(404, ABANDON, "Give up; cross-tenant access also returns 404."),
     "already_registered": _spec(409, ABANDON, "Give up this action."),
     "document_archived": _spec(409, ABANDON, "Give up, or ask for restore_document."),
+    "not_a_log_document": _spec(409, FIX_REQUEST, "Write with upsert_shared_doc instead."),
     "id_collision": _spec(409, ABANDON, "Abort the import or import into a new tenant."),
     "increment_out_of_order": _spec(
         409, FIX_REQUEST, "Import details.prev_export_id first, then this increment."
@@ -305,6 +308,15 @@ REGISTRY: dict[str, ErrorSpec] = {
         409, ESCALATE_HUMAN, "Wait for details.pending_confirmations."
     ),
     "incident_not_confirmed": _spec(409, ESCALATE_HUMAN, "Confirm the incident first."),
+    "backup_chain_broken": _spec(
+        409, ESCALATE_HUMAN, "Restore from an older full backup or take a new one."
+    ),
+    "backups_not_configured": _spec(
+        409, ESCALATE_HUMAN, "An operator must configure backup storage."
+    ),
+    "staging_not_configured": _spec(
+        409, ESCALATE_HUMAN, "An operator must configure a separate staging database."
+    ),
     "tree_quota_exceeded": _spec(
         409, ESCALATE_HUMAN, "Revoke unused child tokens or ask a human for more quota."
     ),
@@ -330,6 +342,7 @@ REGISTRY: dict[str, ErrorSpec] = {
 # Soft-constraint warnings (PRD §6 warnings[]): never errors, never rejections.
 WARNING_CODES: dict[str, str] = {
     "secrets_not_imported": "Imported tokens must be rotated and users must reset passwords.",
+    "keys_rotated": "A restored workspace has new keys; rotate them and re-issue agent tokens.",
     "alias_redirected": "Read through a renamed alias; use the current alias or id.",
     "legacy_alias": "Address predates the grammar; accepted, but 2026-11 rejects new ones.",
     "dangling_ref": "A $ref or part does not resolve; stored as written.",
@@ -337,6 +350,15 @@ WARNING_CODES: dict[str, str] = {
     "namespace_undocumented": "The namespace readme is still a generated stub.",
     "frontmatter_missing": "Fields the namespace readme requires are missing.",
     "doc_key_pattern_mismatch": "doc_key does not match the namespace pattern.",
+    "budget_warning": "A token's daily budget is at 80%; budget.warning went to its issuer.",
+    "recall_still_depends": "This version still derives from recalled versions; the recall "
+                            "node stays open.",
+    "ttl_capped_by_policy": "The token's lifetime was capped by an organisation policy.",
+    "continuation_missing": "No continuation pack was written since the claim; call "
+                            "write_continuation before the next handoff.",
+    "output_missing": "Nothing was written to the task's output_to since the claim.",
+    "target_offline": "A mentioned agent is offline or retired; its owner is notified too.",
+    "unknown_mention": "A mentioned principal is not in the directory.",
     "not_registered": "The collaborator directory is not live; identity is inferred.",
     "constitution_draft": "The constitution is still the generated template.",
     "token_expiring": "The calling token expires within a day.",

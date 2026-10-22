@@ -16,8 +16,15 @@ from app.error_registry import protocol_docs
 from app.errors import ApiError
 from app.models import TaskStatus
 from app.schemas import (
+    AgentRegisterRequest,
+    AgentStatusRequest,
+    AgentUpdateRequest,
+    AlertAckRequest,
+    AppendEntriesRequest,
     AuditListResponse,
+    ClearTaintRequest,
     ConstitutionAckRequest,
+    ContinuationRequest,
     DereferenceBatchRequest,
     DereferenceBatchResponse,
     DereferenceRequest,
@@ -38,6 +45,8 @@ from app.schemas import (
     DocumentVerifyRequest,
     DocumentVersionListResponse,
     DocumentVersionOut,
+    EscalationCreateRequest,
+    EscalationResolveRequest,
     ExportRequest,
     ExternalActionCreateRequest,
     ExternalActionListResponse,
@@ -59,12 +68,16 @@ from app.schemas import (
     ProposalOut,
     ProposalRejectRequest,
     ProposalVoteRequest,
+    RecallDismissRequest,
+    RecallRequest,
     RegisterPartsRequest,
     SlotListResponse,
     SlotMutationResponse,
     SlotOut,
     SlotPatchRequest,
     SlotReplaceRequest,
+    SubscriptionRequest,
+    SubtasksRequest,
     TaskActionResponse,
     TaskClaimRequest,
     TaskContextResponse,
@@ -79,6 +92,10 @@ from app.schemas import (
     TimelineEventRequest,
     TimelineItemOut,
     TimelineListResponse,
+    TokenBudgetRequest,
+    TokenIssueRequest,
+    TokenRenewRequest,
+    TokenRevokeRequest,
     UsageOut,
     WhoAmIResponse,
     WorkspaceMapResponse,
@@ -86,11 +103,16 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
+from app.services import contention, directory, indexer, situation, token_budget, token_tree
+from app.services import documents as document_service
+from app.services import events as event_service
 from app.services import exports as export_service
-from app.services import indexer
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
+from app.services import logs as log_service
 from app.services import orientation as orientation_service
+from app.services import recall as recall_service
+from app.services import tasks as task_service
 
 router = APIRouter(prefix="/v1", tags=["AgentGraph v3"])
 
@@ -145,10 +167,19 @@ async def whoami(principal: Principal = Depends(get_principal)) -> WhoAmIRespons
     response_model=WorkspaceMapResponse,
     summary="L0 workspace map: tasks, slot/doc tree, enums (no raw payloads)",
 )
+@router.get(
+    "/sync",
+    response_model=WorkspaceMapResponse,
+    summary="Map (since=null) or changes after an event cursor (AG-EV-01)",
+)
 async def workspace_map(
     since: str | None = Query(default=None),
     include_unverified: bool = Query(default=False),
     include_tainted: bool = Query(default=False),
+    namespaces: list[str] | None = Query(default=None),
+    include_archived: bool = Query(default=False),
+    limit: int | None = Query(default=None, ge=1, le=2_000),
+    page_cursor: str | None = Query(default=None),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> WorkspaceMapResponse:
@@ -158,7 +189,67 @@ async def workspace_map(
         since=since,
         include_unverified=include_unverified,
         include_tainted=include_tainted,
+        namespaces=namespaces,
+        include_archived=include_archived,
+        limit=limit,
+        page_cursor=page_cursor,
     )
+
+
+@router.get(
+    "/events",
+    summary="poll_events: events after a cursor, optionally waiting up to 25 s (AG-EV-01)",
+)
+async def poll_events(
+    cursor: str | None = Query(default=None, max_length=256),
+    subscription_id: str | None = Query(default=None, max_length=40),
+    types: list[str] | None = Query(default=None),
+    namespaces: list[str] | None = Query(default=None),
+    for_me: bool = Query(default=False),
+    written_by_subtree: str | None = Query(default=None, max_length=40),
+    wait_seconds: int = Query(default=0, ge=0, le=100),
+    limit: int = Query(default=100, ge=1, le=100_000),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    # A long poll must not hold this request's connection while it waits.
+    await session.close()
+    return await event_service.poll_events(
+        principal, cursor=cursor, subscription_id=subscription_id, types=types,
+        namespaces=namespaces, for_me=for_me, written_by_subtree=written_by_subtree,
+        wait_seconds=wait_seconds, limit=limit,
+    )
+
+
+@router.post("/subscriptions", status_code=201,
+             summary="Subscribe to namespace/doc_key prefixes (AG-EV-02)")
+async def subscribe(
+    body: SubscriptionRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await event_service.subscribe(
+        session, principal, prefixes=body.prefixes, types=body.types, name=body.name
+    )
+
+
+@router.get("/subscriptions", summary="Your subscriptions")
+async def list_subscriptions(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await event_service.list_subscriptions(session, principal)
+
+
+@router.delete("/subscriptions/{subscription_id}", status_code=204,
+               summary="Remove a subscription")
+async def delete_subscription(
+    subscription_id: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    await event_service.delete_subscription(session, principal, subscription_id)
+    return Response(status_code=204)
 
 
 @router.get(
@@ -251,6 +342,14 @@ async def list_tasks(
     assigned_role: str | None = Query(default=None),
     namespace: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
+    assignee: str | None = Query(default=None, max_length=160,
+                                 description="agent:<id>, human:<id> or me"),
+    required_role: str | None = Query(default=None, max_length=32),
+    parent: str | None = Query(default=None, max_length=128,
+                               description="children of this task"),
+    kind: str | None = Query(default=None, max_length=16),
+    claimable_by_me: bool = Query(default=False,
+                                  description="claimable now by the caller (role, assignee)"),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> TaskListResponse:
@@ -261,6 +360,11 @@ async def list_tasks(
         assigned_role=assigned_role,
         namespace=namespace,
         limit=limit,
+        assignee=assignee,
+        required_role=required_role,
+        parent=parent,
+        kind=kind,
+        claimable_by_me=claimable_by_me,
     )
 
 
@@ -414,6 +518,71 @@ async def escalate_task(
     session: AsyncSession = Depends(get_db),
 ) -> TaskActionResponse:
     return await services.escalate_task(session, principal, task_key, body)
+
+
+@router.post("/tasks/{task_key}/continuation",
+             summary="Write the task's continuation pack (optionally hand off)")
+async def write_continuation(
+    task_key: str,
+    body: ContinuationRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.write_continuation(session, principal, task_key, body)
+
+
+@router.post("/tasks/{task_key}/subtasks", status_code=201,
+             summary="Split a task into up to 20 subtasks (holder or lead)")
+async def create_subtasks(
+    task_key: str,
+    body: SubtasksRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.create_subtasks(session, principal, task_key, body)
+
+
+@router.get("/tasks/{task_key}/tree", summary="The task tree under a task (at most 500 nodes)")
+async def get_task_tree(
+    task_key: str,
+    depth: int = Query(default=2, ge=1, le=4),
+    include: str = Query(default="summary", description="comma list: summary, rollup"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.get_task_tree(
+        session, principal, task_key, depth=depth,
+        include=[item.strip() for item in include.split(",") if item.strip()])
+
+
+@router.post("/escalations", status_code=201,
+             summary="Ask a human a question that blocks no task")
+async def create_escalation(
+    body: EscalationCreateRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.create_escalation(session, principal, body)
+
+
+@router.get("/escalations", summary="Escalations of the workspace")
+async def list_escalations(
+    status: str | None = Query(default=None, pattern="^(open|resolved)$"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.list_escalations(session, principal, status=status)
+
+
+@router.post("/escalations/{escalation_id}/resolve",
+             summary="Decide an escalation (humans only); the task resumes")
+async def resolve_escalation(
+    escalation_id: str,
+    body: EscalationResolveRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await task_service.resolve_escalation(session, principal, escalation_id, body)
 
 
 # ------------------------------------------------------------------ slots
@@ -593,6 +762,96 @@ async def explain_write(
 ) -> dict:
     require_permission(principal, "doc:read")
     return await lineage_service.explain_write(session, principal, doc_key, version)
+
+
+@router.post("/tokens", status_code=201,
+             summary="Issue a child token (only narrows the issuer's grant; secret shown once)")
+async def issue_child_token(
+    body: TokenIssueRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await token_tree.issue_child_token(session, principal, body.model_dump())
+
+
+@router.post("/tokens/{ref}/revoke",
+             summary="Revoke a token and its whole subtree (optionally taint their writes)")
+async def revoke_token(
+    ref: str,
+    body: TokenRevokeRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await token_tree.revoke_token(session, principal, ref, reason=body.reason,
+                                         taint_writes_since=body.taint_writes_since)
+
+
+@router.post("/tokens/{ref}/renew", summary="Renew a token (its parent or an ancestor renews)")
+async def renew_token(
+    ref: str,
+    body: TokenRenewRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await token_tree.renew_token(session, principal, ref, body.ttl_seconds)
+
+
+# --------------------------------------------------------- directory (AG-ID-06)
+
+
+@router.post("/agents/register", status_code=201,
+             summary="Register the calling token's agent in the directory")
+async def register_agent(
+    body: AgentRegisterRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await directory.register_agent(session, principal, body.model_dump())
+
+
+@router.get("/agents", summary="The collaborator directory")
+async def list_agents(
+    role: str | None = Query(default=None, max_length=32),
+    capability: str | None = Query(default=None, max_length=64),
+    status: str | None = Query(default=None, pattern="^(active|idle|offline|retired)$"),
+    cursor: str | None = Query(default=None, max_length=512),
+    limit: int = Query(default=100, ge=1, le=200),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "workspace:read")
+    return await directory.list_agents(session, principal, role=role, capability=capability,
+                                       status=status, cursor=cursor, limit=limit)
+
+
+@router.post("/agents/me/status", summary="Set your own status (active or idle)")
+async def set_agent_status(
+    body: AgentStatusRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await directory.set_status(session, principal, body.status, body.note)
+
+
+@router.get("/agents/{ref}", summary="One directory entry (agent_id, alias or prn_ id)")
+async def get_agent(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "workspace:read")
+    return await directory.get_agent(session, principal, ref)
+
+
+@router.patch("/agents/{ref}", summary="Change directory fields (per-field permissions)")
+async def update_agent(
+    ref: str,
+    body: AgentUpdateRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await directory.update_agent(session, principal, ref, body.fields,
+                                        body.expected_version)
 
 
 @router.get("/tokens/{ref}", summary="Inspect a token (self, an ancestor or a descendant)")
@@ -819,6 +1078,165 @@ async def change_document_taint(
     )
 
 
+@router.post(
+    "/documents/{doc_key:path}/entries", status_code=201,
+    summary="Append entries to a log document (no expected version, no conflicts)",
+)
+async def append_log_entries(
+    doc_key: str,
+    body: AppendEntriesRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await log_service.append_entries(session, principal, namespace=body.namespace,
+                                            doc_key=doc_key, entries=body.entries)
+
+
+@router.get("/documents/{doc_key:path}/entries", summary="Read a log document's entries")
+async def read_log_entries(
+    doc_key: str,
+    namespace: str | None = Query(default=None, max_length=64),
+    after_seq: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await log_service.read_entries(session, principal, namespace=namespace,
+                                          doc_key=doc_key, after_seq=after_seq, limit=limit)
+
+
+@router.get("/documents/{doc_key:path}/sections",
+            summary="Headings with section_hash, for patch_doc_section without a version")
+async def document_sections(
+    doc_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    document = await services.get_document(session, principal, doc_key,
+                                           include_unverified=True, include_tainted=True)
+    return {"doc_key": document.doc_key, "version": document.version,
+            "sections": contention.list_sections(document.content or "")}
+
+
+@router.get("/alerts", summary="Situation alerts (people: all; agents: about themselves)")
+async def list_situation_alerts(
+    state: str | None = Query(default=None, pattern="^(open|acked|resolved)$"),
+    severity: str | None = Query(default=None, pattern="^(high|medium|low)$"),
+    cursor: str | None = Query(default=None, max_length=40),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await situation.list_alerts(session, principal, state=state, severity=severity,
+                                       cursor=cursor)
+
+
+@router.post("/alerts/{alert_id}/ack", summary="Acknowledge an alert (people only)")
+async def ack_situation_alert(
+    alert_id: str,
+    body: AlertAckRequest | None = None,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await situation.ack_alert(session, principal, alert_id, body.note if body else None)
+
+
+@router.get("/metrics", summary="Metrics of a principal, document or task (agents: their own)")
+async def get_situation_metrics(
+    principal_ref: str | None = Query(default=None, alias="principal", max_length=256),
+    doc: str | None = Query(default=None, max_length=256),
+    task: str | None = Query(default=None, max_length=128),
+    window: str = Query(default="1h"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await situation.get_metrics(session, principal, principal_ref=principal_ref,
+                                       doc_ref=doc, task_ref=task, window=window)
+
+
+@router.post(
+    "/documents/{doc_key:path}/clear-taint",
+    response_model=DocumentMutationResponse,
+    summary="Clear taint as a new untainted version (people only, AG-TC-01)",
+)
+async def clear_document_taint(
+    doc_key: str,
+    body: ClearTaintRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> DocumentMutationResponse:
+    return await document_service.clear_taint(
+        session, principal, doc_key, namespace=body.namespace, version=body.version,
+        reason=body.reason)
+
+
+@router.post(
+    "/documents/{doc_key:path}/recall",
+    summary="Recall versions; downstream versions are marked and their authors told (AG-TC-02)",
+)
+async def recall_document(
+    doc_key: str,
+    body: RecallRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    document = await address_service.find_document(session, principal.workspace.id, doc_key)
+    namespace = body.namespace or (document.namespace if document else "default")
+    return await recall_service.recall_document(
+        session, principal, namespace=namespace,
+        doc_key=document.doc_key if document else doc_key, versions=body.versions,
+        reason=body.reason, severity=body.severity, max_depth=body.max_depth)
+
+
+@router.get("/recalls/{recall_id}", summary="A recall and its tree of affected versions")
+async def get_recall(
+    recall_id: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "doc:read")
+    return await recall_service.get_recall(session, principal, recall_id)
+
+
+@router.post("/recalls/{recall_id}/dismiss",
+             summary="Mark a node as not affected (people only)")
+async def dismiss_recall_node(
+    recall_id: str,
+    body: RecallDismissRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await recall_service.dismiss_node(
+        session, principal, recall_id, namespace=body.namespace, doc_key=body.doc_key,
+        version=body.version, note=body.note)
+
+
+@router.get("/tokens/{token_ref}/budget",
+            summary="A token's daily budget with its ancestors' state (AG-ST-16)")
+async def get_token_budget(
+    token_ref: str,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await token_budget.get_budget(principal, token_ref)
+
+
+@router.put("/tokens/{token_ref}/budget",
+            summary="Set a token's daily limits (an ancestor or a person)")
+async def set_token_budget(
+    token_ref: str,
+    body: TokenBudgetRequest,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await token_budget.set_budget(principal, token_ref, body.model_dump())
+
+
+@router.get("/budgets", summary="Budgets of a token's subtree")
+async def list_token_budgets(
+    subtree_of: str | None = Query(default=None, max_length=64),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await token_budget.list_budgets(principal, subtree_of)
+
+
 @router.get(
     "/policies",
     response_model=PolicyListResponse,
@@ -982,9 +1400,14 @@ async def list_workspace_actions(
 
 
 @router.post(
+    "/documents:batchUpsert",
+    response_model=DocumentBatchUpsertResponse,
+    summary="Create or update up to 25 shared documents (AG-ST-07 path)",
+)
+@router.post(
     "/documents/batch",
     response_model=DocumentBatchUpsertResponse,
-    summary="Atomically create or update up to 25 shared documents",
+    summary="Create or update up to 25 shared documents (atomic=true: all or nothing)",
 )
 async def batch_upsert_documents(
     body: DocumentBatchUpsertRequest,
@@ -994,6 +1417,11 @@ async def batch_upsert_documents(
     return await services.batch_upsert_documents(session, principal, body)
 
 
+@router.post(
+    "/documents:batchGet",
+    response_model=DereferenceBatchResponse,
+    summary="Read up to 25 documents by key (and version) in one call (AG-ST-07 path)",
+)
 @router.post(
     "/dereference-many",
     response_model=DereferenceBatchResponse,
@@ -1010,6 +1438,9 @@ async def batch_dereference(
         body.uris,
         include_unverified=body.include_unverified,
         include_tainted=body.include_tainted,
+        taint_mode=body.taint_mode,
+        keys=body.keys,
+        fields=body.fields,
     )
 
 
@@ -1116,6 +1547,7 @@ async def get_document(
     doc_key: str,
     include_unverified: bool = Query(default=False),
     include_tainted: bool = Query(default=False),
+    taint_mode: str = Query(default="annotate", pattern="^(annotate|separate|exclude)$"),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentOut:
@@ -1125,6 +1557,7 @@ async def get_document(
         doc_key,
         include_unverified=include_unverified,
         include_tainted=include_tainted,
+        taint_mode=taint_mode,
     )
 
 
@@ -1160,6 +1593,7 @@ async def dereference(
         expand_parts=body.expand_parts,
         content_offset=body.content_offset,
         content_limit=body.content_limit,
+        taint_mode=body.taint_mode,
     )
 
 

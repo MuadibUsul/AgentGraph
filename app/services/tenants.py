@@ -30,7 +30,7 @@ logger = logging.getLogger("agentgraph.tenants")
 settings = get_settings()
 
 # Account roles of 3.x map onto PRD membership roles.
-_MEMBERSHIP_ROLE = {"OWNER": "owner", "REVIEWER": "member", "VIEWER": "guest"}
+_MEMBERSHIP_ROLE = {"OWNER": "owner", "ADMIN": "admin", "REVIEWER": "member", "VIEWER": "guest"}
 
 
 def tenant_info(tenant: Tenant) -> TenantInfo:
@@ -221,6 +221,62 @@ async def restore_tenant(session: AsyncSession, tenant_id: str) -> TenantOut:
 async def owner_restore_tenant(session: AsyncSession, principal: Principal) -> TenantOut:
     _require_owner(principal)
     return await restore_tenant(session, principal.tenant_id)
+
+
+_TREE_ERRORS = ("tenant_type_invalid_parent", "tenant_cycle", "tenant_depth_exceeded")
+
+
+async def create_child_tenant(
+    session: AsyncSession,
+    parent_id: str,
+    *,
+    display_name: str,
+    tenant_type: str = "organization",
+    alias: str | None = None,
+    workspace_name: str | None = None,
+    tier: str = "free",
+) -> dict:
+    """A tenant under ``parent_id`` with its first workspace (AG-ID-07 tree, ID-09 groundwork).
+
+    The tree trigger derives root, path and depth and enforces the type rules.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+
+    from app.services.workspace import create_workspace
+
+    parent = await get_tenant(session, parent_id)
+    if parent.status != "active":
+        raise ApiError(409, "invalid_state_transition", "the parent tenant is not active",
+                       details={"status": parent.status})
+    if parent.tenant_type == "personal":
+        raise ApiError(422, "tenant_type_invalid_parent", "personal tenants have no children",
+                       details={"child_type": tenant_type, "parent_type": "personal",
+                                "allowed": []})
+    if parent.depth >= 4:
+        # depth counts the root as 1: three levels below the root (AG-ID-09).
+        raise ApiError(422, "tenant_depth_exceeded", "a tenant tree is at most 3 levels deep",
+                       details={"max_depth": 3})
+    if tenant_type not in ("organization", "personal"):
+        raise ApiError(422, "tenant_type_invalid_parent",
+                       "a child tenant is an organization or a personal tenant",
+                       details={"allowed": ["organization", "personal"]})
+    try:
+        tenant_id = await session.scalar(
+            text("INSERT INTO tenants (id, alias, display_name, tenant_type, parent_tenant_id) "
+                 "SELECT n.id, COALESCE(:alias, agentgraph_tenant_alias(:name, n.id)), :name, "
+                 ":type, :parent FROM (SELECT agentgraph_new_id('ten') AS id) n RETURNING id"),
+            {"alias": alias, "name": display_name, "type": tenant_type, "parent": parent_id},
+        )
+    except DBAPIError as exc:
+        message = str(getattr(exc, "orig", exc))
+        code = next((item for item in _TREE_ERRORS if item in message), "validation_error")
+        raise ApiError(422, code, "the tenant tree refused this node",
+                       details={"reason": message.splitlines()[0][:200]}) from exc
+    created = await create_workspace(
+        session, name=workspace_name or display_name, tier=tier, tenant_id=tenant_id
+    )
+    return {"tenant": await describe_tenant(session, tenant_id), **created.model_dump()}
 
 
 async def purge_due_tenants(session: AsyncSession) -> int:

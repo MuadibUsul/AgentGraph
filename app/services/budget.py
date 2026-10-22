@@ -178,13 +178,22 @@ async def embedding_state(
     return state
 
 
-async def defer_embedding(workspace_id: uuid.UUID) -> bool:
-    """True when enforcement is on and the daily embedding quota is spent.
+async def defer_embedding(
+    workspace_id: uuid.UUID, chain: list[str] | None = None
+) -> bool:
+    """True when enforcement is on and the daily embedding quota is spent,
+    or when a token in the writer's chain spent its embedding budget.
 
     Writes are never refused for embedding cost: the document is stored and
     its indexing waits for the next day's quota (index_state=deferred).
     """
-    if not enforcing() or _suppressed.get():
+    if _suppressed.get():
+        return False
+    from app.services import token_budget
+
+    if await token_budget.embedding_exhausted(chain):
+        return True
+    if not enforcing():
         return False
     try:
         async with async_session_factory() as session:
@@ -199,12 +208,16 @@ def next_quota_reset() -> datetime:
 
 
 async def meter_embedding(
-    workspace_id: uuid.UUID, chars: int, *, kind: str, model: str | None = None
+    workspace_id: uuid.UUID, chars: int, *, kind: str, model: str | None = None,
+    chain: list[str] | None = None,
 ) -> None:
     """Record one embedding call and apply the daily workspace quota."""
     tokens = estimate_tokens(chars)
     if tokens <= 0 or _suppressed.get():
         return
+    from app.services import token_budget
+
+    await token_budget.meter(workspace_id, "embedding_tokens", tokens, chain=chain)
     try:
         used, quota = await _record_embedding(workspace_id, tokens, chars, kind, model)
     except Exception:  # noqa: BLE001 - metering must never fail the write it meters
@@ -465,7 +478,13 @@ async def check_write(
     doc_key: str | None = None,
 ) -> None:
     """Write rate (token bucket), forced backoff and runaway-loop detection."""
-    if not settings.rate_limit_enabled or principal.is_human:
+    if principal.is_human:
+        return
+    from app.services import token_budget
+
+    await token_budget.check(principal, "writes")
+    await token_budget.meter(principal.workspace.id, "writes", 1, principal=principal)
+    if not settings.rate_limit_enabled:
         return
     key = principal_key(principal)
     workspace_id = principal.workspace.id
@@ -529,7 +548,13 @@ async def check_write(
 
 
 async def check_query(principal: Principal) -> None:
-    if not settings.rate_limit_enabled or principal.is_human:
+    if principal.is_human:
+        return
+    from app.services import token_budget
+
+    await token_budget.check(principal, "queries")
+    await token_budget.meter(principal.workspace.id, "queries", 1, principal=principal)
+    if not settings.rate_limit_enabled:
         return
     key = principal_key(principal)
     workspace_id = principal.workspace.id
@@ -696,8 +721,8 @@ async def set_limits(
 async def clear_circuit(
     session: AsyncSession, principal: Principal, target_key: str
 ) -> dict[str, Any]:
-    if not principal.is_human or principal.human_role != "OWNER":
-        raise Forbidden("only a workspace owner can clear a circuit breaker")
+    if not principal.is_human or principal.human_role not in ("OWNER", "ADMIN"):
+        raise Forbidden("only an owner or admin can clear a circuit breaker")
     result = await session.execute(
         text(
             "UPDATE budget_circuits SET cleared_at = NOW(), cleared_by = :by "

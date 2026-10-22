@@ -203,10 +203,20 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.14.0", _MIGRATIONS_DIR / "v3_14_budget_enforce.sql"),
     ("3.15.0", _MIGRATIONS_DIR / "v3_15_leases.sql"),
     ("3.16.0", _MIGRATIONS_DIR / "v3_16_exports.sql"),
+    ("3.17.0", _MIGRATIONS_DIR / "v3_17_events.sql"),
+    ("3.18.0", _MIGRATIONS_DIR / "v3_18_onboarding_progress.sql"),
+    ("3.19.0", _MIGRATIONS_DIR / "v3_19_agent_onboarding.sql"),
+    ("3.20.0", _MIGRATIONS_DIR / "v3_20_durability_incidents.sql"),
+    ("3.21.0", _MIGRATIONS_DIR / "v3_21_token_tree.sql"),
+    ("3.22.0", _MIGRATIONS_DIR / "v3_22_members.sql"),
+    ("3.23.0", _MIGRATIONS_DIR / "v3_23_collaboration.sql"),
+    ("3.24.0", _MIGRATIONS_DIR / "v3_24_provenance_recall_budgets.sql"),
+    ("3.25.0", _MIGRATIONS_DIR / "v3_25_logs_contention_situation.sql"),
+    ("3.26.0", _MIGRATIONS_DIR / "v3_26_tenant_tree.sql"),
 ]
 
 
-async def apply_schema() -> None:
+async def apply_schema(dsn: str | None = None) -> None:
     """Apply the canonical schema, run pending migrations, and backfill data.
 
     A session advisory lock prevents multiple API replicas from racing DDL.
@@ -238,7 +248,8 @@ async def apply_schema() -> None:
         if not path.exists():
             raise RuntimeError(f"migration file not found: {path}")
 
-    conn = await asyncpg.connect(asyncpg_dsn(), timeout=settings.db_pool_timeout)
+    target = (dsn or settings.database_url).replace("postgresql+asyncpg://", "postgresql://", 1)
+    conn = await asyncpg.connect(target, timeout=settings.db_pool_timeout)
     try:
         await conn.execute(
             "SELECT pg_advisory_lock(hashtext('agentgraph_schema_v3')::bigint)"
@@ -347,6 +358,9 @@ async def apply_schema() -> None:
                 "ON CONFLICT (version) DO NOTHING",
                 version,
             )
+        # Current function definitions win over the ones older migrations set.
+        for path in sorted((root / "sql" / "functions").glob("*.sql")):
+            await conn.execute(path.read_text(encoding="utf-8"))
         logger.info(
             "database schema is up to date (v%s)", _INCREMENTAL_MIGRATIONS[-1][0]
         )

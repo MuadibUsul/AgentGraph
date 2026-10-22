@@ -19,6 +19,7 @@ from app.schemas import (
     REVIEW_APPROVE_STATUSES,
     REVIEW_REJECT_STATUSES,
 )
+from app.services.events import event_type_catalog
 
 settings = get_settings()
 
@@ -63,6 +64,10 @@ PRIMITIVES: dict[str, str] = {
     "export_workspace": "Export in the storage format (owner/workspace key; agents need a grant).",
     "get_export": "Export status and download link.",
     "list_exports": "Exports of your tenant.",
+    "poll_events": "Events after a cursor; long-poll up to 25 s; dedupe by event_id.",
+    "subscribe": "Subscribe to namespace/doc_key prefixes for poll_events.",
+    "list_subscriptions": "Your subscriptions (one default from get_orientation).",
+    "unsubscribe": "Remove a subscription.",
     "get_api_docs": "This guide by section.",
 }
 
@@ -121,6 +126,20 @@ def render(live: bool = True) -> str:
         f"- Declare semantics with the `{versioning.VERSION_HEADER}` header: default "
         f"`{versioning.BASELINE_VERSION}`, latest `{versioning.LATEST_VERSION}`.",
         "- First call: `get_orientation` (REST `GET /v1/orientation`).",
+        "",
+        "## Onboarding (4 steps)",
+        "",
+        "1. `get_orientation`.",
+        "2. Read `system/constitution` and call `ack_constitution(version)`.",
+        "3. Read your namespace readme: `dereference(doc://system/namespaces/<ns>)`.",
+        "4. Your role's first read, then first action:",
+        "   - SCOUT: read `raw_inbox`, then write a draft or `propose_document_change`.",
+        "   - ANALYST: read your namespace, then `create_task` or claim a task.",
+        "   - AUDITOR: read the REVIEWING queue, then `review_task`.",
+        "   - EXECUTOR: read claimable tasks, then `agent_claim_and_read`.",
+        "",
+        "Until you finish, responses carry `onboarding` with `state`, `completed_steps` and",
+        "`next_call`. Nothing is blocked; the hints stop once you are `active`.",
         "",
         "## Primitives",
         "",
@@ -189,6 +208,17 @@ def render(live: bool = True) -> str:
         "Every write is stamped with the token, the chain from the workspace root token "
         "and the grant it held; see `explain_write`, `get_token`, `get_lineage`.",
         "",
+        "- The root token only manages tokens; the workspace key and console tokens are "
+        "branches of it. Your effective grant is the intersection along your chain.",
+        "- `issue_child_token(scopes, agent, purpose, namespaces?, ttl_seconds?)` gives "
+        "another agent a subset of your grant (needs `token:issue`); the secret is returned "
+        "once. Children live 1 hour by default and never outlive you.",
+        "- `revoke_token(token_id, reason)` ends a token and its whole subtree at once; "
+        "`renew_token(token_id, ttl_seconds)` is for an ancestor, never yourself. A "
+        "`token_expiring` warning means: ask your parent to renew.",
+        "- Register once with `register_agent(agent_id, ...)` (issued tokens are registered "
+        "at birth); find others with `list_agents` and set `set_status(active|idle)`.",
+        "",
         "## Error codes",
         "",
         "| code | HTTP | class |",
@@ -207,7 +237,9 @@ def sections() -> dict[str, Any]:
         "retry": RETRY_POLICY,
         "errors": registry_table(),
         "events": {
-            "delivery": "at least once; deduplicate by event_id; resume with seq",
+            **event_type_catalog(),
+            "poll": "poll_events / GET /v1/events (long-poll up to 25 s)",
+            "subscribe": "subscribe / POST /v1/subscriptions (namespace/ prefixes)",
             "stream": "GET /v1/stream (SSE), replay with Last-Event-ID",
             "actor_stamp": "each event carries the writer's lineage stamp",
         },

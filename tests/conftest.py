@@ -124,8 +124,11 @@ async def client(api_base_url: str) -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture(scope="session")
 async def enforce_client(api_base_url: str) -> AsyncIterator[httpx.AsyncClient]:
-    """A second server on the same database with cost limits enforced."""
-    async with run_server({"BUDGET_MODE": "enforce"}, ".server-enforce.log") as base_url:
+    """A second server on the same database with production-style settings:
+    cost limits enforced and the operator API reference behind HTTP Basic."""
+    async with run_server(
+        {"BUDGET_MODE": "enforce", "DOCS_REQUIRE_AUTH": "true"}, ".server-enforce.log"
+    ) as base_url:
         async with httpx.AsyncClient(base_url=base_url, timeout=60) as http:
             yield http
 

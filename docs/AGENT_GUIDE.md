@@ -9,6 +9,20 @@ Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.
 - Declare semantics with the `AgentGraph-Version` header: default `2026-10-21`, latest `2026-11`.
 - First call: `get_orientation` (REST `GET /v1/orientation`).
 
+## Onboarding (4 steps)
+
+1. `get_orientation`.
+2. Read `system/constitution` and call `ack_constitution(version)`.
+3. Read your namespace readme: `dereference(doc://system/namespaces/<ns>)`.
+4. Your role's first read, then first action:
+   - SCOUT: read `raw_inbox`, then write a draft or `propose_document_change`.
+   - ANALYST: read your namespace, then `create_task` or claim a task.
+   - AUDITOR: read the REVIEWING queue, then `review_task`.
+   - EXECUTOR: read claimable tasks, then `agent_claim_and_read`.
+
+Until you finish, responses carry `onboarding` with `state`, `completed_steps` and
+`next_call`. Nothing is blocked; the hints stop once you are `active`.
+
 ## Primitives
 
 - `get_orientation`: First call after connecting: who you are, the constitution, namespaces, collaborators, your tasks and what to read next.
@@ -50,6 +64,10 @@ Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.
 - `export_workspace`: Export in the storage format (owner/workspace key; agents need a grant).
 - `get_export`: Export status and download link.
 - `list_exports`: Exports of your tenant.
+- `poll_events`: Events after a cursor; long-poll up to 25 s; dedupe by event_id.
+- `subscribe`: Subscribe to namespace/doc_key prefixes for poll_events.
+- `list_subscriptions`: Your subscriptions (one default from get_orientation).
+- `unsubscribe`: Remove a subscription.
 - `get_api_docs`: This guide by section.
 
 ## Which read to use
@@ -116,10 +134,16 @@ Events are delivered at least once; deduplicate by `event_id`.
 
 Every write is stamped with the token, the chain from the workspace root token and the grant it held; see `explain_write`, `get_token`, `get_lineage`.
 
+- The root token only manages tokens; the workspace key and console tokens are branches of it. Your effective grant is the intersection along your chain.
+- `issue_child_token(scopes, agent, purpose, namespaces?, ttl_seconds?)` gives another agent a subset of your grant (needs `token:issue`); the secret is returned once. Children live 1 hour by default and never outlive you.
+- `revoke_token(token_id, reason)` ends a token and its whole subtree at once; `renew_token(token_id, ttl_seconds)` is for an ancestor, never yourself. A `token_expiring` warning means: ask your parent to renew.
+- Register once with `register_agent(agent_id, ...)` (issued tokens are registered at birth); find others with `list_agents` and set `set_status(active|idle)`.
+
 ## Error codes
 
 | code | HTTP | class |
 |---|---|---|
+| `backup_in_progress` | 409 | `retry_after` |
 | `contention` | 409 | `retry_after` |
 | `export_in_progress` | 409 | `retry_after` |
 | `idempotency_in_progress` | 409 | `retry_after` |
@@ -169,6 +193,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `last_owner_required` | 409 | `fix_request` |
 | `locate_required` | 409 | `fix_request` |
 | `log_document_append_only` | 409 | `fix_request` |
+| `not_a_log_document` | 409 | `fix_request` |
 | `policy_exists` | 409 | `fix_request` |
 | `proposal_required` | 409 | `fix_request` |
 | `task_exists` | 409 | `fix_request` |
@@ -209,6 +234,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `quota_exceeds_parent` | 422 | `fix_request` |
 | `rollup_summary_required` | 422 | `fix_request` |
 | `subject_identifier_required` | 422 | `fix_request` |
+| `task_tree_too_deep` | 422 | `fix_request` |
 | `tenant_cycle` | 422 | `fix_request` |
 | `tenant_depth_exceeded` | 422 | `fix_request` |
 | `tenant_type_invalid_parent` | 422 | `fix_request` |
@@ -266,9 +292,12 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` |
 | `tenant_deleting` | 403 | `escalate_human` |
 | `tenant_suspended` | 403 | `escalate_human` |
+| `backup_chain_broken` | 409 | `escalate_human` |
+| `backups_not_configured` | 409 | `escalate_human` |
 | `confirmation_required` | 409 | `escalate_human` |
 | `escalated_to_human` | 409 | `escalate_human` |
 | `incident_not_confirmed` | 409 | `escalate_human` |
+| `staging_not_configured` | 409 | `escalate_human` |
 | `taint_blocked` | 409 | `escalate_human` |
 | `tree_quota_exceeded` | 409 | `escalate_human` |
 | `budget_exhausted` | 429 | `escalate_human` |

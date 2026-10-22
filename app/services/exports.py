@@ -59,7 +59,7 @@ SUPPORTED_FORMATS = (FORMAT,)
 # table -> (archive file, columns never exported)
 EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "tenants": ("objects.jsonl", ()),
-    "workspaces": ("objects.jsonl", ("api_key_hash",)),
+    "workspaces": ("objects.jsonl", ("api_key_hash", "root_key_hash")),
     "memberships": ("objects.jsonl", ()),
     "namespaces": ("objects.jsonl", ()),
     "human_users": ("objects.jsonl", ("password_hash",)),
@@ -84,10 +84,25 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "workspace_budgets": ("objects.jsonl", ()),
     "webhook_rules": ("objects.jsonl", ("secret",)),
     "usage_ledger": ("objects.jsonl", ()),
+    "event_subscriptions": ("objects.jsonl", ()),
+    "onboarding_progress": ("objects.jsonl", ()),
+    "agent_onboarding": ("objects.jsonl", ()),
+    # The per-workspace event counter: imported logs continue their seq.
+    "workspace_event_seq": ("objects.jsonl", ()),
     "timeline_streams": ("events.jsonl", ()),
     "workspace_events": ("events.jsonl", ()),
     "state_audit_diffs": ("audit_log.jsonl", ()),
     "access_audit": ("audit_log.jsonl", ()),
+    "token_access_log": ("audit_log.jsonl", ()),
+    "agent_directory": ("objects.jsonl", ()),
+    "agent_aliases": ("objects.jsonl", ()),
+    "escalations": ("objects.jsonl", ()),
+    "doc_derivations": ("doc_edges.jsonl", ()),
+    "recalls": ("objects.jsonl", ()),
+    "recall_nodes": ("objects.jsonl", ()),
+    "log_entries": ("objects.jsonl", ()),
+    # Replayed after a restore or import so erased data stays erased (AG-TC-07).
+    "redaction_log": ("audit_log.jsonl", ()),
 }
 # Rebuilt from exported state after an import.
 DERIVED = frozenset({"document_chunks", "document_index"})
@@ -96,6 +111,20 @@ EPHEMERAL = frozenset({
     "budget_backoff", "budget_buckets", "budget_circuits", "budget_limits",
     "human_sessions", "idempotency_records", "rate_limit_windows", "schema_migrations",
     "webhook_deliveries", "exports", "export_archives", "imports",
+    # Platform records (R1.3): backups, drills, incidents and their notices
+    # belong to the operator, not to a tenant's data.
+    "backups", "restore_runs", "restore_drills", "platform_alerts", "email_outbox",
+    "incidents", "incident_nodes", "incident_notices", "incident_timeline",
+    # Invitations are transient; rights requests hold the very personal data
+    # they are about and are minimized in place, never copied out (AG-TC-07).
+    "member_invitations", "rights_requests", "rights_request_events", "rights_exports",
+    # The read window lives 15 minutes; daily usage counters reset (R2.2).
+    "token_reads", "token_usage", "token_budgets",
+    # Conflict counters, per-minute metrics and situation alerts (R2.3).
+    "doc_contention", "principal_metrics", "situation_alerts",
+    # Tree governance (R2.4): policies, confirmations, shares and admin access
+    # sessions belong to the live tree, not to one node's data.
+    "tenant_policies", "tenant_confirmations", "tenant_shares", "admin_access_sessions",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
@@ -172,7 +201,7 @@ def _authorize(principal: Principal, scope: str) -> None:
     """
     if principal.auth_kind is AuthKind.HUMAN_ADMIN:
         return
-    if principal.auth_kind is AuthKind.HUMAN and principal.human_role == "OWNER":
+    if principal.auth_kind is AuthKind.HUMAN and principal.human_role in ("OWNER", "ADMIN"):
         return
     if principal.auth_kind is AuthKind.WORKSPACE and scope != "tenant":
         return
@@ -241,6 +270,8 @@ async def request_export(
     include: list[str] | None = None,
     purpose: str = "manual",
     requested_by: str | None = None,
+    start: bool = True,
+    deliver_to: list[str] | None = None,
 ) -> dict[str, Any]:
     if scope not in ("tenant", "workspace", "namespace"):
         raise ApiError(422, "validation_error", "scope must be tenant, workspace or namespace",
@@ -251,10 +282,12 @@ async def request_export(
     if purpose == "manual":
         _authorize(principal, scope)
     tenant_id = principal.tenant_id
+    deliver_to = list(deliver_to or [])
     if scope == "tenant":
         scope_ref = scope_ref or tenant_id
         if scope_ref != tenant_id and principal.auth_kind is not AuthKind.HUMAN_ADMIN:
-            raise Forbidden("you may export your own tenant only")
+            await _authorize_node(principal, scope_ref)
+            deliver_to.append(tenant_id)
         tenant_id = scope_ref
     elif scope == "workspace":
         scope_ref = str(principal.workspace.id)
@@ -307,20 +340,21 @@ async def request_export(
                 text(
                     "INSERT INTO exports (tenant_id, workspace_id, requested_by, purpose, scope, "
                     "scope_ref, include_subtree, include_history, include_groups, kind, "
-                    "base_export_id, prev_export_id) VALUES (:tenant, :workspace, :by, :purpose, "
-                    ":scope, :ref, :subtree, :history, CAST(:groups AS jsonb), :kind, :base, "
-                    ":prev) RETURNING *"
+                    "base_export_id, prev_export_id, deliver_to) VALUES (:tenant, :workspace, "
+                    ":by, :purpose, :scope, :ref, :subtree, :history, CAST(:groups AS jsonb), "
+                    ":kind, :base, :prev, :deliver) RETURNING *"
                 ),
                 {"tenant": tenant_id, "workspace": principal.workspace.id,
                  "by": requested_by or principal.agent_signature, "purpose": purpose,
                  "scope": scope, "ref": scope_ref, "subtree": include_subtree,
                  "history": include_history,
                  "groups": json.dumps(include) if include is not None else None,
-                 "kind": kind, "base": base_id, "prev": prev_id},
+                 "kind": kind, "base": base_id, "prev": prev_id, "deliver": deliver_to},
             )
         ).mappings().one()
         await session.commit()
-    start_export(row["id"])
+    if start:
+        start_export(row["id"])
     return export_out(dict(row))
 
 
@@ -362,14 +396,35 @@ def start_export(export_id: str) -> None:
     task.add_done_callback(_running.discard)
 
 
+async def _authorize_node(principal: Principal, node_id: str) -> None:
+    """Another node: an owner/admin of it or an ancestor, or a person's own
+    personal space unless an ancestor's policy forbids it (AG-ID-13)."""
+    from app.services import tree
+
+    if principal.auth_kind is not AuthKind.HUMAN:
+        raise Forbidden("you may export your own tenant only")
+    async with async_session_factory() as session:
+        target = await tree.node(session, None, node_id)
+        role = await tree.role_on(session, principal, target["id"])
+        if role in ("owner", "admin"):
+            return
+        if target["tenant_type"] == "personal" and role == "member" and (
+                await tree.effective(session, target["id"]))["personal_space_export"]["value"]:
+            return
+    raise Forbidden("you may export your own tenant only")
+
+
 def _visible(principal: Principal, row: dict[str, Any]) -> bool:
     if principal.auth_kind is AuthKind.HUMAN_ADMIN:
         return True
+    if principal.tenant_id in (row.get("deliver_to") or []):
+        return principal.auth_kind is AuthKind.HUMAN and principal.human_role in (
+            "OWNER", "ADMIN")
     if row["tenant_id"] != principal.tenant_id:
         return False
     if principal.auth_kind is AuthKind.WORKSPACE:
         return row["workspace_id"] == principal.workspace.id
-    return principal.auth_kind is AuthKind.HUMAN and principal.human_role == "OWNER"
+    return principal.auth_kind is AuthKind.HUMAN and principal.human_role in ("OWNER", "ADMIN")
 
 
 async def get_export_any(export_id: str) -> dict[str, Any]:
@@ -479,7 +534,7 @@ async def _table_rows(
     if table == "tenants":
         where = "t.id = ANY(:tenants)"
         params["tenants"] = tenants
-    elif table == "memberships":
+    elif table == "memberships" or ("workspace_id" not in columns and "tenant_id" in columns):
         where = "t.tenant_id = ANY(:tenants)"
         params["tenants"] = tenants
     elif table == "workspaces":
@@ -840,9 +895,16 @@ async def _disable_triggers(session: AsyncSession, tables: list[str]) -> list[st
 
 async def import_archive(
     principal: Principal | None, data: bytes, *, target: str, verify: bool = True,
-    into_tenant_id: str | None = None,
+    into_tenant_id: str | None = None, session_factory: Any = None,
+    actor: str | None = None,
 ) -> dict[str, Any]:
-    """Import an archive; ``principal=None`` is the admin console."""
+    """Import an archive; ``principal=None`` is the admin console.
+
+    ``session_factory`` lets a restore import into another database (staging).
+    An increment imported with ``into_tenant_id`` is moved into that tenant,
+    like the ``new_workspace`` import it continues.
+    """
+    factory = session_factory or async_session_factory
     if principal is not None and not (
         principal.auth_kind is AuthKind.HUMAN_ADMIN
         or (principal.auth_kind is AuthKind.HUMAN and principal.human_role == "OWNER")
@@ -866,14 +928,14 @@ async def import_archive(
         _verify(manifest, archive)
     rows = _rows_from(manifest, archive)
     manifest_sha = _sha(archive.read("manifest.json"))
-    actor = principal.agent_signature if principal is not None else "admin"
+    actor = actor or (principal.agent_signature if principal is not None else "admin")
     tenant_id = into_tenant_id or (principal.tenant_id if principal is not None else None)
     if target == "new_workspace" and tenant_id is None:
         raise ApiError(422, "validation_error", "name the tenant that receives the workspace",
                        details={"field": "into_tenant"})
     record_tenant = tenant_id or manifest["tenant_id"]
     import_id = None
-    async with async_session_factory() as session:
+    async with factory() as session:
         import_id = await session.scalar(
             text("INSERT INTO imports (tenant_id, requested_by, target, verify, "
                  "source_export_id, source_kind, manifest_sha256) VALUES (:tenant, :by, "
@@ -884,27 +946,30 @@ async def import_archive(
         )
         await session.commit()
     try:
-        async with async_session_factory() as session:
+        async with factory() as session:
             result = await _apply(
                 session, actor, manifest, archive, rows, target, tenant_id,
+                rewrite_tenant=into_tenant_id if target == "increment" else None,
             )
             await session.commit()
     except ApiError as exc:
-        await _finish_import(import_id, "failed", error=exc.body()["error"])
+        await _finish_import(import_id, "failed", error=exc.body()["error"], factory=factory)
         raise
     except Exception as exc:
-        await _finish_import(import_id, "failed", error={"message": str(exc)[:2_000]})
+        await _finish_import(import_id, "failed", error={"message": str(exc)[:2_000]},
+                             factory=factory)
         raise
     await _finish_import(import_id, "done", counts=result["counts"],
-                         workspace_ids=[item["id"] for item in result["workspaces"]])
+                         workspace_ids=[item["id"] for item in result["workspaces"]],
+                         factory=factory)
     return {"import_id": import_id, "status": "done", **result}
 
 
 async def _finish_import(
     import_id: str, status: str, *, error: dict | None = None, counts: dict | None = None,
-    workspace_ids: list[str] | None = None,
+    workspace_ids: list[str] | None = None, factory: Any = None,
 ) -> None:
-    async with async_session_factory() as session:
+    async with (factory or async_session_factory)() as session:
         await session.execute(
             text("UPDATE imports SET status = :status, error = CAST(:error AS jsonb), "
                  "counts = CAST(:counts AS jsonb), workspace_ids = CAST(:ws AS jsonb), "
@@ -923,6 +988,8 @@ async def _apply(
     rows: dict[str, list[dict[str, Any]]],
     target: str,
     into_tenant_id: str | None,
+    *,
+    rewrite_tenant: str | None = None,
 ) -> dict[str, Any]:
     pks = await _primary_keys(session)
     workspaces = rows.get("workspaces", [])
@@ -937,6 +1004,15 @@ async def _apply(
             raise ApiError(409, "increment_out_of_order",
                            "apply the previous export of this chain first",
                            details={"prev_export_id": manifest["prev_export_id"]})
+        if rewrite_tenant:
+            rows.pop("tenants", None)
+            rows.pop("memberships", None)
+            for table_rows in rows.values():
+                for row in table_rows:
+                    if "tenant_id" in row:
+                        row["tenant_id"] = rewrite_tenant
+                    if "root_tenant_id" in row:
+                        row["root_tenant_id"] = rewrite_tenant
     else:
         if not workspaces:
             raise ApiError(422, "validation_error", "the archive holds no workspace",

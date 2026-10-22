@@ -52,8 +52,12 @@ class TaskStatus(str, enum.Enum):
     HANDOFF = "HANDOFF"
     AWAITING_HUMAN = "AWAITING_HUMAN"
     ESCALATED_TO_HUMAN = "ESCALATED_TO_HUMAN"
+    # AG-CO-05: the holder asked a human and waits; the lease is paused.
+    WAITING_HUMAN = "WAITING_HUMAN"
     DONE = "DONE"
     FAILED = "FAILED"
+    # AG-CO-08: cancelled with a cancelled parent.
+    CANCELLED = "CANCELLED"
 
 
 class LinkType(str, enum.Enum):
@@ -90,9 +94,26 @@ class Workspace(Base):
         String(32), nullable=False, default="developer_5usd",
         server_default=text("'developer_5usd'"),
     )
-    # The workspace key is this workspace's root token (PRD AG-ID-03).
+    # Token id of the workspace key: a branch with commander rights (AG-ID-01).
+    key_token_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    # The root token only manages tokens; its secret is held by a human.
     root_token_id: Mapped[str] = mapped_column(
         String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    root_key_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    root_key_rotated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    max_token_depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=2, server_default=text("2")
+    )
+    branch_token_quota: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=20, server_default=text("20")
+    )
+    workspace_token_quota: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=100, server_default=text("100")
     )
     # Server-derived: a trigger creates a root tenant when none is supplied.
     tenant_id: Mapped[str] = mapped_column(
@@ -212,6 +233,27 @@ class AgentToken(Base):
     )
     issued_by_agent_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # AG-ID-02: explicit grant (None = legacy token, limited by its role only).
+    scopes: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    read_namespaces: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    write_namespaces: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    can_issue: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    max_descendants: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    lineage: Mapped[list[str] | None] = mapped_column(ARRAY(String(40)), nullable=True)
+    issued_by_token_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    issued_by_human: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    agent_profile: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    revoke_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revoked_ancestor: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    expiring_notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -343,6 +385,25 @@ class SharedDocument(Base):
         DateTime(timezone=True), nullable=True
     )
     taint_cleared_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # AG-TC-01/02 (v3.24): write-time taint sources, recall state, declared origin.
+    provenance_taint: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    recall_severity: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    content_origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="internal", server_default=text("'internal'"))
+    # AG-ST-14 / AG-TC-03 (v3.25).
+    doc_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="collaborative",
+        server_default=text("'collaborative'"))
+    log_seq: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0"))
+    log_unindexed: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    log_unindexed_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    log_index_batches: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    last_human_edit: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     policy_flags: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -544,6 +605,42 @@ class CollabTask(Base):
         Integer, nullable=False, default=0, server_default=text("0")
     )
     assignee: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    # AG-CO-02 pointers, AG-CO-04 continuation, AG-CO-08 tree (v3.23).
+    context_docs: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    context_versions_pinned: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    done_definition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_to: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    required_role: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    required_capabilities: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list, server_default=text("'{}'"))
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="work", server_default=text("'work'"))
+    require_continuation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    continuation: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    continuation_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    parent_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("collab_tasks.id", ondelete="SET NULL"), nullable=True)
+    root_task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    parent_task_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    root_task_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tree_depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    lead: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    children_done: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    rollup: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    lease_paused_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    mentions: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    recall_flags: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     tainted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE")
     )
@@ -732,6 +829,10 @@ class StateAuditDiff(Base):
 class DocumentVersion(Base):
     __tablename__ = "document_versions"
 
+    # AG-TC-07: personal data redacted in place; content_hash keeps the original.
+    redacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    redaction_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     stamp: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, server_default=FetchedValue()
     )
@@ -773,6 +874,10 @@ class DocumentVersion(Base):
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
     author: Mapped[str] = mapped_column(String(128), nullable=False)
+    human_edited: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    content_origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="internal", server_default=text("'internal'"))
     session_batch_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
@@ -821,11 +926,59 @@ class WorkspaceEvent(Base):
         DateTime(timezone=True), nullable=False, default=utcnow,
         server_default=func.now(),
     )
+    # AG-EV-01: per-workspace gap-free seq, assigned at commit (commit order).
+    seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    event_id: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=FetchedValue()
+    )
+    type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    targets: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    refs: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    summary: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    shard_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    stamp: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=FetchedValue()
+    )
 
     __table_args__ = (
         Index("idx_workspace_events_cursor", "workspace_id", "id"),
         Index("idx_workspace_events_time", "created_at"),
     )
+
+
+class EventSubscription(Base):
+    """Server-side prefix subscription (PRD AG-EV-02)."""
+
+    __tablename__ = "event_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, server_default=FetchedValue())
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=FetchedValue()
+    )
+    owner: Mapped[str] = mapped_column(String(128), nullable=False)
+    owner_token_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    prefixes: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    types: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+    last_polled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class DocumentChunk(Base):
@@ -1235,6 +1388,8 @@ class ExternalAction(Base):
     session_batch_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
+    tainted_inputs: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow,

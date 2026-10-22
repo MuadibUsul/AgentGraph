@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     default_task_lease_seconds: int = Field(default=60, ge=5, le=86_400)
     max_task_lease_seconds: int = Field(default=3_600, ge=5, le=86_400)
     lease_reaper_interval_seconds: int = Field(default=15, ge=5, le=3_600)
+    # AG-TC-05: how often the anomaly rules run.
+    situation_interval_seconds: int = Field(default=60, ge=5, le=3_600)
     # AG-CO-03: lease TTL when a 2026-11 client sets none (heartbeat every
     # ttl/3), and how many orphanings escalate a task to a human.
     lease_default_ttl_seconds: int = Field(default=900, ge=60, le=3_600)
@@ -90,6 +92,42 @@ class Settings(BaseSettings):
     exports_per_hour: int = Field(default=4, ge=1, le=1_000)
     export_retention_days: int = Field(default=30, ge=1, le=3_650)
     max_import_bytes: int = Field(default=512 * 1024 * 1024, ge=1_024)
+
+    # Token tree (AG-ID-02): issue_child_token stays off until an operator
+    # enables it (PRD gate: root/branch split, lineage and revocation first).
+    child_token_issuance: bool = False
+
+    # ------------------------------------------- backups (AG-ST-10, R1.3)
+    # Archives go to BACKUP_DIR, which must live on other storage than the
+    # database (another disk, an NFS/object-storage mount). Unset = no backups.
+    backup_dir: str | None = None
+    backup_scheduler_enabled: bool = True
+    # Incrementals every 15 minutes keep the logical RPO at 15 minutes.
+    backup_interval_minutes: int = Field(default=15, ge=1, le=1_440)
+    backup_full_interval_hours: int = Field(default=24, ge=1, le=720)
+    backup_retention_days: int = Field(default=30, ge=1, le=3_650)
+    # Optional command run after each backup, e.g. "rclone copy {path} remote:ag".
+    backup_upload_command: str | None = None
+    # Restores and drills target this database, never production.
+    staging_database_url: str | None = None
+    restore_drill_interval_days: int = Field(default=30, ge=1, le=365)
+    restore_drill_sample: int = Field(default=100, ge=1, le=100_000)
+
+    # ------------------------------------------ incidents (AG-TC-06, R1.3)
+    incident_check_interval_seconds: int = Field(default=60, ge=5, le=3_600)
+    # Shown in every notice as "our contact"; required to send notices.
+    security_contact: str | None = None
+    platform_admin_email: str | None = None
+    # Outgoing mail; without SMTP_HOST messages stay in email_outbox as no_transport.
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65_535)
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str = "AgentGraph <no-reply@localhost>"
+    smtp_starttls: bool = True
+    # Per-token access log (scope resolution for reads).
+    access_log_flush_seconds: float = Field(default=5.0, ge=0.1, le=300)
+    access_log_max_objects: int = Field(default=500, ge=10, le=10_000)
 
     # ----------------------------------------------------- proposals / policy
     proposals_enabled: bool = True

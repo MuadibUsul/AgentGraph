@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.actors import actor_label, actor_ref
 from app.engine.blackboard import lease_is_active
 from app.engine.formatter import render_document
 from app.models import (
@@ -71,6 +72,7 @@ def workspace_info(workspace: Workspace) -> WorkspaceInfo:
         canonical_id=workspace.canonical_id,
         name=workspace.name,
         tier=workspace.tier,
+        tenant_id=workspace.tenant_id,
         created_at=workspace.created_at,
     )
 
@@ -148,6 +150,16 @@ def task_summary(task: CollabTask) -> TaskSummary:
         orphan_count=task.orphan_count or 0,
         tainted=task.tainted,
         taint_sources=task.taint_sources or [],
+        kind=task.kind or "work",
+        required_role=task.required_role,
+        context_docs_count=len(task.context_docs or []),
+        done_definition_preview=(task.done_definition or "")[:200] or None,
+        output_to=task.output_to,
+        continuation=task.continuation,
+        parent_task_key=task.parent_task_key,
+        root_task_key=task.root_task_key,
+        lead=task.lead,
+        children_done=bool(task.children_done),
         updated_at=task.updated_at,
         updated_stamp=task.updated_stamp,
     )
@@ -164,7 +176,16 @@ def task_out(task: CollabTask) -> TaskOut:
         reject_history=task.reject_history or [],
         review_round=task.review_round,
         review_history=task.review_history or [],
-        created_by=task.created_by,
+        context_docs=task.context_docs or [],
+        context_versions_pinned=task.context_versions_pinned,
+        done_definition=task.done_definition,
+        required_capabilities=list(task.required_capabilities or []),
+        require_continuation=bool(task.require_continuation),
+        output_summary=task.output_summary,
+        rollup=task.rollup or [],
+        mentions=task.mentions or [],
+        created_by=actor_ref(task.created_by),
+        created_by_label=actor_label(task.created_by),
         created_at=task.created_at,
     )
 
@@ -204,12 +225,18 @@ def document_summary(
         human_note=document.human_note,
         tainted=document.tainted,
         taint_sources=document.taint_sources or [],
+        taint_cleared_by=document.taint_cleared_by,
+        content_origin=document.content_origin or "internal",
+        recall_severity=document.recall_severity,
+        doc_type=document.doc_type or "collaborative",
+        last_human_edit=document.last_human_edit,
         archived_at=document.archived_at,
         archived_by=document.archived_by,
         archive_reason=document.archive_reason,
         trust=document.trust_level,
         archived=document.archived_at is not None,
-        updated_by=document.updated_by,
+        updated_by=actor_ref(document.updated_by),
+        updated_by_label=actor_label(document.updated_by),
         updated_at=document.updated_at,
         updated_stamp=document.updated_stamp,
         **getattr(document, "_index_status", {}),
@@ -226,7 +253,8 @@ def document_out(
     return DocumentOut(
         **summary.model_dump(),
         content=document.content,
-        created_by=document.created_by,
+        created_by=actor_ref(document.created_by),
+        created_by_label=actor_label(document.created_by),
         created_at=document.created_at,
         created_stamp=document.created_stamp,
         agent_view=render_document(

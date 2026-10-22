@@ -174,7 +174,14 @@ E:\Codes\AgentGraph\
 │       ├── v3_13_async_index.sql         # 异步索引任务与状态（AG-ST-13）
 │       ├── v3_14_budget_enforce.sql      # 强制退避、配额覆盖（工作区/租户）（AG-ST-15 拦截）
 │       ├── v3_15_leases.sql              # 统一租约、fencing token、孤儿计数、assignee（AG-CO-03）
-│       └── v3_16_exports.sql             # 导出任务、导出包、导入记录（AG-ST-02）
+│       ├── v3_16_exports.sql             # 导出任务、导出包、导入记录（AG-ST-02）
+│       ├── v3_17_events.sql              # 事件 seq（提交时分配）、类型化事件、订阅（AG-EV-01/02）
+│       ├── v3_18_onboarding_progress.sql # 控制台“开始使用”清单进度（按用户 + 工作区，RLS）
+│       ├── v3_19_agent_onboarding.sql    # Agent MCP 引导状态机（agent_onboarding，RLS，历史回填）
+│       ├── v3_20_durability_incidents.sql # 备份/恢复/演练、平台告警、邮件外发、安全事件与通知、令牌访问记录
+│       ├── v3_21_token_tree.sql          # 根令牌、子令牌签发字段与谱系、协作者名录（agent_directory）
+│       └── v3_22_members.sql             # 成员邀请、ADMIN 角色、个人权利请求、遮盖日志
+│   └── functions/                        # 每次启动在迁移之后应用的当前函数定义（如 notify_workspace_change）
 │
 ├── dashboard/
 │   ├── package.json                      # Next.js 14.2 / React 18 / react-markdown
@@ -651,6 +658,31 @@ ruff check .
 | `app/engine/notion.py` | Notion/HTML 检测与 Markdown 转换；表格、标题、列表、链接与安全过滤 |
 | `dashboard/app/components/markdown.tsx` | GFM + sanitized raw HTML 渲染，兼容 Notion 表格 |
 | `dashboard/app/design-tokens.css` | Primitive → Semantic → Component 设计 Token |
+| `app/docs_site.py` | 公开文档站唯一数据源：从 OpenAPI（仅 `/v1`）、AGENT_GUIDE、错误码注册表生成中英双语页面 |
+| `scripts/gen_docs_site.py` | 生成 `dashboard/app/docs/site.generated.json`；`--check` 检测过期（测试同样检查） |
+| `app/api/public_docs.py` | 未构建前端时 `/docs/` 的纯 HTML 回退渲染 |
+| `dashboard/app/docs/` | 文档站页面（`/docs/`、`/docs/<slug>/`），移动端菜单、语言切换、API/错误码筛选 |
+| `app/services/human_onboarding.py` | 控制台 6 步“开始使用”清单：自动检测、跳过、关闭、重新打开 |
+| `app/services/agent_onboarding.py` | Agent 引导：状态机、`next_call`、轻量提示、角色首个动作、`agent.*` 审计、指标概览 |
+| `dashboard/app/components/onboarding.tsx` | 清单卡片、铸造令牌后的 MCP 配置与连接测试、Agent 引导状态徽章 |
+| `app/services/backups.py` | 备份链（全量 + 15 分钟增量，导出格式）、恢复到 staging/新工作区/原地、恢复演练、调度 |
+| `app/services/incidents.py` | 安全事件：影响范围计算、72 小时通知（邮件/事件/横幅）、只追加通知记录、时限检查、记录导出 |
+| `app/services/access_log.py` | 按令牌/分钟聚合的访问记录（读到的文档与任务），供事件范围计算 |
+| `app/services/alerts.py`、`app/services/mailer.py` | 平台告警与邮件外发队列（配置 SMTP 后发送） |
+| `app/services/token_tree.py` | 根令牌、`issue_child_token`（只减不增）、级联吊销、续期、根令牌轮换 |
+| `app/services/directory.py` | 协作者名录：注册、查询、状态、离线扫描、遗留身份认领、按 2026-11 输出 `agent:`/`human:` 引用 |
+| `app/services/members.py` | 成员与角色：邀请、改角色、移除（吊销或转交令牌）、沿树继承 owner/admin、切换工作区 |
+| `app/services/rights.py` | 个人权利请求：定位、导出、假名化、遮盖、删除、说明、提醒与最小化、恢复后重放遮盖日志 |
+| `app/services/collab.py` | 任务协作：上下文指针与版本钉住、认领角色检查、续跑包、@提及、升级给人（WAITING_HUMAN 暂停租约）、子任务树与汇总、级联取消 |
+| `app/services/provenance.py` | 写入来源与读窗口：外部主体、derived_from、15 分钟读窗口、声明来源；记录 doc_derivations；taint_mode 读侧处理 |
+| `app/services/recall.py` | 数据召回：沿 doc_derivations 广度优先、标记下游版本与任务、doc.recalled 事件、resolves_recall/驳回与关闭 |
+| `app/services/token_budget.py` | 令牌树预算：按令牌按日限额，用量沿谱系累计到分支，429 budget_exhausted、80% 预警、设置与查询 |
+| `app/services/logs.py` | 日志型文档：append_entries/read_entries、按文档无间隙 seq、每 20 条或 5 分钟重渲染并建索引 |
+| `app/services/contention.py` | 热点文档保护：section_hash、10 秒 5 次冲突进入 contended 60 秒、doc.contended |
+| `app/services/situation.py` | 态势感知：每主体每分钟指标、8 条异常规则、告警去抖与 alert.raised、list_alerts/ack/get_metrics |
+| `app/services/tree.py` | 租户树：子节点、可见子树、移动/挂接/迁出（双方 owner 确认）、只能收紧的继承策略与锁定、配额池、按节点用量、宪法继承、节点删除与恢复 |
+| `app/services/sharing.py` | 跨节点共享（同树内读/写授权、撤销即时生效、include_shared）与祖先管理员的审计访问会话 |
+| `scripts/deploy_tlines.sh` | Tlines 部署：数据库备份、旧镜像打标签、构建重启、校验、自动/手动回滚 |
 | `scripts/webhook_receiver.py` | Bot 侧签名 Webhook 接收器：校验时间戳/HMAC，写入 JSONL outbox |
 | `app/services/tasks.py` | 失败认领/续租/释放/交接/审核/升级写入 `TASK_*_FAILED` 时间线 |
 | `POST /v1/admin/workspaces/{id}/agent-tokens/{token_id}/rotate` | Agent 身份不变、密钥立即轮换 |
@@ -750,6 +782,9 @@ rank fusion 合并两路排名，默认只查 VERIFIED 且非 tainted 文档。�
   hash embedding 仍是词法近似，真实语义质量需 OpenAI/Ollama。
 - Docker CMD 增加 `--proxy-headers --forwarded-allow-ips=*`；Caddy HTTP 308
   跳 HTTPS，生产 `/docs` 已在浏览器验证。
+- 自 v3.19 起 `/docs/` 为公开文档站（无需登录，不含 `/v1/admin` 与任何密钥）；
+  Swagger UI 移至 `/api-reference`，与 `/openapi.json` 一样在
+  `DOCS_REQUIRE_AUTH=true` 时需要 HTTP Basic（密码为 admin token）。
 - 可丢弃的测试工作区可用
   `DELETE /v1/admin/workspaces/{id}?confirm=<精确名称>` 级联删除；生产清理优先
   归档/导出，不把硬删除当日常操作。

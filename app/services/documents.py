@@ -8,10 +8,23 @@ import hmac
 import json
 import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import Numeric, case, func, select, tuple_, update
+from sqlalchemy import (
+    Numeric,
+    and_,
+    case,
+    cast,
+    false,
+    func,
+    or_,
+    select,
+    text,
+    true,
+    tuple_,
+    update,
+)
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,8 +94,19 @@ from app.schemas import (
     RegisterPartsRequest,
     TombstoneOut,
 )
+from app.services import (
+    access_log,
+    agent_onboarding,
+    budget,
+    contention,
+    indexer,
+    onboarding,
+    provenance,
+    sharing,
+    situation,
+)
 from app.services import addresses as address_service
-from app.services import budget, indexer, onboarding
+from app.services import recall as recall_service
 from app.services.common import (
     PLATFORM_DOC_NAMESPACES,
     append_event,
@@ -129,6 +153,8 @@ def _version_summary(version: DocumentVersion) -> DocumentVersionSummary:
         taint_sources=version.taint_sources or [],
         created_at=version.created_at,
         stamp=version.stamp,
+        redacted=version.redacted_at is not None,
+        redaction_hash=version.redaction_hash,
     )
 
 
@@ -151,6 +177,7 @@ async def _record_version(
     author: str,
     batch_id: uuid.UUID | None,
     change_summary: str,
+    human_edited: bool = False,
 ) -> DocumentVersion:
     version = DocumentVersion(
         workspace_id=document.workspace_id,
@@ -166,6 +193,8 @@ async def _record_version(
         trust_level=document.trust_level,
         tainted=document.tainted,
         taint_sources=document.taint_sources or [],
+        content_origin=document.content_origin or "internal",
+        human_edited=human_edited,
         author=author,
         session_batch_id=batch_id,
         change_summary=change_summary,
@@ -388,68 +417,144 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
         raise ApiError(400, "invalid_cursor", "document cursor is invalid") from exc
 
 
-_FILTER_OPERATORS = {"eq", "gte", "lte", "gt", "lt", "exists"}
+_FILTER_OPERATORS = {"eq", "ne", "gte", "lte", "gt", "lt", "exists", "in", "nin", "contains"}
+_RANGE_OPERATORS = ("gte", "lte", "gt", "lt")
+_RELATIVE_TIME = re.compile(r"^now(?:([+-])(\d+)([dh]))?$")
+_DATE_LIKE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+FILTER_MAX_DEPTH = 3
+FILTER_MAX_CONDITIONS = 20
+FILTER_SET_MAX = 100
 
 
-def _frontmatter_conditions(filters: dict[str, Any]) -> list[Any]:
+def _filter_error(path: str, reason: str, message: str, *, legacy: str,
+                  legacy_field: str | None = None) -> ApiError:
+    """``invalid_filter`` under 2026-11; the older specific codes before it."""
+    if at_least(LATEST_VERSION):
+        return ApiError(422, "invalid_filter", message, details={
+            "path": path, "reason": reason, "field": f"filters.{path}",
+            "allowed": sorted(_FILTER_OPERATORS)})
+    return ApiError(422, legacy, message, details={
+        "field": f"filters.{legacy_field or path}", "allowed": sorted(_FILTER_OPERATORS)})
+
+
+def _filter_time(value: str) -> datetime | None:
+    """``now``, ``now+30d``, ``now-2h``, a date or an RFC 3339 time; else None."""
+    relative = _RELATIVE_TIME.match(value.strip())
+    if relative:
+        moment = utcnow()
+        if relative.group(1):
+            amount = int(relative.group(2))
+            delta = timedelta(days=amount) if relative.group(3) == "d" else timedelta(
+                hours=amount)
+            moment = moment + delta if relative.group(1) == "+" else moment - delta
+        return moment
+    if not _DATE_LIKE.match(value):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _jsonb(value: Any) -> Any:
+    # The JSONB bind processor serialises the value itself.
+    return cast(value, postgresql.JSONB)
+
+
+def _frontmatter_conditions(
+    filters: dict[str, Any], *, _depth: int = 1, _count: list[int] | None = None
+) -> list[Any]:
+    """Frontmatter filters (AG-ST-09): operators per field (AND), ``$or`` of
+    filters, at most 3 levels and 20 conditions; a type mismatch never matches."""
+    count = _count if _count is not None else [0]
+
+    def tick(path: str) -> None:
+        count[0] += 1
+        if count[0] > FILTER_MAX_CONDITIONS:
+            raise _filter_error(path, "too_many_conditions",
+                                f"at most {FILTER_MAX_CONDITIONS} filter conditions",
+                                legacy="invalid_filter_value")
+
     conditions: list[Any] = []
     for key, value in filters.items():
+        if key == "$or":
+            if _depth >= FILTER_MAX_DEPTH:
+                raise _filter_error(key, "too_deep", "$or nests at most 3 levels",
+                                    legacy="invalid_filter_value")
+            if not isinstance(value, list) or not value or not all(
+                    isinstance(item, dict) for item in value):
+                raise _filter_error(key, "invalid_value", "$or takes a list of filters",
+                                    legacy="invalid_filter_value")
+            conditions.append(or_(*[
+                and_(true(), *_frontmatter_conditions(item, _depth=_depth + 1, _count=count))
+                for item in value]))
+            continue
         if not isinstance(value, dict):
+            tick(key)
             conditions.append(SharedDocument.frontmatter.contains({key: value}))
             continue
         unknown = sorted(set(value) - _FILTER_OPERATORS)
         if unknown:
-            raise ApiError(
-                422,
-                "invalid_filter_operator",
+            raise _filter_error(
+                f"{key}.{unknown[0]}", "unknown_operator",
                 f"unsupported frontmatter filter operator for {key}: {', '.join(unknown)}",
-                details={
-                    "field": f"filters.{key}",
-                    "allowed": sorted(_FILTER_OPERATORS),
-                },
-            )
-        if "exists" in value:
-            if not isinstance(value["exists"], bool):
-                raise ApiError(
-                    422,
-                    "invalid_filter_value",
-                    f"frontmatter filter {key}.exists must be a boolean",
-                    details={"field": f"filters.{key}.exists"},
-                )
-            present = SharedDocument.frontmatter.has_key(key)
-            conditions.append(present if value["exists"] else ~present)
-        if "eq" in value:
-            conditions.append(
-                SharedDocument.frontmatter.contains({key: value["eq"]})
-            )
-        for operator in ("gte", "lte", "gt", "lt"):
-            if operator not in value:
-                continue
-            expected = value[operator]
-            if isinstance(expected, bool) or not isinstance(expected, (int, float, str)):
-                raise ApiError(
-                    422,
-                    "invalid_filter_value",
-                    f"frontmatter filter {key}.{operator} must be a scalar",
-                    details={"field": f"filters.{key}.{operator}"},
-                )
-            expression = SharedDocument.frontmatter[key].astext
-            if isinstance(expected, (int, float)):
-                expression = case(
-                    (
-                        func.jsonb_typeof(SharedDocument.frontmatter[key])
-                        == "number",
-                        expression.cast(Numeric),
-                    ),
-                    else_=None,
-                )
-            column = {
-                "gte": expression >= expected,
-                "lte": expression <= expected,
-                "gt": expression > expected,
-                "lt": expression < expected,
-            }[operator]
-            conditions.append(column)
+                legacy="invalid_filter_operator", legacy_field=key)
+        field = SharedDocument.frontmatter[key]
+        present = SharedDocument.frontmatter.has_key(key)
+        for operator, expected in value.items():
+            path = f"{key}.{operator}"
+            tick(path)
+            if operator == "exists":
+                if not isinstance(expected, bool):
+                    raise _filter_error(path, "invalid_value",
+                                        f"frontmatter filter {path} must be a boolean",
+                                        legacy="invalid_filter_value")
+                conditions.append(present if expected else ~present)
+            elif operator == "eq":
+                conditions.append(SharedDocument.frontmatter.contains({key: expected}))
+            elif operator == "ne":
+                conditions.append(~SharedDocument.frontmatter.contains({key: expected}))
+            elif operator in ("in", "nin"):
+                if (not isinstance(expected, list) or len(expected) > FILTER_SET_MAX
+                        or any(isinstance(item, (dict, list)) for item in expected)):
+                    raise _filter_error(path, "invalid_value",
+                                        f"{path} takes up to {FILTER_SET_MAX} scalars",
+                                        legacy="invalid_filter_value")
+                member = or_(false(), *[field == _jsonb(item) for item in expected])
+                conditions.append(member if operator == "in" else ~present | ~member)
+            elif operator == "contains":
+                if isinstance(expected, (dict, list)):
+                    raise _filter_error(path, "invalid_value", f"{path} must be a scalar",
+                                        legacy="invalid_filter_value")
+                kind = func.jsonb_typeof(field)
+                conditions.append(case(
+                    (kind == "array", SharedDocument.frontmatter.contains({key: [expected]})),
+                    (kind == "string",
+                     func.strpos(field.astext, str(expected)) > 0),
+                    else_=False,
+                ))
+            else:
+                if isinstance(expected, bool) or not isinstance(expected, (int, float, str)):
+                    raise _filter_error(path, "invalid_value",
+                                        f"frontmatter filter {path} must be a scalar",
+                                        legacy="invalid_filter_value")
+                expression: Any = field.astext
+                comparand: Any = expected
+                if isinstance(expected, (int, float)):
+                    expression = case(
+                        (func.jsonb_typeof(field) == "number", expression.cast(Numeric)),
+                        else_=None,
+                    )
+                elif (moment := _filter_time(expected)) is not None:
+                    expression = func.agentgraph_try_timestamptz(field.astext)
+                    comparand = moment
+                conditions.append({
+                    "gte": expression >= comparand,
+                    "lte": expression <= comparand,
+                    "gt": expression > comparand,
+                    "lt": expression < comparand,
+                }[operator])
     return conditions
 
 
@@ -509,6 +614,8 @@ def _project(summary: dict[str, Any], fields: list[str] | None) -> dict[str, Any
     return {key: summary.get(key) for key in keep}
 
 
+@access_log.reads("document")
+@agent_onboarding.records("read")
 async def list_documents(
     session: AsyncSession,
     principal: Principal,
@@ -779,6 +886,10 @@ async def _set_document_archived(
     )
     if request.expected_version is not None and document.version != request.expected_version:
         raise VersionConflict("shared_document", _latest(document))
+    versioned = at_least(LATEST_VERSION)
+    if versioned and not (request.reason or "").strip():
+        raise ApiError(422, "validation_error", f"{action} needs a reason",
+                       details={"field": "reason"})
     batch = uuid.uuid4()
     changed = (document.archived_at is None) == archived
     if changed:
@@ -788,6 +899,13 @@ async def _set_document_archived(
         document.archive_reason = request.reason if archived else None
         document.updated_by = principal.agent_signature
         document.updated_at = utcnow()
+        if versioned:
+            # AG-ST-08: archive and restore are versions; the body is unchanged.
+            document.version += 1
+            await session.flush()
+            await _record_version(
+                session, document, author=principal.agent_signature, batch_id=batch,
+                change_summary=f"{action}d: {request.reason}"[:500])
         await session.flush()
         await record_audit(
             session,
@@ -834,37 +952,82 @@ async def restore_document(
     )
 
 
+BATCH_BYTES_MAX = 4 * 1024 * 1024
+
+
+def _batch_result(index: int, item: Any, result: DocumentMutationResponse) -> dict[str, Any]:
+    document = result.document
+    return {"index": index, "ok": True, "namespace": document.namespace,
+            "doc_key": document.doc_key, "id": document.canonical_id,
+            "version": document.version, "content_hash": document.content_hash,
+            "noop": bool(getattr(result, "noop", False)),
+            "index_state": getattr(document, "index_state", None)}
+
+
+@agent_onboarding.records("document")
 async def batch_upsert_documents(
     session: AsyncSession,
     principal: Principal,
     request: DocumentBatchUpsertRequest,
 ) -> DocumentBatchUpsertResponse:
-    results: list[DocumentBatchUpsertResult] = []
+    """Up to 25 writes (AG-ST-07): each on its own (``atomic=false``, the
+    default under 2026-11) or all or nothing (``atomic=true``, the default
+    before it). Results keep the request's order."""
+    seen: dict[tuple[str, str], int] = {}
     for index, item in enumerate(request.items):
-        try:
-            result = await upsert_document(
-                session, principal, item.doc_key, item, commit=False
-            )
-        except ApiError as exc:
-            await session.rollback()
-            details = {"index": index, "doc_key": item.doc_key}
-            if isinstance(exc.details, dict):
-                details.update(exc.details)
-            raise ApiError(
-                exc.status_code,
-                exc.code,
-                f"batch item {index} ({item.doc_key}): {exc.message}",
-                details=details,
-            ) from exc
-        results.append(
+        key = (item.namespace or "default", item.doc_key)
+        if key in seen:
+            raise ApiError(422, "duplicate_key_in_batch", "a document appears twice in the batch",
+                           details={"indexes": [seen[key], index], "doc_key": item.doc_key})
+        seen[key] = index
+    content_bytes = sum(len(item.content.encode("utf-8")) for item in request.items)
+    if content_bytes > BATCH_BYTES_MAX:
+        raise ApiError(413, "batch_too_large", "the batch's content exceeds 4 MiB",
+                       details={"limit_bytes": BATCH_BYTES_MAX, "bytes": content_bytes})
+    atomic = request.atomic if request.atomic is not None else not at_least(LATEST_VERSION)
+    items: list[DocumentBatchUpsertResult] = []
+    results: list[dict[str, Any]] = []
+    for index, item in enumerate(request.items):
+        if atomic:
+            try:
+                result = await upsert_document(
+                    session, principal, item.doc_key, item, commit=False
+                )
+            except ApiError as exc:
+                await session.rollback()
+                details = {"index": index, "doc_key": item.doc_key, "failed_indexes": [index]}
+                if isinstance(exc.details, dict):
+                    details.update(exc.details)
+                raise ApiError(
+                    exc.status_code,
+                    exc.code,
+                    f"batch item {index} ({item.doc_key}): {exc.message}",
+                    details=details,
+                    headers=exc.headers,
+                ) from exc
+        else:
+            try:
+                async with session.begin_nested():
+                    result = await upsert_document(
+                        session, principal, item.doc_key, item, commit=False
+                    )
+            except ApiError as exc:
+                results.append({"index": index, "ok": False, "namespace": item.namespace,
+                                "doc_key": item.doc_key, "error": exc.body()["error"]})
+                continue
+        items.append(
             DocumentBatchUpsertResult(
                 ok=True,
                 document=result.document,
                 session_batch_id=result.session_batch_id,
             )
         )
+        results.append(_batch_result(index, item, result))
     await session.commit()
-    return DocumentBatchUpsertResponse(items=results)
+    failed = sum(1 for item in results if not item["ok"])
+    return DocumentBatchUpsertResponse(
+        items=items, results=results, succeeded=len(results) - failed, failed=failed
+    )
 
 
 async def batch_dereference(
@@ -874,8 +1037,19 @@ async def batch_dereference(
     *,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    taint_mode: str = "annotate",
+    keys: list[Any] | None = None,
+    fields: list[str] | None = None,
 ) -> DereferenceBatchResponse:
     items: list[DereferenceBatchItem] = []
+    results: list[dict[str, Any]] = []
+
+    def project(document: dict[str, Any]) -> dict[str, Any]:
+        if not fields:
+            return document
+        keep = set(fields) | {"id", "canonical_id", "namespace", "doc_key", "version"}
+        return {key: value for key, value in document.items() if key in keep}
+
     for uri in uris:
         try:
             result = await dereference(
@@ -884,13 +1058,38 @@ async def batch_dereference(
                 uri,
                 include_unverified=include_unverified,
                 include_tainted=include_tainted,
+                taint_mode=taint_mode,
             )
             items.append(DereferenceBatchItem(uri=uri, ok=True, document=result.document))
+            results.append({"index": len(results), "ok": True,
+                            "document": project(result.document.model_dump(mode="json"))})
         except ApiError as exc:
             items.append(DereferenceBatchItem(uri=uri, ok=False, error=exc.body()["error"]))
-    return DereferenceBatchResponse(items=items)
+            results.append({"index": len(results), "ok": False, "error": exc.body()["error"]})
+    for key in keys or []:
+        try:
+            if key.version is not None:
+                version = await get_document_version(
+                    session, principal, key.doc_key, key.version,
+                    include_unverified=include_unverified, include_tainted=include_tainted)
+                payload = version.model_dump(mode="json")
+            else:
+                result = await dereference(
+                    session, principal, f"doc://{key.doc_key}",
+                    include_unverified=include_unverified, include_tainted=include_tainted,
+                    taint_mode=taint_mode)
+                payload = result.document.model_dump(mode="json")
+            if key.namespace and payload.get("namespace") not in (None, key.namespace):
+                raise NotFound("shared_document",
+                               f"document '{key.namespace}/{key.doc_key}' not found")
+            results.append({"index": len(results), "ok": True, "document": project(payload)})
+        except ApiError as exc:
+            results.append({"index": len(results), "ok": False, "error": exc.body()["error"]})
+    return DereferenceBatchResponse(items=items, results=results)
 
 
+@access_log.reads("document")
+@agent_onboarding.records_read
 async def get_document(
     session: AsyncSession,
     principal: Principal,
@@ -898,9 +1097,17 @@ async def get_document(
     *,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    taint_mode: str = "annotate",
 ) -> DocumentOut:
     require_permission(principal, "doc:read")
-    document = await _get_document(session, principal.workspace.id, doc_key)
+    await sharing.require_content_access(principal, "document")
+    try:
+        document = await _get_document(session, principal.workspace.id, doc_key)
+    except NotFound:
+        shared = await sharing.read_shared(principal, doc_key)
+        if shared is None:
+            raise
+        return provenance.apply_taint_mode(shared, await _taint_mode(principal, taint_mode))
     ensure_namespace(principal, document.namespace)
     _ensure_document_visible(
         principal,
@@ -909,9 +1116,13 @@ async def get_document(
         include_tainted=include_tainted,
     )
     await indexer.annotate(session, [document])
-    return document_out(document)
+    await provenance.note_reads(principal, [document])
+    return provenance.apply_taint_mode(
+        await _with_entries(session, document, document_out(document)),
+        await _taint_mode(principal, taint_mode))
 
 
+@agent_onboarding.records("document")
 async def upsert_document(
     session: AsyncSession,
     principal: Principal,
@@ -938,6 +1149,15 @@ async def upsert_document(
     await budget.check_write(
         principal, document_id=existing.id if existing else None, doc_key=doc_key
     )
+    if doc_key == onboarding.CONSTITUTION_KEY:
+        from app.services import tree
+
+        await tree.check_constitution(principal.workspace.tenant_id, content)
+    origin = getattr(request, "content_origin", "internal")
+    origins = await provenance.collect(
+        session, principal, agent=agent, derived_from=getattr(request, "derived_from", []),
+        content_origin=origin, exclude_document_id=existing.id if existing else None,
+    )
     frontmatter_in = request.frontmatter
     ref_edges: list[tuple[str, str, str | None]] = []
     if address_service.has_refs(frontmatter_in):
@@ -950,6 +1170,9 @@ async def upsert_document(
         namespace = request.namespace or "default"
         ensure_namespace(principal, namespace, write=True)
         if request.expected_version != 0:
+            shared = await sharing.write_shared(principal, doc_key, request)
+            if shared is not None:
+                return shared
             raise VersionConflict("shared_document", None)
         if is_canonical(doc_key):
             raise NotFound("shared_document", f"document '{doc_key}' not found")
@@ -995,6 +1218,7 @@ async def upsert_document(
             human_note=None,
             tainted=False,
             taint_sources=[],
+            doc_type=getattr(request, "doc_type", None) or "collaborative",
             policy_flags={"policy": policy.name} if policy else {},
             created_by=agent,
             updated_by=agent,
@@ -1018,6 +1242,8 @@ async def upsert_document(
                 "shared_document",
                 document_out(latest).model_dump(mode="json") if latest else None,
             ) from None
+        document.provenance_taint = origins.sources
+        document.content_origin = origin
         await refresh_document_taint(session, document)
         await indexer.after_write(session, document)
         await record_audit(
@@ -1038,6 +1264,7 @@ async def upsert_document(
             batch_id=batch,
             change_summary="document created",
         )
+        await provenance.record_edges(session, document, origins)
         await address_service.record_document_refs(session, document, ref_edges)
         await append_event(
             session,
@@ -1054,12 +1281,19 @@ async def upsert_document(
             },
             namespace=namespace,
         )
+        await _deliver_mentions(session, principal, request, document, previous=None)
         if commit:
             await session.commit()
         return await _mutation_response(session, document, batch)
 
     require_permission(principal, "doc:write")
     ensure_namespace(principal, existing.namespace)
+    previous_content = existing.content
+    if existing.archived_at is not None and at_least(LATEST_VERSION):
+        raise ApiError(409, "document_archived", "restore the document before writing to it",
+                       details={"doc_key": existing.doc_key, "namespace": existing.namespace,
+                                "archived_at": existing.archived_at.isoformat(),
+                                "restore_with": "restore_document"})
     if request.expected_version == 0 and at_least(LATEST_VERSION):
         # Creating over an existing alias is refused, never an overwrite.
         raise ApiError(
@@ -1098,9 +1332,19 @@ async def upsert_document(
     ensure_not_human_locked(
         principal, "shared_document", document.locked_by_human, document.human_note
     )
+    if document.doc_type == "log":
+        raise ApiError(409, "log_document_append_only",
+                       "a log document only takes append_entries",
+                       details={"doc_key": document.doc_key, "append_with": "append_entries"})
+    if getattr(request, "doc_type", None) not in (None, document.doc_type):
+        raise ApiError(422, "validation_error", "doc_type is fixed at creation",
+                       details={"field": "doc_type", "current": document.doc_type})
+    if not principal.is_human:
+        await contention.check(session, document)
     requested_title = _title_for(request, doc_key, content)
     rebased = False
     if document.version != request.expected_version:
+        await contention.note_conflict(document)
         if not request.rebase:
             raise VersionConflict(
                 "shared_document",
@@ -1157,6 +1401,7 @@ async def upsert_document(
         and namespace == document.namespace
     ):
         # Same as the current version: no new version, no embedding (AG-ST-06).
+        situation.note("noop_writes")
         await indexer.annotate(session, [document])
         response = await _mutation_response(session, document, batch)
         return response.model_copy(update={"noop": True})
@@ -1177,6 +1422,9 @@ async def upsert_document(
     document.version += 1
     document.updated_by = agent
     document.updated_at = utcnow()
+    document.provenance_taint = origins.sources
+    document.content_origin = origin
+    document.recall_severity = None
     await session.flush()
     await refresh_document_taint(session, document)
     await indexer.after_write(session, document)
@@ -1188,6 +1436,10 @@ async def upsert_document(
         change_summary="document updated"
         + (" with rebase" if rebased else ""),
     )
+    await provenance.record_edges(session, document, origins)
+    if getattr(request, "resolves_recall", None):
+        await recall_service.resolve_by_write(
+            session, principal, document, origins, request.resolves_recall)
     await address_service.record_document_refs(session, document, ref_edges)
     await record_audit(
         session,
@@ -1216,9 +1468,33 @@ async def upsert_document(
         },
         namespace=namespace,
     )
+    await _deliver_mentions(session, principal, request, document, previous=previous_content)
     if commit:
         await session.commit()
     return await _mutation_response(session, document, batch)
+
+
+async def _deliver_mentions(
+    session: AsyncSession,
+    principal: Principal,
+    request: DocumentUpsertRequest,
+    document: SharedDocument,
+    *,
+    previous: str | None,
+) -> None:
+    """AG-EV-03: explicit mentions, plus @refs that are new in this version."""
+    from app.services import collab
+
+    explicit = list(getattr(request, "mentions", None) or [])
+    known = set(collab.parse_mentions(None, previous)) if previous else set()
+    found = [ref for ref in collab.parse_mentions(None, document.content) if ref not in known]
+    mentions = collab.parse_mentions(explicit + found, None)
+    await collab.deliver_mentions(
+        session, principal, mentions,
+        refs={"doc_key": document.doc_key, "id": document.canonical_id,
+              "title": document.title, "version": document.version},
+        namespace=document.namespace,
+    )
 
 
 _SECTION_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -1237,6 +1513,7 @@ def _strip_matching_heading(text: str, heading: str) -> str:
     return text
 
 
+@agent_onboarding.records("document")
 async def patch_document_section(
     session: AsyncSession,
     principal: Principal,
@@ -1255,6 +1532,10 @@ async def patch_document_section(
     ensure_not_human_locked(
         principal, "shared_document", document.locked_by_human, document.human_note
     )
+    origins = await provenance.collect(
+        session, principal, agent=agent, derived_from=request.derived_from,
+        content_origin=request.content_origin, exclude_document_id=document.id,
+    )
     await enforce_policy(
         session,
         principal,
@@ -1265,7 +1546,22 @@ async def patch_document_section(
         content_bytes=len(request.new_markdown.encode("utf-8")),
     )
     rebased = False
-    if document.version != request.expected_version:
+    if document.doc_type == "log":
+        raise ApiError(409, "log_document_append_only",
+                       "a log document only takes append_entries",
+                       details={"doc_key": document.doc_key, "append_with": "append_entries"})
+    if request.section_hash is not None:
+        # AG-ST-14 3a: only the target section must be unchanged.
+        current_hash = contention.section_hash(
+            extract_section(document.content, request.section_heading))
+        if current_hash != request.section_hash:
+            await contention.note_conflict(document)
+            raise ApiError(409, "section_conflict", "the section changed since you read it",
+                           details={"section": request.section_heading,
+                                    "current_section_hash": current_hash,
+                                    "current_version": document.version})
+    elif document.version != request.expected_version:
+        await contention.note_conflict(document)
         if not request.rebase:
             raise VersionConflict(
                 "shared_document",
@@ -1328,6 +1624,12 @@ async def patch_document_section(
     document.version += 1
     document.updated_by = agent
     document.updated_at = utcnow()
+    # A section patch keeps the rest of the body, and with it its sources.
+    kept = list(document.provenance_taint or [])
+    document.provenance_taint = kept + [
+        entry for entry in origins.sources if entry not in kept]
+    if request.content_origin != "internal":
+        document.content_origin = request.content_origin
     ensure_content_size(document.content)
     await session.flush()
     await refresh_document_taint(session, document)
@@ -1340,6 +1642,7 @@ async def patch_document_section(
         change_summary=f"section patched: {request.section_heading}"
         + (" with rebase" if rebased else ""),
     )
+    await provenance.record_edges(session, document, origins)
     await record_audit(
         session,
         workspace_id=principal.workspace.id,
@@ -1370,6 +1673,8 @@ async def patch_document_section(
     return await _mutation_response(session, document, batch)
 
 
+@access_log.reads("document")
+@agent_onboarding.records("read")
 async def query_documents(
     session: AsyncSession,
     principal: Principal,
@@ -1377,6 +1682,17 @@ async def query_documents(
 ) -> DocumentQueryResponse:
     """Semantic/structured discovery. Not exhaustive: use list_documents to enumerate."""
     require_permission(principal, "query")
+    await sharing.require_content_access(principal, "query")
+    if request.include_shared:
+        own = await query_documents(
+            session, principal, request.model_copy(update={"include_shared": False}))
+        alias = await sharing.alias_of(principal.tenant_id)
+        items = [item.model_copy(update={"tenant_alias": alias}) for item in own.items]
+        for document, owner in await sharing.shared_hits(principal, request.query,
+                                                         request.limit):
+            items.append(_query_hit(principal, document, []).model_copy(
+                update={"tenant_alias": owner}))
+        return own.model_copy(update={"items": items, "total": len(items)})
     await budget.check_query(principal)
     base = [SharedDocument.workspace_id == principal.workspace.id]
     if request.namespace:
@@ -1408,6 +1724,7 @@ async def query_documents(
             )
         ).scalars().all()
         items = [_query_hit(principal, row, []) for row in rows]
+        await provenance.note_reads(principal, list(rows))
         excluded = await _excluded_counts(
             session, principal, request, base_ids=select(SharedDocument.id).where(*base),
             shown={row.id for row in rows},
@@ -1438,6 +1755,7 @@ async def query_documents(
         for doc_id in ids
         if doc_id in by_id
     ]
+    await provenance.note_reads(principal, list(rows))
     excluded = await _excluded_ranked(session, principal, request, base, limit, set(ids))
     return DocumentQueryResponse(
         items=items,
@@ -1495,6 +1813,8 @@ def _query_hit(
 def _excluded_reason(principal: Principal, document: SharedDocument) -> str | None:
     if document.archived_at is not None:
         return "archived"
+    if document.recall_severity == "block":
+        return "recalled"
     if document.tainted:
         return "tainted"
     if document.verification_status != "VERIFIED":
@@ -1540,7 +1860,8 @@ async def _excluded_ranked(
 
 
 def _tally(principal: Principal, rows: list[SharedDocument]) -> dict[str, int]:
-    counts = {"unverified_by_others": 0, "own_unverified": 0, "archived": 0, "tainted": 0}
+    counts = {"unverified_by_others": 0, "own_unverified": 0, "archived": 0, "tainted": 0,
+              "recalled": 0}
     for row in rows:
         reason = _excluded_reason(principal, row)
         if reason is not None:
@@ -1589,6 +1910,8 @@ def _snippet(text: str, needle: str, width: int = 240) -> str:
     return text[start : start + width]
 
 
+@access_log.reads("document")
+@agent_onboarding.records_read
 async def dereference(
     session: AsyncSession,
     principal: Principal,
@@ -1599,10 +1922,21 @@ async def dereference(
     expand_parts: bool = False,
     content_offset: int = 0,
     content_limit: int | None = None,
+    taint_mode: str = "annotate",
 ) -> DereferenceResponse:
     require_permission(principal, "doc:read")
+    await sharing.require_content_access(principal, "document")
     doc_key = parse_doc_uri(uri)
-    document = await _get_document(session, principal.workspace.id, doc_key)
+    try:
+        document = await _get_document(session, principal.workspace.id, doc_key)
+    except NotFound:
+        shared = await sharing.read_shared(principal, doc_key)
+        if shared is None:
+            raise
+        return DereferenceResponse(
+            uri=uri, document=provenance.apply_taint_mode(
+                shared, await _taint_mode(principal, taint_mode)),
+            content_total_bytes=len((shared.content or "").encode("utf-8")))
     ensure_namespace(principal, document.namespace)
     _ensure_document_visible(
         principal,
@@ -1611,10 +1945,12 @@ async def dereference(
         include_tainted=include_tainted,
     )
     await indexer.annotate(session, [document])
+    await provenance.note_reads(principal, [document])
     if expand_parts:
         expanded, parts = await address_service.expand_parts(session, principal, document)
         return DereferenceResponse(
-            uri=uri, document=document_out(document), expanded_content=expanded, parts=parts
+            uri=uri, document=provenance.apply_taint_mode(document_out(document), taint_mode),
+            expanded_content=expanded, parts=parts
         )
     out = document_out(document)
     raw = document.content.encode("utf-8")
@@ -1628,10 +1964,31 @@ async def dereference(
         out = out.model_copy(update={"content": raw[start:end].decode("utf-8")})
     return DereferenceResponse(
         uri=uri,
-        document=out,
+        document=provenance.apply_taint_mode(
+            await _with_entries(session, document, out),
+            await _taint_mode(principal, taint_mode)),
         content_total_bytes=len(raw),
         content_truncated=truncated,
     )
+
+
+async def _taint_mode(principal: Principal, requested: str) -> str:
+    """The stricter of the caller's taint_mode and the tree's taint_mode_min (AG-ID-11)."""
+    from app.services import tree
+
+    floor = await tree.policy_value(principal.workspace.tenant_id, "taint_mode_min")
+    return tree._stricter("taint", requested, floor or "annotate")
+
+
+async def _with_entries(
+    session: AsyncSession, document: SharedDocument, out: DocumentOut
+) -> DocumentOut:
+    if document.doc_type != "log":
+        return out
+    from app.services import logs
+
+    return out.model_copy(update={"entries": await logs.latest_entries(session, document),
+                                  "entries_total": document.log_seq})
 
 
 def _char_boundary(raw: bytes, index: int) -> int:
@@ -1728,6 +2085,23 @@ async def create_artifact(
     return document, f"doc://{doc_key}"
 
 
+async def _holders_using(session: AsyncSession, document: SharedDocument) -> list[str]:
+    """Holders of live tasks whose context points at this document."""
+    pinned_key = f"{document.namespace}:{document.doc_key}"
+    rows = (
+        await session.execute(
+            select(CollabTask.lease_owner).where(
+                CollabTask.workspace_id == document.workspace_id,
+                CollabTask.lease_owner.is_not(None),
+                CollabTask.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.REVIEWING]),
+                CollabTask.context_docs.contains([{"doc_key": document.doc_key}])
+                | CollabTask.context_versions_pinned.has_key(pinned_key),
+            )
+        )
+    ).scalars().all()
+    return [f"agent:{holder}" for holder in dict.fromkeys(rows)]
+
+
 async def human_update_document(
     session: AsyncSession,
     workspace: Workspace,
@@ -1758,6 +2132,10 @@ async def human_update_document(
     before = document_snapshot(document)
     if request.title is not None:
         document.title = request.title
+    if request.content is not None and document.doc_key == onboarding.CONSTITUTION_KEY:
+        from app.services import tree
+
+        await tree.check_constitution(workspace.tenant_id, request.content)
     if request.content is not None:
         normalized_content, _ = normalize_notion_content(request.content)
         ensure_content_size(normalized_content)
@@ -1784,7 +2162,15 @@ async def human_update_document(
     document.version += 1
     document.updated_by = actor
     document.updated_at = utcnow()
+    # AG-TC-03: marked as a person's edit (trust unchanged: editing is not
+    # verifying); the maintainer and holders of tasks using it are told.
+    document.last_human_edit = {"by": actor, "version": document.version,
+                                "at": document.updated_at.isoformat()}
+    holders = await _holders_using(session, document)
+    await session.execute(text("SELECT set_config('app.extra_targets', :targets, true)"),
+                          {"targets": json.dumps(holders)})
     await session.flush()
+    await session.execute(text("SELECT set_config('app.extra_targets', '', true)"))
     await refresh_document_taint(session, document)
     await indexer.after_write(session, document)
     await _record_version(
@@ -1795,6 +2181,7 @@ async def human_update_document(
         change_summary=(
             "human edit" if request.content is not None else "human metadata edit"
         ),
+        human_edited=True,
     )
     await record_audit(
         session,
@@ -2139,6 +2526,7 @@ async def list_document_versions(
     )
 
 
+@access_log.reads("document")
 async def get_document_version(
     session: AsyncSession,
     principal: Principal,
@@ -2149,6 +2537,7 @@ async def get_document_version(
     include_tainted: bool = False,
 ) -> DocumentVersionOut:
     require_permission(principal, "doc:read")
+    await sharing.require_content_access(principal, "document_version")
     document = await _get_document(session, principal.workspace.id, doc_key)
     ensure_namespace(principal, document.namespace)
     _ensure_document_visible(
@@ -2227,6 +2616,57 @@ async def set_document_taint(
     return DocumentMutationResponse(
         document=document_out(document), session_batch_id=batch
     )
+
+async def clear_taint(
+    session: AsyncSession,
+    principal: Principal,
+    doc_key: str,
+    *,
+    namespace: str | None,
+    version: int | None,
+    reason: str,
+) -> DocumentMutationResponse:
+    """AG-TC-01 point 3: only people clear taint, as a new untainted version."""
+    if not principal.is_human:
+        raise Forbidden("only a human can clear taint")
+    batch = uuid.uuid4()
+    document = await _get_document(session, principal.workspace.id, doc_key, for_update=True)
+    if namespace and document.namespace != namespace:
+        raise NotFound("shared_document", f"document '{doc_key}' not found in '{namespace}'")
+    ensure_namespace(principal, document.namespace, write=True)
+    if version is not None and version != document.version:
+        raise VersionConflict("shared_document", _latest(document), expected_version=version)
+    before = document_snapshot(document)
+    actor = principal.agent_signature
+    document.version += 1
+    document.updated_by = actor
+    document.updated_at = utcnow()
+    await clear_document_taint(session, document, actor=actor, note=None)
+    await _record_version(session, document, author=actor, batch_id=batch,
+                          change_summary=f"taint cleared: {reason}"[:500])
+    await record_audit(
+        session,
+        workspace_id=principal.workspace.id,
+        session_batch_id=batch,
+        agent_signature=actor,
+        target_table="shared_documents",
+        target_record_id=document.id,
+        operation="UPDATE",
+        before=before,
+        after={**document_snapshot(document), "reason": reason},
+    )
+    await append_event(
+        session,
+        workspace_id=principal.workspace.id,
+        agent=actor,
+        event_type="DOC_TAINT_CHANGED",
+        payload={"doc_key": document.doc_key, "tainted": False, "version": document.version,
+                 "reason": reason},
+        namespace=document.namespace,
+    )
+    await session.commit()
+    return DocumentMutationResponse(document=document_out(document), session_batch_id=batch)
+
 
 async def normalize_document_html(
     session: AsyncSession,
