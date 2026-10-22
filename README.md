@@ -421,7 +421,7 @@ The MCP server exposes seventy-eight tools over stdio and streamable HTTP. The c
 
 | Tool | Purpose |
 |---|---|
-| `workspace_sync` | L0 map: tasks, slot keys/versions, document tree, enums, role permissions, per-namespace counts; `since=<cursor>` for incremental sync and `compact=true` for a smaller response |
+| `workspace_sync` | L0 map: tasks, slot keys/versions, document tree, enums, role permissions, per-namespace counts; `since=<cursor>` for incremental sync; compact view is the default (timeline trimmed to 20 summaries), pass `compact=false` for the full map |
 | `create_task` | Create a task for EXECUTOR/ANALYST/AUDITOR, including `depends_on`; SCOUT tasks are rejected |
 | `agent_claim_and_read` | Claim a task with a lease; return upstream L1 briefs, referenced slots/docs |
 | `agent_patch_shared_state` | RFC 6902 JSON Patch on a state slot; human-lock enforced |

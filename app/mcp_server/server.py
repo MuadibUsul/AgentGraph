@@ -624,7 +624,7 @@ async def workspace_sync(
     include_slots: bool = True,
     task_statuses: list[str] | None = None,
     namespace: str | None = None,
-    compact: bool = False,
+    compact: bool = True,
     since: str | None = None,
     include_unverified: bool = False,
     include_tainted: bool = False,
@@ -644,7 +644,9 @@ async def workspace_sync(
     list with completed task artifact URIs and handoff summaries, slot keys and
     versions with human-lock flags, the document tree and the current role's
     permissions. Use focus_keys to narrow to specific task/doc/slot keys before
-    loading L1/L2. Set compact=true for a lower-token L0 view.
+    loading L1/L2. compact defaults to true for a lower-token L0 view; it
+    trims timeline events to the latest 20 summaries (use poll_events for
+    event payloads). Pass compact=false only when the full L0 view is needed.
 
     Pass since=<next_cursor from a previous call> for incremental sync:
     tasks/documents/slots and timeline contain only changes after the cursor,
@@ -730,6 +732,15 @@ async def workspace_sync(
             }
             for item in payload["documents"]
         ]
+        timeline = payload.get("timeline") or []
+        payload["timeline"] = [
+            {
+                key: item.get(key)
+                for key in ("id", "event_type", "agent_signature", "namespace", "created_at")
+            }
+            for item in timeline[:20]
+        ]
+        payload["timeline_total"] = len(timeline)
     return _compact(payload)
 
 

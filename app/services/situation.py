@@ -207,7 +207,7 @@ async def _findings(session: AsyncSession) -> list[dict[str, Any]]:
             "(workspace_id) WHERE s.principal IS NOT NULL AND t.used >= 10000 AND "
             "s.used >= 0.4 * t.used"))).mappings():
         add("cost_anomaly", row["workspace_id"], "principal", row["principal"],
-            embedding_tokens=row["used"], workspace_total=row["total"])
+            embedding_tokens=float(row["used"]), workspace_total=float(row["total"]))
     for row in (await session.execute(text(
             "SELECT workspace_id, principal_key, reason FROM budget_circuits WHERE "
             "cleared_at IS NULL AND reopen_at > NOW()"))).mappings():
