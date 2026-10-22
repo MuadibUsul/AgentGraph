@@ -49,9 +49,14 @@ async def _row(session: AsyncSession, document: SharedDocument) -> DocumentIndex
     return row
 
 
-async def after_write(session: AsyncSession, document: SharedDocument) -> DocumentIndex:
+async def after_write(
+    session: AsyncSession, document: SharedDocument, *, defer: bool = False
+) -> DocumentIndex:
     """Index now (baseline) or enqueue (2026-11) after a write has been flushed.
 
+    ``defer`` always enqueues: people's console actions (apply a proposal,
+    undo a batch) must not wait on the embedding provider, whose latency
+    grows with document size and can outlast the console's request timeout.
     With the daily embedding quota spent (enforce mode) the write is still
     stored, and indexing waits for the quota reset (AG-ST-15 point 3).
     """
@@ -71,7 +76,7 @@ async def after_write(session: AsyncSession, document: SharedDocument) -> Docume
             "stored; the daily embedding quota is spent, so indexing waits for the reset",
             index_after=row.next_attempt_at.isoformat(),
         )
-    elif asynchronous():
+    elif defer or asynchronous():
         waiting = row.state == "pending" and row.pending_version
         if waiting and row.pending_version < document.version:
             row.superseded += 1  # coalesced: only the latest version is embedded

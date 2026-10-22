@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import { relativeTime } from "../types";
 import { BudgetCircuits } from "./circuits";
+import { ProposalDiff } from "./proposal-diff";
 import { Empty, IconCheck, IconClose, IconPulse, Modal, Spinner } from "./ui";
 
 type Section = "proposals" | "policies" | "operations" | "access";
@@ -97,7 +98,13 @@ export function GovernanceView({
       await action();
       await onRefresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t("Operation failed."));
+      if (caught instanceof DOMException && caught.name === "TimeoutError") {
+        // The server may still finish the action: say so and show the latest state.
+        setError(t("The request timed out; the action may still have completed. Showing the latest state."));
+        await onRefresh().catch(() => undefined);
+      } else {
+        setError(caught instanceof Error ? caught.message : t("Operation failed."));
+      }
     } finally {
       setBusy(null);
     }
@@ -365,6 +372,13 @@ export function GovernanceView({
                     {proposal.tainted && <span className="pill rose">{t("tainted source")}</span>}
                   </div>
                   <pre className="proposal-body">{proposal.content.slice(0, 800)}</pre>
+                  {proposal.content.length > 800 && (
+                    <p className="proposal-truncated muted">
+                      {t("Preview: first 800 of {total} characters. Open Review for the changes and the full text.", {
+                        total: proposal.content.length.toLocaleString(),
+                      })}
+                    </p>
+                  )}
                   {proposal.conflict_details && (
                     <div className="inline-error">{t("Rebase conflict — review the latest document before applying.")}</div>
                   )}
@@ -661,7 +675,7 @@ export function GovernanceView({
             <span>{t("{count} vote(s)", { count: selectedProposal.vote_count })}</span>
             <span>{t("score {score}", { score: selectedProposal.vote_score.toFixed(1) })}</span>
           </div>
-          <pre className="proposal-body tall">{selectedProposal.content}</pre>
+          <ProposalDiff proposal={selectedProposal} workspaceId={workspaceId} request={request} />
           <label className="field">
             <span>{t("Review note")}</span>
             <textarea rows={3} value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} />

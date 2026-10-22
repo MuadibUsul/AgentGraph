@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 from app.mcp_server.server import mcp
 from app.root_page import ROOT_PRIMITIVES, render_root_page
 
@@ -23,8 +21,9 @@ def descriptor(dashboard: str | None = "/dashboard/") -> dict:
     }
 
 
-def test_root_primitive_list_is_the_full_mcp_surface():
-    registered = {tool.name for tool in asyncio.run(mcp.list_tools())}
+async def test_root_primitive_list_is_the_full_mcp_surface():
+    # Async on purpose: asyncio.run() would clear the event loop later tests use.
+    registered = {tool.name for tool in await mcp.list_tools()}
     assert set(ROOT_PRIMITIVES) == registered
     assert len(set(ROOT_PRIMITIVES)) == len(ROOT_PRIMITIVES)
     assert "get_orientation" == ROOT_PRIMITIVES[0]

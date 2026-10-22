@@ -32,7 +32,7 @@ from app.schemas import (
     ProposalVoteOut,
     ProposalVoteRequest,
 )
-from app.services import agent_onboarding
+from app.services import agent_onboarding, indexer
 from app.services.common import (
     append_event,
     document_out,
@@ -45,7 +45,6 @@ from app.services.documents import (
     content_hash,
 )
 from app.services.policies import enforce_policy
-from app.services.retrieval import reindex_document_chunks
 from app.services.taint import (
     compute_document_taint,
     propagate_from_document,
@@ -426,7 +425,9 @@ async def apply_proposal(
     document.updated_at = utcnow()
     await session.flush()
     await refresh_document_taint(session, document)
-    await reindex_document_chunks(session, document)
+    # Enqueued, not inline: embedding a long document synchronously outlasted
+    # the console's request timeout while the apply still committed.
+    await indexer.after_write(session, document, defer=True)
     await _record_version(
         session,
         document,

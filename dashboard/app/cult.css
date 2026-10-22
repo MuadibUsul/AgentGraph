@@ -341,6 +341,64 @@ textarea:focus-visible {
   box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.5);
 }
 
+/* --------------------------------------------------------- proposal diff */
+
+.proposal-diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.diff-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.diff-add { color: var(--ds-status-success); font-family: var(--mono); }
+.diff-del { color: var(--ds-status-danger); font-family: var(--mono); }
+
+.diff-view {
+  max-height: 52vh;
+  overflow: auto;
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-inset);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  padding: 0 10px 0 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-line.diff-add { background: rgba(52, 211, 153, 0.09); color: var(--ds-text-primary); }
+.diff-line.diff-del { background: rgba(251, 113, 133, 0.09); color: var(--ds-text-secondary); text-decoration: line-through; text-decoration-color: rgba(253, 164, 175, 0.45); }
+.diff-line.diff-same { color: var(--ds-text-muted); }
+.diff-mark { text-align: center; user-select: none; }
+
+.diff-fold {
+  padding: 2px 12px;
+  border-block: 1px dashed var(--ds-border-subtle);
+  color: var(--ds-text-muted);
+  font-size: 11px;
+}
+
+.proposal-truncated {
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+
 /* ---------------------------------------------------------- reduced motion */
 
 @media (prefers-reduced-motion: reduce) {

@@ -11,7 +11,6 @@ from typing import Any
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.engine.embeddings import get_embedding_provider
 from app.errors import ApiError, Forbidden, NotFound, UndoConflict
 from app.models import (
     CollabTask,
@@ -23,6 +22,7 @@ from app.models import (
     WorkspaceLink,
 )
 from app.schemas import AuditBatchOut, AuditDiffOut, AuditListResponse, BatchUndoResponse
+from app.services import indexer
 from app.services.common import (
     append_event,
     document_snapshot,
@@ -33,7 +33,6 @@ from app.services.common import (
 )
 from app.services.documents import _record_version
 from app.services.external_actions import schedule_compensations_for_batch
-from app.services.retrieval import reindex_document_chunks
 from app.services.taint import (
     propagate_from_document,
     refresh_document_taint,
@@ -468,12 +467,10 @@ async def undo_batch(
         elif isinstance(row, SharedDocument):
             current = document_snapshot(row)
             _apply_document_undo(row, entry.before_diff or {}, actor)
-            provider = get_embedding_provider()
-            row.embedding = await provider.embed_one(row.content)
-            row.embedding_model = provider.model
             await session.flush()
             await refresh_document_taint(session, row)
-            await reindex_document_chunks(session, row)
+            # Re-embedding (chunks and the whole-document vector) is queued.
+            await indexer.after_write(session, row, defer=True)
             await _record_version(
                 session,
                 row,

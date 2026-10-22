@@ -15,6 +15,19 @@ import { setFormatLanguage, type FormatLanguage } from "./types";
 export type Language = FormatLanguage;
 
 const ZH: Record<string, string> = {
+  "The request timed out; the action may still have completed. Showing the latest state.":
+    "请求超时，操作可能已经完成，已刷新为最新状态。",
+  // Proposal review diff
+  "Comparing with base v{version}…": "正在与基线 v{version} 比对…",
+  "Could not load the base version: {error}": "无法加载基线版本：{error}",
+  "Changed sections: {sections}": "变更的章节：{sections}",
+  "No text changes against the base version.": "与基线版本相比正文没有变化。",
+  "Proposal view": "提案视图",
+  Changes: "变更",
+  "Full text": "全文",
+  "{count} unchanged line(s)": "{count} 行未变",
+  "Preview: first 800 of {total} characters. Open Review for the changes and the full text.":
+    "预览仅显示前 800 字（共 {total} 字）。打开审核可查看变更和全文。",
   // Budget circuit breakers (AG-ST-15 console panel)
   "Circuit breakers": "熔断器",
   "Tokens paused for a runaway write loop. Release one when you have checked the agent.":

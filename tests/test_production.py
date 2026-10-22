@@ -250,6 +250,17 @@ async def test_policy_proposal_arena_and_apply(client, admin_headers, workspace)
     assert applied.json()["document"]["version"] == 2
     assert "v2 from arena" in applied.json()["document"]["content"]
     assert applied.json()["proposal"]["status"] == "APPLIED"
+    # Re-embedding is queued, not done inside the request (a long document
+    # used to outlast the console's timeout while the apply still committed).
+    conn = await asyncpg.connect(db_dsn())
+    try:
+        queued = await conn.fetchrow(
+            "SELECT i.state, i.pending_version FROM document_index i JOIN shared_documents d "
+            "ON d.id = i.document_id WHERE d.workspace_id = $1::uuid AND d.doc_key = $2",
+            wid, applied.json()["document"]["doc_key"])
+    finally:
+        await conn.close()
+    assert queued["state"] == "pending" and queued["pending_version"] == 2
 
     duplicate = await client.post(
         f"/v1/admin/workspaces/{wid}/proposals/{proposal_id}/apply",
