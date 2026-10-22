@@ -321,7 +321,7 @@ E:\Codes\AgentGraph\
 │   ├── mcp_server/
 │   │   ├── __init__.py
 │   │   ├── __main__.py               # python -m app.mcp_server（stdio）
-│   │   └── server.py                 # 78 个 MCP 工具 + HTTP/stdio 认证
+│   │   └── server.py                 # 88 个 MCP 工具 + HTTP/stdio 认证
 │   │
 │   └── services/
 │       ├── __init__.py
@@ -725,7 +725,7 @@ Agent POST /v1/documents/{doc}/proposals (base_version, content, mode)
 | **人类控制台** | `/v1/human/*`：workspace、tasks review/escalate、slots、documents、audit、proposals、policies、webhooks、external-actions、budget、accounts、tenant、transfer-responsibilities |
 | **Operator** | `/v1/admin/*`：workspaces、tasks、slots、documents、agent-tokens、audit undo、policies、budget、tenants、exports/imports、reindex、normalize-html、force-release/reassign/cancel |
 
-### 7.3 MCP 工具（78 个）
+### 7.3 MCP 工具（88 个）
 
 | 能力组 | 覆盖内容 |
 |---|---|
@@ -736,7 +736,7 @@ Agent POST /v1/documents/{doc}/proposals (base_version, content, mode)
 | **治理 / 租户** | 预算、告警、metrics、租户树、策略、共享、成员/权限相关的只读与治理入口 |
 | **事件 / 导出 / 外部动作** | poll_events、subscribe/unsubscribe、export/import、external action、API docs |
 
-当前共 **78 个 MCP 工具**，完整名称和参数以 `app/mcp_server/server.py`、`GET /v1/agent-docs` 和 `GET /v1/openapi.json` 为准。
+当前共 **88 个 MCP 工具**，完整名称和参数以 `app/mcp_server/server.py`、`GET /v1/agent-docs` 和 `GET /v1/openapi.json` 为准。
 
 MCP HTTP 默认无状态（`MCP_STATELESS_HTTP=true`），不返回 `mcp-session-id`；未知工具返回结构化 `unknown_tool` 404，而不是 500。stdio 模式通过 `MCP_API_KEY` 读取 Agent 身份。
 
@@ -974,7 +974,7 @@ ruff check .
 - Webhook、外部动作、补偿；
 - SSE outbox 重放；
 - 租户导出/导入；
-- 78 个 MCP 工具；
+- 88 个 MCP 工具；
 - EN/中文控制台、登录/注册、operator 入口分离；
 - 生产 HTTPS、Caddy、健康检查。
 
@@ -1016,7 +1016,7 @@ ruff check .
 - **Phase 3 R3.2 与缺口**：`v3_28`/`v3_29`，`retrieval_eval.py`（`eval/retrieval/` 评测集与基线）、`attestation.py` 与 `/.well-known/agentgraph/…`（`scripts/verify_lineage.py` 验签）、`export_schedule.py`、`workspace_events` 按 `shard_key` 16 个哈希分区、索引队列按分片轮询、控制台待审核汇总与熔断器面板。
 - **Phase 3 R3.1**：`v3_27`，`lifecycle.py`、`digest.py`、`reviews.py`、`resources.py`，`/v1/webhooks`（`webhooks:manage` 范围）、预留 `room_id`、宪法修订规则展示。
 - **前端新增**：`dashboard/app/docs/` 公开文档站，`components/onboarding.tsx`、`components/situation.tsx`，以及成员/权限、备份与事故相关控制台入口。
-- **MCP 工具**：从 40 增至 **78**；完整名称见 `app/mcp_server/server.py`。
+- **MCP 工具**：从 40 增至 **88**；完整名称见 `app/mcp_server/server.py`。
 
 本次本地新增的根页面 JSON-first 视图和命名空间模糊选择器也在此版本内；生产、GitHub、本地应保持同一提交与 `3.2.1` 应用版本。
 
