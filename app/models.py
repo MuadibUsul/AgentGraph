@@ -539,6 +539,11 @@ class CollabTask(Base):
     lease_epoch: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )
+    orphaned_from: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    orphan_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    assignee: Mapped[str | None] = mapped_column(String(160), nullable=True)
     tainted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE")
     )
@@ -1622,6 +1627,56 @@ class AccessAudit(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
     )
+
+
+class Lease(Base):
+    """One grant of exclusive use (PRD AG-CO-03); tasks are the first user."""
+
+    __tablename__ = "leases"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+        server_default=text("uuid_generate_v4()"),
+    )
+    lease_id: Mapped[str] = mapped_column(
+        String(40), unique=True, nullable=False, server_default=FetchedValue()
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=FetchedValue()
+    )
+    resource_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    resource_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    resource_ref: Mapped[str] = mapped_column(String(256), nullable=False)
+    fencing_token: Mapped[int] = mapped_column(Integer, nullable=False)
+    holder: Mapped[str] = mapped_column(String(128), nullable=False)
+    holder_token_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    acquired_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ttl_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    heartbeat_interval_s: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress: Mapped[float | None] = mapped_column(Float, nullable=True)
+    heartbeats: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    heartbeat_missed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default=text("'active'")
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class DocumentIndex(Base):

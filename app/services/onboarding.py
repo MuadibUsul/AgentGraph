@@ -130,6 +130,7 @@ async def _system_document(
     content: str,
     frontmatter: dict[str, Any],
     author: str,
+    namespace: str = SYSTEM_NAMESPACE,
 ) -> SharedDocument:
     """Insert a platform-owned DRAFT; system docs never count against quotas."""
     from app.services.documents import _record_version, content_hash
@@ -155,7 +156,7 @@ async def _system_document(
         verified_hash=None,
         embedding=None,
         embedding_model=None,
-        namespace=SYSTEM_NAMESPACE,
+        namespace=namespace,
         version=1,
         locked_by_human=False,
         human_note=None,
@@ -181,6 +182,58 @@ async def _system_document(
         text("SELECT set_config('app.lineage_stamp', :stamp, true)"), {"stamp": stamp_json()}
     )
     return document
+
+
+async def write_platform_document(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    *,
+    namespace: str,
+    doc_key: str,
+    title: str,
+    content: str,
+    frontmatter: dict[str, Any],
+    author: str,
+    change_summary: str,
+) -> SharedDocument:
+    """Create or append a version of a platform-written document."""
+    from app.services.documents import _record_version, content_hash
+    from app.services.retrieval import reindex_document_chunks
+    from app.stamp_context import stamp_json
+
+    existing = await _find(session, workspace_id, doc_key)
+    if existing is None:
+        document, _ = await _create_once(
+            session, workspace_id, doc_key,
+            lambda: _system_document(
+                session, workspace_id, doc_key=doc_key, title=title, content=content,
+                frontmatter=frontmatter, author=author, namespace=namespace,
+            ),
+        )
+        return document
+    await session.execute(
+        text("SELECT set_config('app.lineage_stamp', :stamp, true)"), {"stamp": _SYSTEM_STAMP}
+    )
+    existing.title = title
+    existing.content = content
+    existing.content_hash = content_hash(content)
+    existing.frontmatter = frontmatter
+    existing.version += 1
+    existing.updated_by = author
+    existing.updated_at = utcnow()
+    await session.flush()
+    from app.services.budget import suppress_metering
+
+    with suppress_metering():
+        await reindex_document_chunks(session, existing)
+    await _record_version(
+        session, existing, author=author, batch_id=uuid.uuid4(), change_summary=change_summary,
+    )
+    await session.flush()
+    await session.execute(
+        text("SELECT set_config('app.lineage_stamp', :stamp, true)"), {"stamp": stamp_json()}
+    )
+    return existing
 
 
 async def _find(session: AsyncSession, workspace_id: uuid.UUID, doc_key: str):

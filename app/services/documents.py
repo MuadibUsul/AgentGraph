@@ -197,6 +197,26 @@ async def _document_embedding(
     return None, None
 
 
+async def human_update_frontmatter(
+    session: AsyncSession,
+    principal: Principal,
+    document: SharedDocument,
+    frontmatter: dict[str, Any],
+    *,
+    change_summary: str,
+) -> None:
+    """Frontmatter-only edit by a human, recorded as a new version."""
+    document.frontmatter = frontmatter
+    document.version += 1
+    document.updated_by = principal.agent_signature
+    document.updated_at = utcnow()
+    await session.flush()
+    await _record_version(
+        session, document, author=principal.agent_signature, batch_id=uuid.uuid4(),
+        change_summary=change_summary,
+    )
+
+
 async def _embed(content: str) -> list[float]:
     provider = get_embedding_provider()
     return await provider.embed_one(_embedding_text(content))

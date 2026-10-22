@@ -129,6 +129,11 @@ class TaskCreateRequest(StrictModel):
     input_context: dict[str, Any] = Field(default_factory=dict)
     max_retries: int = Field(default=settings.default_max_retries, ge=1, le=20)
     depends_on: list[str] = Field(default_factory=list, max_length=50)
+    assignee: str | None = Field(
+        default=None,
+        pattern=r"^(agent|human):[A-Za-z0-9_.:@-]{1,150}$",
+        description="agent:<agent_id> or human:<user_id>; only they may claim",
+    )
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
 
@@ -165,6 +170,10 @@ class TaskClaimRequest(StrictModel):
     lease_seconds: int | None = Field(
         default=None, ge=5, le=settings.max_task_lease_seconds
     )
+    lease_ttl_seconds: int | None = Field(
+        default=None, ge=60, le=3_600,
+        description="Lease TTL; heartbeat every ttl/3 (default 900 under 2026-11)",
+    )
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
 
@@ -179,6 +188,10 @@ class TaskRenewRequest(StrictModel):
         default=None, ge=5, le=settings.max_task_lease_seconds
     )
     lease_epoch: int | None = Field(default=None, ge=0)
+    fencing_token: int | None = Field(
+        default=None, ge=0,
+        description="The fencing_token from your lease; an older one is refused",
+    )
     agent: str | None = None
 
     @field_validator("agent")
@@ -189,6 +202,10 @@ class TaskRenewRequest(StrictModel):
 
 class TaskReleaseRequest(StrictModel):
     lease_epoch: int | None = Field(default=None, ge=0)
+    fencing_token: int | None = Field(
+        default=None, ge=0,
+        description="The fencing_token from your lease; an older one is refused",
+    )
     agent: str | None = None
     reason: str | None = Field(default=None, max_length=2_000)
     session_batch_id: uuid.UUID | None = None
@@ -211,6 +228,10 @@ class TaskHandoffRequest(StrictModel):
     human_feedback: str | None = Field(default=None, max_length=8_000)
     expected_version: int | None = Field(default=None, ge=1)
     lease_epoch: int | None = Field(default=None, ge=0)
+    fencing_token: int | None = Field(
+        default=None, ge=0,
+        description="The fencing_token from your lease; an older one is refused",
+    )
     create_next: NextTaskSpec | None = None
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
@@ -262,6 +283,10 @@ class TaskReviewRequest(StrictModel):
 class TaskEscalateRequest(StrictModel):
     reason: str = Field(min_length=1, max_length=8_000)
     expected_version: int | None = Field(default=None, ge=1)
+    fencing_token: int | None = Field(
+        default=None, ge=0,
+        description="The fencing_token from your lease; an older one is refused",
+    )
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
 
@@ -704,6 +729,12 @@ class TaskSummary(BaseModel):
     max_retries: int
     version: int
     lease_epoch: int
+    fencing_token: int | None = Field(
+        default=None, description="Current fencing token while a lease is held"
+    )
+    assignee: str | None = None
+    orphaned_from: str | None = None
+    orphan_count: int = 0
     tainted: bool = False
     taint_sources: list[Any] = Field(default_factory=list)
     updated_at: datetime
@@ -739,8 +770,79 @@ class TaskActionResponse(BaseModel):
     task_key: str
 
 
+class LeaseOut(BaseModel):
+    lease_id: str
+    fencing_token: int
+    resource_kind: str
+    resource_ref: str
+    holder: str
+    acquired_at: datetime
+    expires_at: datetime
+    ttl_seconds: int
+    heartbeat_interval_s: int
+    last_heartbeat_at: datetime | None = None
+    heartbeat_note: str | None = None
+    progress: float | None = None
+    state: str
+    ended_at: datetime | None = None
+    end_reason: str | None = None
+
+
+class LeaseListResponse(BaseModel):
+    items: list[LeaseOut]
+    next_cursor: str | None = None
+
+
+class LeaseHeartbeatRequest(StrictModel):
+    note: str | None = Field(default=None, max_length=500)
+    progress: float | None = Field(default=None, ge=0, le=1)
+    agent: str | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+
+class LeaseHeartbeatResponse(BaseModel):
+    lease_id: str
+    expires_at: datetime
+    fencing_token: int
+    heartbeat_interval_s: int
+
+
+class LeaseReleaseRequest(StrictModel):
+    reason: str | None = Field(default=None, max_length=2_000)
+    agent: str | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+
+class TransferResponsibilitiesRequest(StrictModel):
+    from_: str = Field(alias="from", min_length=1, max_length=160)
+    to: str = Field(min_length=1, max_length=160)
+    include: list[Literal["assigned_tasks", "maintained_docs", "watermarks", "pending_reviews"]] = (
+        Field(default_factory=lambda: ["assigned_tasks", "maintained_docs", "pending_reviews"])
+    )
+    reason: str | None = Field(default=None, max_length=2_000)
+
+
+class TransferResponsibilitiesResponse(BaseModel):
+    from_: str = Field(serialization_alias="from")
+    to: str
+    assigned_tasks: list[str] = Field(default_factory=list)
+    maintained_docs: list[str] = Field(default_factory=list)
+    pending_reviews: list[str] = Field(default_factory=list)
+    leases_revoked: list[str] = Field(default_factory=list)
+    skipped: dict[str, str] = Field(default_factory=dict)
+
+
 class TaskContextResponse(BaseModel):
     task: TaskOut
+    lease: LeaseOut | None = None
     upstream_briefs: list[dict[str, Any]] = Field(default_factory=list)
     slots: list[SlotOut] = Field(default_factory=list)
     documents: list[DocumentSummary] = Field(default_factory=list)

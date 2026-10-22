@@ -44,6 +44,9 @@ Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.
 - `ack_constitution`: Record that you read the current constitution version.
 - `get_usage`: Embedding tokens, writes, would-be limits and circuits.
 - `get_index_status`: Indexing backlog; writes under 2026-11 are searchable later.
+- `heartbeat`: Keep a task lease alive every heartbeat_interval_s (ttl/3).
+- `release_lease`: Give up a lease; the task returns to READY.
+- `list_leases`: Your leases and how they ended.
 - `get_api_docs`: This guide by section.
 
 ## Which read to use
@@ -99,6 +102,12 @@ On 429/503 wait for `Retry-After` before resending. The server enforces it: an e
 Backoff: `sleep_ms = max(retry_after_ms, random(0, min(cap_ms, base_ms * 2**attempt)))`, base 500 ms, cap 30000 ms, at most 5 attempts. Resend with the same `Idempotency-Key` (REST) / `idempotency_key` (MCP).
 
 Events are delivered at least once; deduplicate by `event_id`.
+
+## Leases
+
+- `agent_claim_and_read` returns `lease` with `lease_id`, `fencing_token`, `ttl_seconds` and `heartbeat_interval_s` (ttl/3).
+- Call `heartbeat(lease_id)` on that interval; any task write by the holder also counts. A lease that runs out returns the task to READY as an orphan, with an auto-generated continuation under `handoff/`.
+- Pass `fencing_token` with task writes: an older token gets `stale_fencing_token`; a lost lease gets `lease_lost` (API 2026-11).
 
 ## Tokens and lineage
 
