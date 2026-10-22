@@ -20,6 +20,7 @@ from app.schemas import (
     AgentStatusRequest,
     AgentUpdateRequest,
     AuditListResponse,
+    ClearTaintRequest,
     ConstitutionAckRequest,
     ContinuationRequest,
     DereferenceBatchRequest,
@@ -65,6 +66,8 @@ from app.schemas import (
     ProposalOut,
     ProposalRejectRequest,
     ProposalVoteRequest,
+    RecallDismissRequest,
+    RecallRequest,
     RegisterPartsRequest,
     SlotListResponse,
     SlotMutationResponse,
@@ -87,6 +90,7 @@ from app.schemas import (
     TimelineEventRequest,
     TimelineItemOut,
     TimelineListResponse,
+    TokenBudgetRequest,
     TokenIssueRequest,
     TokenRenewRequest,
     TokenRevokeRequest,
@@ -97,12 +101,14 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import budget as budget_service
-from app.services import directory, indexer, token_tree
+from app.services import directory, indexer, token_budget, token_tree
+from app.services import documents as document_service
 from app.services import events as event_service
 from app.services import exports as export_service
 from app.services import leases as lease_service
 from app.services import lineage as lineage_service
 from app.services import orientation as orientation_service
+from app.services import recall as recall_service
 from app.services import tasks as task_service
 
 router = APIRouter(prefix="/v1", tags=["AgentGraph v3"])
@@ -1069,6 +1075,90 @@ async def change_document_taint(
     )
 
 
+@router.post(
+    "/documents/{doc_key:path}/clear-taint",
+    response_model=DocumentMutationResponse,
+    summary="Clear taint as a new untainted version (people only, AG-TC-01)",
+)
+async def clear_document_taint(
+    doc_key: str,
+    body: ClearTaintRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> DocumentMutationResponse:
+    return await document_service.clear_taint(
+        session, principal, doc_key, namespace=body.namespace, version=body.version,
+        reason=body.reason)
+
+
+@router.post(
+    "/documents/{doc_key:path}/recall",
+    summary="Recall versions; downstream versions are marked and their authors told (AG-TC-02)",
+)
+async def recall_document(
+    doc_key: str,
+    body: RecallRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    document = await address_service.find_document(session, principal.workspace.id, doc_key)
+    namespace = body.namespace or (document.namespace if document else "default")
+    return await recall_service.recall_document(
+        session, principal, namespace=namespace,
+        doc_key=document.doc_key if document else doc_key, versions=body.versions,
+        reason=body.reason, severity=body.severity, max_depth=body.max_depth)
+
+
+@router.get("/recalls/{recall_id}", summary="A recall and its tree of affected versions")
+async def get_recall(
+    recall_id: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "doc:read")
+    return await recall_service.get_recall(session, principal, recall_id)
+
+
+@router.post("/recalls/{recall_id}/dismiss",
+             summary="Mark a node as not affected (people only)")
+async def dismiss_recall_node(
+    recall_id: str,
+    body: RecallDismissRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await recall_service.dismiss_node(
+        session, principal, recall_id, namespace=body.namespace, doc_key=body.doc_key,
+        version=body.version, note=body.note)
+
+
+@router.get("/tokens/{token_ref}/budget",
+            summary="A token's daily budget with its ancestors' state (AG-ST-16)")
+async def get_token_budget(
+    token_ref: str,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await token_budget.get_budget(principal, token_ref)
+
+
+@router.put("/tokens/{token_ref}/budget",
+            summary="Set a token's daily limits (an ancestor or a person)")
+async def set_token_budget(
+    token_ref: str,
+    body: TokenBudgetRequest,
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await token_budget.set_budget(principal, token_ref, body.model_dump())
+
+
+@router.get("/budgets", summary="Budgets of a token's subtree")
+async def list_token_budgets(
+    subtree_of: str | None = Query(default=None, max_length=64),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await token_budget.list_budgets(principal, subtree_of)
+
+
 @router.get(
     "/policies",
     response_model=PolicyListResponse,
@@ -1260,6 +1350,7 @@ async def batch_dereference(
         body.uris,
         include_unverified=body.include_unverified,
         include_tainted=body.include_tainted,
+        taint_mode=body.taint_mode,
     )
 
 
@@ -1366,6 +1457,7 @@ async def get_document(
     doc_key: str,
     include_unverified: bool = Query(default=False),
     include_tainted: bool = Query(default=False),
+    taint_mode: str = Query(default="annotate", pattern="^(annotate|separate|exclude)$"),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentOut:
@@ -1375,6 +1467,7 @@ async def get_document(
         doc_key,
         include_unverified=include_unverified,
         include_tainted=include_tainted,
+        taint_mode=taint_mode,
     )
 
 
@@ -1410,6 +1503,7 @@ async def dereference(
         expand_parts=body.expand_parts,
         content_offset=body.content_offset,
         content_limit=body.content_limit,
+        taint_mode=body.taint_mode,
     )
 
 

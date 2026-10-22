@@ -210,7 +210,9 @@ async def _index_one(document_id, workspace_id, reindex) -> bool:
             await session.delete(row)
             await session.commit()
             return False
-        if await budget.defer_embedding(workspace_id):
+        from app.services.token_budget import stamp_chain
+
+        if await budget.defer_embedding(workspace_id, stamp_chain(document.updated_stamp)):
             row.state = "deferred"
             row.next_attempt_at = budget.next_quota_reset()
             row.updated_at = _now()

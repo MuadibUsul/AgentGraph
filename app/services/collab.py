@@ -183,6 +183,7 @@ async def load_context(session: AsyncSession, principal: Principal, task: Collab
     changed = False
     items: list[dict[str, Any]] = []
     budget = max_bytes
+    reads: list[tuple[SharedDocument, int, bool]] = []
     pointers: list[tuple[dict[str, Any], bool]] = []
     if task.continuation:
         pointers.append((dict(task.continuation), True))
@@ -212,24 +213,25 @@ async def load_context(session: AsyncSession, principal: Principal, task: Collab
                 version = document.version
                 pinned[key] = version
                 changed = True
-        body = await session.scalar(
-            text("SELECT content FROM document_versions WHERE document_id = :d AND version = :v"),
-            {"d": document.id, "v": version},
-        )
-        if body is None:
-            body = document.content if version == document.version else ""
+        row = (await session.execute(
+            text("SELECT content, tainted FROM document_versions WHERE document_id = :d "
+                 "AND version = :v"), {"d": document.id, "v": version},
+        )).one_or_none()
+        body, version_tainted = (row[0], bool(row[1])) if row else (
+            document.content if version == document.version else "", bool(document.tainted))
+        reads.append((document, version, version_tainted))
         raw = body.encode("utf-8")
         truncated = len(raw) > budget
         if truncated:
             body = raw[:max(0, budget)].decode("utf-8", errors="ignore")
         budget = max(0, budget - len(body.encode("utf-8")))
-        untrusted = bool(document.tainted)
+        untrusted = version_tainted
         item = {
             "doc_ref": {"namespace": document.namespace, "doc_key": document.doc_key,
                         "id": document.canonical_id},
             "version": version,
             "untrusted_content" if untrusted else "content": body,
-            "tainted": bool(document.tainted),
+            "tainted": version_tainted,
             "trust_level": document.trust_level,
             "truncated": truncated,
             "newer_version_available": document.version > version,
@@ -238,6 +240,12 @@ async def load_context(session: AsyncSession, principal: Principal, task: Collab
         items.append(item)
     if changed:
         task.context_versions_pinned = pinned
+    from app.services.provenance import HANDLING, note_versions
+
+    for item in items:
+        if item.get("tainted"):
+            item["handling"] = HANDLING
+    await note_versions(principal, reads)
     return items
 
 

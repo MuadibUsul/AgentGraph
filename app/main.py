@@ -92,9 +92,12 @@ async def lifespan(app: FastAPI):
     from app.services.backups import backup_scheduler_loop
     from app.services.incidents import incident_check_loop
     from app.services.mailer import mail_worker_loop
+    from app.services.token_budget import flush as flush_token_usage
+    from app.services.token_budget import flush_loop as token_usage_loop
 
     background = [
         asyncio.create_task(access_log_loop(), name="agentgraph-access-log"),
+        asyncio.create_task(token_usage_loop(), name="agentgraph-token-usage"),
         asyncio.create_task(mail_worker_loop(), name="agentgraph-mailer"),
         asyncio.create_task(incident_check_loop(), name="agentgraph-incident-sla"),
     ]
@@ -122,6 +125,8 @@ async def lifespan(app: FastAPI):
                 await task
         with suppress(Exception):
             await flush_access_log()
+        with suppress(Exception):
+            await flush_token_usage()
         await event_bus.stop()
         await close_embedding_provider()
         await engine.dispose()
@@ -399,6 +404,12 @@ async def root(request: Request) -> Any:
             "write_continuation",
             "create_subtasks",
             "get_task_tree",
+            "clear_taint",
+            "recall_document",
+            "get_recall",
+            "get_budget",
+            "set_budget",
+            "list_budgets",
             "get_usage",
             "get_index_status",
             "heartbeat",

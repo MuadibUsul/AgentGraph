@@ -455,6 +455,17 @@ class DocumentUpsertRequest(StrictModel):
         default_factory=list, max_length=20,
         description="agent:<id> / human:<id> to notify (AG-EV-03); @agent:<id> in content too",
     )
+    derived_from: list[DocRef] = Field(
+        default_factory=list, max_length=50,
+        description="Documents this version was derived from (AG-TC-01); recorded for recall",
+    )
+    content_origin: Literal["internal", "external_web", "external_user", "tool_output"] = Field(
+        default="internal", description="Anything but internal taints the version",
+    )
+    resolves_recall: str | None = Field(
+        default=None, max_length=40,
+        description="This version no longer depends on the recalled versions (AG-TC-02)",
+    )
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
     rebase: bool = False
@@ -491,6 +502,9 @@ class DocumentSectionPatchRequest(StrictModel):
         ),
     )
     expected_version: int = Field(ge=1)
+    derived_from: list[DocRef] = Field(default_factory=list, max_length=50)
+    content_origin: Literal["internal", "external_web", "external_user", "tool_output"] = (
+        "internal")
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
     rebase: bool = False
@@ -563,6 +577,10 @@ class DereferenceRequest(StrictModel):
     expand_parts: bool = Field(
         default=False,
         description="Concatenate frontmatter.parts in index order (<= 4 MiB)",
+    )
+    taint_mode: Literal["annotate", "separate", "exclude"] = Field(
+        default="annotate",
+        description="tainted bodies: annotate (metadata), separate (untrusted_content), exclude",
     )
 
 
@@ -1192,6 +1210,33 @@ class EscalationResolveRequest(StrictModel):
     note: str | None = Field(default=None, max_length=2_000)
 
 
+class ClearTaintRequest(StrictModel):
+    namespace: str | None = Field(default=None, max_length=64)
+    version: int | None = Field(default=None, ge=1, description="must be the current version")
+    reason: str = Field(min_length=1, max_length=2_000)
+
+
+class RecallRequest(StrictModel):
+    namespace: str | None = Field(default=None, max_length=64)
+    versions: list[int] | Literal["all"] = Field(description="versions to recall, or all")
+    reason: str = Field(min_length=1, max_length=2_000)
+    severity: Literal["warn", "block"] = "warn"
+    max_depth: int = Field(default=5, ge=1, le=10)
+
+
+class RecallDismissRequest(StrictModel):
+    namespace: str = Field(default="default", max_length=64)
+    doc_key: str = Field(min_length=1, max_length=256)
+    version: int = Field(ge=1)
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class TokenBudgetRequest(StrictModel):
+    writes: int | None = Field(default=None, ge=0)
+    embedding_tokens: int | None = Field(default=None, ge=0)
+    queries: int | None = Field(default=None, ge=0)
+
+
 class TaskContextResponse(BaseModel):
     task: TaskOut
     lease: LeaseOut | None = None
@@ -1341,6 +1386,10 @@ class DocumentSummary(BaseModel):
     human_note: str | None
     tainted: bool = False
     taint_sources: list[Any] = Field(default_factory=list)
+    taint_cleared_by: str | None = None
+    content_origin: str = "internal"
+    recall_severity: str | None = Field(
+        default=None, description="warn | block while an open recall reaches this version")
     score: float | None = None
     archived_at: datetime | None = None
     archived_by: str | None = None
@@ -1363,7 +1412,10 @@ class DocumentSummary(BaseModel):
 
 
 class DocumentOut(DocumentSummary):
-    content: str
+    content: str | None
+    untrusted_content: str | None = Field(
+        default=None, description="taint_mode=separate: a tainted body, to treat as data")
+    handling: str | None = None
     created_by: str
     created_by_label: str | None = None
     created_at: datetime
@@ -1442,6 +1494,7 @@ class DereferenceBatchRequest(StrictModel):
     uris: list[str] = Field(min_length=1, max_length=BATCH_DEREFERENCE_MAX)
     include_unverified: bool = False
     include_tainted: bool = False
+    taint_mode: Literal["annotate", "separate", "exclude"] = "annotate"
 
 
 class DereferenceBatchItem(BaseModel):
@@ -2116,6 +2169,7 @@ class ExternalActionCreateRequest(StrictModel):
     namespace: Namespace = Field(
         default="default", pattern=_NAMESPACE_PATTERN + "$"
     )
+    derived_from: list[DocRef] = Field(default_factory=list, max_length=50)
     session_batch_id: uuid.UUID | None = None
     agent: str | None = None
 
@@ -2171,6 +2225,8 @@ class ExternalActionOut(BaseModel):
     created_by: str
     created_at: datetime
     updated_at: datetime
+    requires_human_review: bool = True
+    tainted_inputs: list[Any] = Field(default_factory=list)
 
 
 class ExternalActionListResponse(BaseModel):

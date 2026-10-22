@@ -385,6 +385,12 @@ class SharedDocument(Base):
         DateTime(timezone=True), nullable=True
     )
     taint_cleared_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # AG-TC-01/02 (v3.24): write-time taint sources, recall state, declared origin.
+    provenance_taint: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    recall_severity: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    content_origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="internal", server_default=text("'internal'"))
     policy_flags: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -620,6 +626,8 @@ class CollabTask(Base):
         DateTime(timezone=True), nullable=True)
     mentions: Mapped[list[Any]] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    recall_flags: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     tainted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE")
     )
@@ -853,6 +861,8 @@ class DocumentVersion(Base):
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
     author: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="internal", server_default=text("'internal'"))
     session_batch_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
@@ -1363,6 +1373,8 @@ class ExternalAction(Base):
     session_batch_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
+    tainted_inputs: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow,

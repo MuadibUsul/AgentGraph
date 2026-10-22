@@ -902,6 +902,31 @@
     {
      "endpoints": [
       {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "subtree_of",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "path": "/v1/budgets",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Budgets of a token's subtree"
+      }
+     ],
+     "group": "budgets"
+    },
+    {
+     "endpoints": [
+      {
        "body": [
         {
          "description": "",
@@ -938,6 +963,12 @@
          "name": "expand_parts",
          "required": false,
          "type": "boolean"
+        },
+        {
+         "description": "tainted bodies: annotate (metadata), separate (untrusted_content), exclude",
+         "name": "taint_mode",
+         "required": false,
+         "type": "string"
         }
        ],
        "description": "",
@@ -974,6 +1005,12 @@
          "name": "include_tainted",
          "required": false,
          "type": "boolean"
+        },
+        {
+         "description": "",
+         "name": "taint_mode",
+         "required": false,
+         "type": "string"
         }
        ],
        "description": "",
@@ -1180,6 +1217,24 @@
          "type": "string[]"
         },
         {
+         "description": "Documents this version was derived from (AG-TC-01); recorded for recall",
+         "name": "derived_from",
+         "required": false,
+         "type": "DocRef[]"
+        },
+        {
+         "description": "Anything but internal taints the version",
+         "name": "content_origin",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "This version no longer depends on the recalled versions (AG-TC-02)",
+         "name": "resolves_recall",
+         "required": false,
+         "type": "string | null"
+        },
+        {
          "description": "",
          "name": "agent",
          "required": false,
@@ -1241,6 +1296,13 @@
          "name": "include_tainted",
          "required": false,
          "type": "boolean"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "taint_mode",
+         "required": false,
+         "type": "string"
         }
        ],
        "path": "/v1/documents/{doc_key}",
@@ -1282,6 +1344,45 @@
         "422"
        ],
        "summary": "Soft-archive a shared document (creator or commander)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "namespace",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "must be the current version",
+         "name": "version",
+         "required": false,
+         "type": "integer | null"
+        },
+        {
+         "description": "",
+         "name": "reason",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "doc_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/documents/{doc_key}/clear-taint",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Clear taint as a new untainted version (people only, AG-TC-01)"
       },
       {
        "body": [
@@ -1416,6 +1517,18 @@
         },
         {
          "description": "",
+         "name": "derived_from",
+         "required": false,
+         "type": "DocRef[]"
+        },
+        {
+         "description": "",
+         "name": "content_origin",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
          "name": "agent",
          "required": false,
          "type": "string | null"
@@ -1546,6 +1659,57 @@
         "422"
        ],
        "summary": "List proposals for a document"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "namespace",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "versions to recall, or all",
+         "name": "versions",
+         "required": true,
+         "type": "integer[] | string"
+        },
+        {
+         "description": "",
+         "name": "reason",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "severity",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "max_depth",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "doc_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/documents/{doc_key}/recall",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Recall versions; downstream versions are marked and their authors told (AG-TC-02)"
       },
       {
        "body": [
@@ -2207,6 +2371,12 @@
         },
         {
          "description": "",
+         "name": "derived_from",
+         "required": false,
+         "type": "DocRef[]"
+        },
+        {
+         "description": "",
          "name": "session_batch_id",
          "required": false,
          "type": "string | null"
@@ -2689,6 +2859,24 @@
          "name": "mentions",
          "required": false,
          "type": "string[]"
+        },
+        {
+         "description": "Documents this version was derived from (AG-TC-01); recorded for recall",
+         "name": "derived_from",
+         "required": false,
+         "type": "DocRef[]"
+        },
+        {
+         "description": "Anything but internal taints the version",
+         "name": "content_origin",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "This version no longer depends on the recalled versions (AG-TC-02)",
+         "name": "resolves_recall",
+         "required": false,
+         "type": "string | null"
         },
         {
          "description": "",
@@ -4667,6 +4855,76 @@
         {
          "description": "",
          "in": "path",
+         "name": "recall_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/recalls/{recall_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A recall and its tree of affected versions"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "namespace",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "doc_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "version",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "note",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "recall_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/recalls/{recall_id}/dismiss",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Mark a node as not affected (people only)"
+      }
+     ],
+     "group": "recalls"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
          "name": "request_id",
          "required": true,
          "type": "string"
@@ -6560,6 +6818,65 @@
         "422"
        ],
        "summary": "Descendant tokens (own subtree only)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "token_ref",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tokens/{token_ref}/budget",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A token's daily budget with its ancestors' state (AG-ST-16)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "writes",
+         "required": false,
+         "type": "integer | null"
+        },
+        {
+         "description": "",
+         "name": "embedding_tokens",
+         "required": false,
+         "type": "integer | null"
+        },
+        {
+         "description": "",
+         "name": "queries",
+         "required": false,
+         "type": "integer | null"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "token_ref",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tokens/{token_ref}/budget",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Set a token's daily limits (an ancestor or a person)"
       }
      ],
      "group": "tokens"
@@ -8386,6 +8703,10 @@
       "meaning": "Read through a renamed alias; use the current alias or id."
      },
      {
+      "code": "budget_warning",
+      "meaning": "A token's daily budget is at 80%; budget.warning went to its issuer."
+     },
+     {
       "code": "constitution_draft",
       "meaning": "The constitution is still the generated template."
      },
@@ -8436,6 +8757,10 @@
      {
       "code": "quota_80_percent",
       "meaning": "The daily embedding quota is at least 80% used."
+     },
+     {
+      "code": "recall_still_depends",
+      "meaning": "This version still derives from recalled versions; the recall node stays open."
      },
      {
       "code": "secrets_not_imported",

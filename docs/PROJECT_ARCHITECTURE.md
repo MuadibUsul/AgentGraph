@@ -674,6 +674,9 @@ ruff check .
 | `app/services/members.py` | 成员与角色：邀请、改角色、移除（吊销或转交令牌）、沿树继承 owner/admin、切换工作区 |
 | `app/services/rights.py` | 个人权利请求：定位、导出、假名化、遮盖、删除、说明、提醒与最小化、恢复后重放遮盖日志 |
 | `app/services/collab.py` | 任务协作：上下文指针与版本钉住、认领角色检查、续跑包、@提及、升级给人（WAITING_HUMAN 暂停租约）、子任务树与汇总、级联取消 |
+| `app/services/provenance.py` | 写入来源与读窗口：外部主体、derived_from、15 分钟读窗口、声明来源；记录 doc_derivations；taint_mode 读侧处理 |
+| `app/services/recall.py` | 数据召回：沿 doc_derivations 广度优先、标记下游版本与任务、doc.recalled 事件、resolves_recall/驳回与关闭 |
+| `app/services/token_budget.py` | 令牌树预算：按令牌按日限额，用量沿谱系累计到分支，429 budget_exhausted、80% 预警、设置与查询 |
 | `scripts/deploy_tlines.sh` | Tlines 部署：数据库备份、旧镜像打标签、构建重启、校验、自动/手动回滚 |
 | `scripts/webhook_receiver.py` | Bot 侧签名 Webhook 接收器：校验时间戳/HMAC，写入 JSONL outbox |
 | `app/services/tasks.py` | 失败认领/续租/释放/交接/审核/升级写入 `TASK_*_FAILED` 时间线 |

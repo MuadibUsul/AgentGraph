@@ -81,8 +81,9 @@ from app.schemas import (
     RegisterPartsRequest,
     TombstoneOut,
 )
-from app.services import access_log, agent_onboarding, budget, indexer, onboarding
+from app.services import access_log, agent_onboarding, budget, indexer, onboarding, provenance
 from app.services import addresses as address_service
+from app.services import recall as recall_service
 from app.services.common import (
     PLATFORM_DOC_NAMESPACES,
     append_event,
@@ -168,6 +169,7 @@ async def _record_version(
         trust_level=document.trust_level,
         tainted=document.tainted,
         taint_sources=document.taint_sources or [],
+        content_origin=document.content_origin or "internal",
         author=author,
         session_batch_id=batch_id,
         change_summary=change_summary,
@@ -879,6 +881,7 @@ async def batch_dereference(
     *,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    taint_mode: str = "annotate",
 ) -> DereferenceBatchResponse:
     items: list[DereferenceBatchItem] = []
     for uri in uris:
@@ -889,6 +892,7 @@ async def batch_dereference(
                 uri,
                 include_unverified=include_unverified,
                 include_tainted=include_tainted,
+                taint_mode=taint_mode,
             )
             items.append(DereferenceBatchItem(uri=uri, ok=True, document=result.document))
         except ApiError as exc:
@@ -905,6 +909,7 @@ async def get_document(
     *,
     include_unverified: bool = False,
     include_tainted: bool = False,
+    taint_mode: str = "annotate",
 ) -> DocumentOut:
     require_permission(principal, "doc:read")
     document = await _get_document(session, principal.workspace.id, doc_key)
@@ -916,7 +921,8 @@ async def get_document(
         include_tainted=include_tainted,
     )
     await indexer.annotate(session, [document])
-    return document_out(document)
+    await provenance.note_reads(principal, [document])
+    return provenance.apply_taint_mode(document_out(document), taint_mode)
 
 
 @agent_onboarding.records("document")
@@ -945,6 +951,11 @@ async def upsert_document(
         doc_key = existing.doc_key
     await budget.check_write(
         principal, document_id=existing.id if existing else None, doc_key=doc_key
+    )
+    origin = getattr(request, "content_origin", "internal")
+    origins = await provenance.collect(
+        session, principal, agent=agent, derived_from=getattr(request, "derived_from", []),
+        content_origin=origin, exclude_document_id=existing.id if existing else None,
     )
     frontmatter_in = request.frontmatter
     ref_edges: list[tuple[str, str, str | None]] = []
@@ -1026,6 +1037,8 @@ async def upsert_document(
                 "shared_document",
                 document_out(latest).model_dump(mode="json") if latest else None,
             ) from None
+        document.provenance_taint = origins.sources
+        document.content_origin = origin
         await refresh_document_taint(session, document)
         await indexer.after_write(session, document)
         await record_audit(
@@ -1046,6 +1059,7 @@ async def upsert_document(
             batch_id=batch,
             change_summary="document created",
         )
+        await provenance.record_edges(session, document, origins)
         await address_service.record_document_refs(session, document, ref_edges)
         await append_event(
             session,
@@ -1187,6 +1201,9 @@ async def upsert_document(
     document.version += 1
     document.updated_by = agent
     document.updated_at = utcnow()
+    document.provenance_taint = origins.sources
+    document.content_origin = origin
+    document.recall_severity = None
     await session.flush()
     await refresh_document_taint(session, document)
     await indexer.after_write(session, document)
@@ -1198,6 +1215,10 @@ async def upsert_document(
         change_summary="document updated"
         + (" with rebase" if rebased else ""),
     )
+    await provenance.record_edges(session, document, origins)
+    if getattr(request, "resolves_recall", None):
+        await recall_service.resolve_by_write(
+            session, principal, document, origins, request.resolves_recall)
     await address_service.record_document_refs(session, document, ref_edges)
     await record_audit(
         session,
@@ -1290,6 +1311,10 @@ async def patch_document_section(
     ensure_not_human_locked(
         principal, "shared_document", document.locked_by_human, document.human_note
     )
+    origins = await provenance.collect(
+        session, principal, agent=agent, derived_from=request.derived_from,
+        content_origin=request.content_origin, exclude_document_id=document.id,
+    )
     await enforce_policy(
         session,
         principal,
@@ -1363,6 +1388,12 @@ async def patch_document_section(
     document.version += 1
     document.updated_by = agent
     document.updated_at = utcnow()
+    # A section patch keeps the rest of the body, and with it its sources.
+    kept = list(document.provenance_taint or [])
+    document.provenance_taint = kept + [
+        entry for entry in origins.sources if entry not in kept]
+    if request.content_origin != "internal":
+        document.content_origin = request.content_origin
     ensure_content_size(document.content)
     await session.flush()
     await refresh_document_taint(session, document)
@@ -1375,6 +1406,7 @@ async def patch_document_section(
         change_summary=f"section patched: {request.section_heading}"
         + (" with rebase" if rebased else ""),
     )
+    await provenance.record_edges(session, document, origins)
     await record_audit(
         session,
         workspace_id=principal.workspace.id,
@@ -1445,6 +1477,7 @@ async def query_documents(
             )
         ).scalars().all()
         items = [_query_hit(principal, row, []) for row in rows]
+        await provenance.note_reads(principal, list(rows))
         excluded = await _excluded_counts(
             session, principal, request, base_ids=select(SharedDocument.id).where(*base),
             shown={row.id for row in rows},
@@ -1475,6 +1508,7 @@ async def query_documents(
         for doc_id in ids
         if doc_id in by_id
     ]
+    await provenance.note_reads(principal, list(rows))
     excluded = await _excluded_ranked(session, principal, request, base, limit, set(ids))
     return DocumentQueryResponse(
         items=items,
@@ -1532,6 +1566,8 @@ def _query_hit(
 def _excluded_reason(principal: Principal, document: SharedDocument) -> str | None:
     if document.archived_at is not None:
         return "archived"
+    if document.recall_severity == "block":
+        return "recalled"
     if document.tainted:
         return "tainted"
     if document.verification_status != "VERIFIED":
@@ -1577,7 +1613,8 @@ async def _excluded_ranked(
 
 
 def _tally(principal: Principal, rows: list[SharedDocument]) -> dict[str, int]:
-    counts = {"unverified_by_others": 0, "own_unverified": 0, "archived": 0, "tainted": 0}
+    counts = {"unverified_by_others": 0, "own_unverified": 0, "archived": 0, "tainted": 0,
+              "recalled": 0}
     for row in rows:
         reason = _excluded_reason(principal, row)
         if reason is not None:
@@ -1638,6 +1675,7 @@ async def dereference(
     expand_parts: bool = False,
     content_offset: int = 0,
     content_limit: int | None = None,
+    taint_mode: str = "annotate",
 ) -> DereferenceResponse:
     require_permission(principal, "doc:read")
     doc_key = parse_doc_uri(uri)
@@ -1650,10 +1688,12 @@ async def dereference(
         include_tainted=include_tainted,
     )
     await indexer.annotate(session, [document])
+    await provenance.note_reads(principal, [document])
     if expand_parts:
         expanded, parts = await address_service.expand_parts(session, principal, document)
         return DereferenceResponse(
-            uri=uri, document=document_out(document), expanded_content=expanded, parts=parts
+            uri=uri, document=provenance.apply_taint_mode(document_out(document), taint_mode),
+            expanded_content=expanded, parts=parts
         )
     out = document_out(document)
     raw = document.content.encode("utf-8")
@@ -1667,7 +1707,7 @@ async def dereference(
         out = out.model_copy(update={"content": raw[start:end].decode("utf-8")})
     return DereferenceResponse(
         uri=uri,
-        document=out,
+        document=provenance.apply_taint_mode(out, taint_mode),
         content_total_bytes=len(raw),
         content_truncated=truncated,
     )
@@ -2267,6 +2307,57 @@ async def set_document_taint(
     return DocumentMutationResponse(
         document=document_out(document), session_batch_id=batch
     )
+
+async def clear_taint(
+    session: AsyncSession,
+    principal: Principal,
+    doc_key: str,
+    *,
+    namespace: str | None,
+    version: int | None,
+    reason: str,
+) -> DocumentMutationResponse:
+    """AG-TC-01 point 3: only people clear taint, as a new untainted version."""
+    if not principal.is_human:
+        raise Forbidden("only a human can clear taint")
+    batch = uuid.uuid4()
+    document = await _get_document(session, principal.workspace.id, doc_key, for_update=True)
+    if namespace and document.namespace != namespace:
+        raise NotFound("shared_document", f"document '{doc_key}' not found in '{namespace}'")
+    ensure_namespace(principal, document.namespace, write=True)
+    if version is not None and version != document.version:
+        raise VersionConflict("shared_document", _latest(document), expected_version=version)
+    before = document_snapshot(document)
+    actor = principal.agent_signature
+    document.version += 1
+    document.updated_by = actor
+    document.updated_at = utcnow()
+    await clear_document_taint(session, document, actor=actor, note=None)
+    await _record_version(session, document, author=actor, batch_id=batch,
+                          change_summary=f"taint cleared: {reason}"[:500])
+    await record_audit(
+        session,
+        workspace_id=principal.workspace.id,
+        session_batch_id=batch,
+        agent_signature=actor,
+        target_table="shared_documents",
+        target_record_id=document.id,
+        operation="UPDATE",
+        before=before,
+        after={**document_snapshot(document), "reason": reason},
+    )
+    await append_event(
+        session,
+        workspace_id=principal.workspace.id,
+        agent=actor,
+        event_type="DOC_TAINT_CHANGED",
+        payload={"doc_key": document.doc_key, "tainted": False, "version": document.version,
+                 "reason": reason},
+        namespace=document.namespace,
+    )
+    await session.commit()
+    return DocumentMutationResponse(document=document_out(document), session_batch_id=batch)
+
 
 async def normalize_document_html(
     session: AsyncSession,

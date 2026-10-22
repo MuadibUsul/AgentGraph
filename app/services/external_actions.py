@@ -56,6 +56,8 @@ def action_out(
         created_by=action.created_by,
         created_at=action.created_at,
         updated_at=action.updated_at,
+        requires_human_review=True,
+        tainted_inputs=action.tainted_inputs or [],
     )
 
 
@@ -82,6 +84,13 @@ async def create_action(
         return action_out(existing)
     await validate_target(request.target_url)
     await assert_budget(session, workspace_id)
+    from app.services import provenance
+
+    # AG-TC-01 point 4e: drafts always wait for a person; tainted inputs are listed.
+    origins = await provenance.collect(
+        session, principal, agent=actor, derived_from=request.derived_from,
+        content_origin="internal", exclude_document_id=None,
+    )
     action = ExternalAction(
         workspace_id=workspace_id,
         action_type=request.action_type,
@@ -102,6 +111,7 @@ async def create_action(
         created_by=actor,
         created_at=utcnow(),
         updated_at=utcnow(),
+        tainted_inputs=provenance.tainted_refs(origins),
     )
     session.add(action)
     await session.flush()

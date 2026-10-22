@@ -38,10 +38,11 @@ async def reindex_document_chunks(
     ]
     vectors = await provider.embed(texts)
     from app.services.budget import meter_embedding
+    from app.services.token_budget import stamp_chain
 
     await meter_embedding(
         document.workspace_id, sum(len(item) for item in texts), kind="chunks",
-        model=provider.model,
+        model=provider.model, chain=stamp_chain(document.updated_stamp),
     )
     for chunk, vector in zip(chunks, vectors, strict=True):
         session.add(

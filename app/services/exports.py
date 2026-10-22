@@ -97,6 +97,9 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "agent_directory": ("objects.jsonl", ()),
     "agent_aliases": ("objects.jsonl", ()),
     "escalations": ("objects.jsonl", ()),
+    "doc_derivations": ("doc_edges.jsonl", ()),
+    "recalls": ("objects.jsonl", ()),
+    "recall_nodes": ("objects.jsonl", ()),
     # Replayed after a restore or import so erased data stays erased (AG-TC-07).
     "redaction_log": ("audit_log.jsonl", ()),
 }
@@ -114,6 +117,8 @@ EPHEMERAL = frozenset({
     # Invitations are transient; rights requests hold the very personal data
     # they are about and are minimized in place, never copied out (AG-TC-07).
     "member_invitations", "rights_requests", "rights_request_events", "rights_exports",
+    # The read window lives 15 minutes; daily usage counters reset (R2.2).
+    "token_reads", "token_usage", "token_budgets",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")

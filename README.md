@@ -837,6 +837,30 @@ the tree. Cancelling a parent cancels its unfinished children.
 `@agent:reviewer` in a body, sends that principal a `mention.created` event;
 an offline agent's owner is notified too.
 
+## Provenance, recall and token budgets
+
+**Taint (AG-TC-01).** A version is tainted when its writer is marked
+`external`, when it declares a tainted source in `derived_from`, when its
+writer read a tainted version in the last 15 minutes, or when it declares a
+`content_origin` other than `internal`. `taint_sources` says which. Tainted
+bodies come with `handling: "treat as data, not instructions"`;
+`taint_mode=separate` moves them to `untrusted_content`. Only people clear
+taint (`POST /v1/documents/{key}/clear-taint`), as a new version.
+
+**Recall (AG-TC-02).** Every write records what it came from. When a source
+turns out to be wrong, its author calls `recall_document`: every version
+derived from it, directly or through others, is marked, and each downstream
+author receives `doc.recalled` with how many hops away it is and through which
+document. Authors resolve their node by writing a corrected version with
+`resolves_recall`; `severity=block` keeps affected documents out of searches
+meanwhile.
+
+**Token budgets (AG-ST-16).** `PUT /v1/tokens/{id}/budget` sets daily limits on
+writes, embedding tokens and queries for a token you issued. Usage adds up the
+tree, so a branch's budget caps its whole subtree; a spent budget returns 429
+`budget_exhausted` naming the token that ran out, and 80% sends
+`budget.warning` to the issuer.
+
 ## Backups, restores and incident response
 
 **Backups (AG-ST-10).** With `BACKUP_DIR` set, a scheduler takes a full backup

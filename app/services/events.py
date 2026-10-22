@@ -75,6 +75,10 @@ EVENT_TYPES: dict[str, str] = {
     "token.expiring": "A token expires within 10 minutes (targets: its parent).",
     "agent.registered": "An agent joined the directory (targets: the workspace's humans).",
     "agent.status_changed": "An agent's directory status changed.",
+    "doc.recalled": "A version this document derives from was recalled (details: recall_id, "
+                    "hop, via; targets: the author, the maintainer, holders of pinned tasks).",
+    "recall.closed": "Every node of a recall is resolved or dismissed.",
+    "budget.warning": "A token's daily budget is at 80% (targets: its issuer, the owners).",
     "mention.created": "A document or task mentions a principal (targets: the mentioned, "
                        "and the owner of an offline agent).",
     "escalation.resolved": "A human decided an escalation (targets: the agent that asked).",
@@ -211,6 +215,7 @@ def event_out(event: WorkspaceEvent) -> dict[str, Any]:
         "targets": event.targets or [],
         "refs": event.refs or {},
         "summary": event.summary,
+        **({"details": details} if (details := (event.payload or {}).get("details")) else {}),
     }
 
 

@@ -121,6 +121,9 @@ BEGIN
             WHEN 'AGENT_REGISTERED' THEN 'agent.registered'
             WHEN 'AGENT_STATUS_CHANGED' THEN 'agent.status_changed'
             WHEN 'MENTION_CREATED' THEN 'mention.created'
+            WHEN 'DOC_RECALLED' THEN 'doc.recalled'
+            WHEN 'RECALL_CLOSED' THEN 'recall.closed'
+            WHEN 'BUDGET_WARNING' THEN 'budget.warning'
             WHEN 'ESCALATION_RESOLVED' THEN 'escalation.resolved'
             WHEN 'ESCALATION_REMINDER' THEN 'escalation.reminder'
             WHEN 'TASK_CHILDREN_DONE' THEN 'task.children_done'
@@ -170,6 +173,8 @@ BEGIN
         'assigned_role', COALESCE(row_data->>'assigned_role', ''),
         'locked_by_human', COALESCE(row_data->>'locked_by_human', 'false')::boolean,
         'event_type', COALESCE(row_data->>'event_type', row_data->'payload'->>'event_type', ''),
+        'details', CASE WHEN TG_TABLE_NAME = 'timeline_streams'
+                        THEN row_data->'payload'->'details' END,
         'timestamp', NOW()
     );
 
