@@ -58,8 +58,8 @@ async def set_watermark(session: AsyncSession, principal: Principal, name: str,
 
 
 async def _store(session: AsyncSession, principal: Principal, name: str, seq: int, *,
-                 commit: bool) -> dict[str, Any]:
-    owner = await owner_ref(session, principal)
+                 commit: bool, owner: str | None = None) -> dict[str, Any]:
+    owner = owner or await owner_ref(session, principal)
     await session.execute(
         text("INSERT INTO watermarks (workspace_id, principal_ref, name, seq) VALUES "
              "(:ws, :p, :n, :s) ON CONFLICT (workspace_id, principal_ref, name) DO UPDATE "

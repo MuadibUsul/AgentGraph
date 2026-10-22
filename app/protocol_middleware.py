@@ -18,6 +18,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import versioning, warnings_context
+from app.config import get_settings
 from app.errors import ApiError, error_body
 from app.services import idempotency
 
@@ -133,6 +134,10 @@ def _error_response(exc: ApiError, version: str) -> JSONResponse:
     return response
 
 
+BUILD_HEADER = "AgentGraph-Build"
+_BUILD = get_settings().app_version
+
+
 class ProtocolMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -170,7 +175,10 @@ class ProtocolMiddleware:
         async def send_with_version(message: Message) -> None:
             nonlocal held_start
             if message["type"] == "http.response.start":
-                MutableHeaders(scope=message)[versioning.VERSION_HEADER] = version
+                outgoing = MutableHeaders(scope=message)
+                outgoing[versioning.VERSION_HEADER] = version
+                # The build, so a client sees a deploy even when the API version holds.
+                outgoing[BUILD_HEADER] = _BUILD
                 content_type = Headers(raw=message.get("headers", [])).get("content-type", "")
                 if merge and collected and content_type.startswith("application/json"):
                     held_start = message

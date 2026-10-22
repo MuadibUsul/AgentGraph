@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useI18n } from "../i18n";
 import type {
@@ -294,15 +294,37 @@ export function GovernanceView({
     });
   }
 
-  async function reindex() {
-    await run("reindex", async () => {
-      const result = await request<{ chunks: number }>(
+  // Index repair (2026-10-22 retest): only broken indexes by default; a full
+  // rebuild re-embeds everything, so it is a separate, confirmed action.
+  const [indexHealth, setIndexHealth] = useState<IndexHealth | null>(null);
+  const loadIndexHealth = useCallback(async () => {
+    try {
+      setIndexHealth(await request<IndexHealth>(`/v1/admin/workspaces/${workspaceId}/index-status`));
+    } catch {
+      setIndexHealth(null);
+    }
+  }, [request, workspaceId]);
+  useEffect(() => {
+    void loadIndexHealth();
+  }, [loadIndexHealth]);
+
+  async function reindex(mode: "repair" | "full") {
+    if (
+      mode === "full" &&
+      !window.confirm(t("A full rebuild re-embeds every document and spends embedding quota. Continue?"))
+    ) {
+      return;
+    }
+    await run(`reindex:${mode}`, async () => {
+      const result = await request<{ queued: number }>(
         `/v1/admin/workspaces/${workspaceId}/reindex`,
-        { method: "POST" },
+        { method: "POST", body: JSON.stringify(mode === "full" ? { mode, confirm: "REBUILD" } : { mode }) },
       );
-      notify(t("Rebuilt {count} retrieval chunk(s).", { count: result.chunks }));
+      notify(t("Queued {count} document(s) for indexing; they are embedded in the background.", { count: result.queued }));
+      await loadIndexHealth();
     });
   }
+  const broken = indexHealth ? indexHealth.repairable + indexHealth.failed_jobs : 0;
 
   const sections: Array<{ id: Section; label: string; count?: number }> = [
     { id: "proposals", label: t("Proposals"), count: pending.length },
@@ -320,9 +342,26 @@ export function GovernanceView({
             {t("Review proposals, gate write paths, sign webhooks, approve outbound actions and keep budgets observable.")}
           </p>
         </div>
-        <button type="button" className="button ghost" onClick={() => void reindex()} disabled={busy === "reindex"}>
-          {busy === "reindex" ? <Spinner /> : <IconPulse />} {t("Reindex retrieval")}
-        </button>
+        <div className="index-actions">
+          <button
+            type="button"
+            className="button ghost"
+            onClick={() => void reindex("repair")}
+            disabled={busy !== null || broken === 0}
+            title={broken === 0 ? t("Every index is current; nothing to repair.") : undefined}
+          >
+            {busy === "reindex:repair" ? <Spinner /> : <IconPulse />} {t("Repair broken indexes")}
+            <span className={`tab-count ${broken ? "alert" : ""}`}>{broken}</span>
+          </button>
+          <button type="button" className="button ghost small" onClick={() => void reindex("full")} disabled={busy !== null}>
+            {t("Full rebuild…")}
+          </button>
+          {indexHealth && indexHealth.pending_jobs + indexHealth.deferred_jobs > 0 && (
+            <span className="muted small-note">
+              {t("{count} waiting to be indexed", { count: indexHealth.pending_jobs + indexHealth.deferred_jobs })}
+            </span>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -655,7 +694,8 @@ export function GovernanceView({
                 type="button"
                 className="button danger"
                 onClick={() => void rejectProposal(selectedProposal)}
-                disabled={busy !== null}
+                disabled={busy !== null || !reviewNote.trim()}
+                title={reviewNote.trim() ? undefined : t("A rejection needs a reason: write a review note first.")}
               >
                 {t("Reject")}
               </button>
@@ -814,4 +854,11 @@ export function GovernanceView({
       )}
     </section>
   );
+}
+
+interface IndexHealth {
+  pending_jobs: number;
+  deferred_jobs: number;
+  failed_jobs: number;
+  repairable: number;
 }

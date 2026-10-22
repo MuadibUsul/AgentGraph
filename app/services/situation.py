@@ -11,6 +11,7 @@ at most every 30 minutes, and alerts whose condition is gone resolve.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
@@ -285,7 +286,8 @@ async def _raise(session: AsyncSession, alert_id: str, item: dict[str, Any]) -> 
         payload={"id": alert_id, "targets": [f"human:{owner}" for owner in owners],
                  "details": {"alert_id": alert_id, "rule": item["rule"],
                              "severity": item["severity"], "subject": item["subject_ref"],
-                             **item["details"]}})
+                             # SQL aggregates arrive as Decimal; JSON needs plain numbers.
+                             **json.loads(_dumps(item["details"]))}})
 
 
 async def situation_loop() -> None:

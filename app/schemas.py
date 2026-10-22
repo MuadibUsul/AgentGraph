@@ -356,7 +356,13 @@ class SlotPatchRequest(StrictModel):
         description="On 409 version_conflict include current_content (bodies <= 64 KiB)",
     )
     ops: list[dict[str, Any]] = Field(min_length=1, max_length=100)
-    expected_version: int = Field(ge=1)
+    expected_version: int = Field(
+        ge=0, description="0 creates the slot: the patch applies to an empty state"
+    )
+    namespace: Namespace | None = Field(
+        default=None, pattern=_NAMESPACE_PATTERN + "$",
+        description="Namespace of a slot created with expected_version=0",
+    )
     lease_epoch: int | None = Field(default=None, ge=0)
     lease_seconds: int | None = Field(
         default=None, ge=5, le=settings.max_task_lease_seconds
@@ -794,6 +800,10 @@ class WhoAmIResponse(BaseModel):
 
 
 class TaskSummary(BaseModel):
+    surfaced: bool = Field(
+        default=False,
+        description="Waiting on a person or a verdict for over 24 hours (computed)",
+    )
     id: uuid.UUID
     canonical_id: str | None = Field(
         default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
@@ -2437,3 +2447,17 @@ class AttestationRequest(StrictModel):
     subject: AttestationSubject
     audience: str = Field(min_length=1, max_length=256)
     ttl_seconds: int = Field(default=900, ge=1, le=900)
+
+
+class ReindexRequest(StrictModel):
+    mode: Literal["repair", "full"] = Field(
+        default="repair",
+        description="repair: only documents whose index is wrong; full: every document",
+    )
+    confirm: str | None = Field(
+        default=None, max_length=16, description="REBUILD, required for mode=full"
+    )
+
+
+class InboxAckRequest(StrictModel):
+    up_to_event_seq: int = Field(ge=0, description="Acknowledge everything up to this seq")

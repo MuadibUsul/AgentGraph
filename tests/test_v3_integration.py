@@ -7,6 +7,10 @@ import uuid
 import httpx
 import pytest
 
+from app.config import get_settings
+
+settings = get_settings()
+
 pytestmark = pytest.mark.integration
 
 
@@ -734,6 +738,8 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         "acquire_resource",
                         "release_resource",
                         "get_lineage_attestation",
+                        "list_inbox",
+                        "ack_inbox",
                         "get_tenant_tree",
                         "create_child_tenant",
                         "move_tenant",
@@ -1109,12 +1115,12 @@ async def test_lease_reaper(client, admin_headers, workspace):
 async def test_dashboard_root_and_openapi(client):
     health = await client.get("/healthz")
     assert health.status_code == 200
-    assert health.json()["version"] == "3.2.1"
+    assert health.json()["version"] == settings.app_version
     assert health.headers["x-request-id"]
 
     root = await client.get("/")
     assert root.status_code == 200
-    assert root.json()["version"] == "3.2.1"
+    assert root.json()["version"] == settings.app_version
     assert set(root.json()["primitives"]) == {
         "workspace_sync",
         "create_task",
@@ -1172,6 +1178,8 @@ async def test_dashboard_root_and_openapi(client):
         "acquire_resource",
         "release_resource",
         "get_lineage_attestation",
+        "list_inbox",
+        "ack_inbox",
         "get_tenant_tree",
         "create_child_tenant",
         "move_tenant",

@@ -38,6 +38,7 @@ from app.schemas import (
     HumanUserListResponse,
     HumanUserOut,
     HumanUserUpdateRequest,
+    InboxAckRequest,
     LegacyMergeRequest,
     OnboardingUpdate,
     PolicyCreateRequest,
@@ -49,6 +50,7 @@ from app.schemas import (
     ProposalListResponse,
     ProposalOut,
     ProposalRejectRequest,
+    ReindexRequest,
     SecurityContactsRequest,
     SlotMutationResponse,
     TaskActionResponse,
@@ -76,7 +78,6 @@ from app.services import incidents as incident_service
 from app.services import leases as lease_service
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
-from app.services.retrieval import backfill_workspace_chunks
 
 router = APIRouter(prefix="/v1/human", tags=["Human Console"])
 
@@ -747,18 +748,43 @@ async def webhook_deliveries(
     )
 
 
+@router.get("/inbox", summary="The people's shared inbox (human gates and verdicts)")
+async def human_inbox(
+    status: str = Query(default="unacked", pattern="^(unacked|all)$"),
+    limit: int = Query(default=50, ge=1, le=100_000),
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import inbox
+
+    return await inbox.summary(session, principal, human=True, status=status, limit=limit)
+
+
+@router.post("/inbox/ack", summary="Acknowledge the people's inbox up to an event seq")
+async def human_inbox_ack(
+    body: InboxAckRequest,
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import inbox
+
+    return await inbox.ack(session, principal, body.up_to_event_seq, human=True)
+
+
 @router.post(
     "/reindex",
-    summary="Rebuild chunk indexes for this workspace",
+    summary="Repair broken indexes (default) or queue a confirmed full rebuild",
 )
 async def reindex(
+    body: ReindexRequest | None = None,
     principal: Principal = Depends(_owner),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    count = await backfill_workspace_chunks(
-        session, principal.workspace.id
-    )
-    return {"chunks": count}
+    from app.services import indexer
+
+    body = body or ReindexRequest()
+    return await indexer.repair(session, principal.workspace.id, mode=body.mode,
+                                confirm=body.confirm)
 
 
 # ---------------------------------------------------------------- tenant

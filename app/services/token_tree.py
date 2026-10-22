@@ -278,8 +278,10 @@ async def issue_child_token(
     session: AsyncSession, principal: Principal, request: dict[str, Any]
 ) -> dict[str, Any]:
     if not settings.child_token_issuance:
-        raise ApiError(403, "issue_not_permitted", "child token issuance is switched off",
-                       details={"reason": "child_token_issuance_disabled"})
+        raise ApiError(403, "feature_disabled", "child token issuance is switched off",
+                       details={"reason": "child_token_issuance_disabled",
+                                "feature": "child_token_issuance",
+                                "setting": "CHILD_TOKEN_ISSUANCE"})
     workspace = await session.get(Workspace, principal.workspace.id)
     issued_by_human = principal.user_id if principal.auth_kind is AuthKind.HUMAN else None
     # Humans and the admin console issue on behalf of the root.

@@ -989,6 +989,11 @@ async def review_task(
     if not (principal.is_commander or can(principal, "task:review")):
         require_permission(principal, "task:review")
     validate_review_next_status(request.decision, request.next_status)
+    if request.decision == "reject" and not (request.feedback or "").strip():
+        # A verdict without a reason is not a verdict (delivery protocol §7).
+        raise ApiError(422, "review_feedback_required",
+                       "a rejection must say why: pass feedback",
+                       details={"field": "feedback"})
     agent = effective_agent(principal, request.agent)
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)

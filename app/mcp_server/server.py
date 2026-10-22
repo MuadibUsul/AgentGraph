@@ -581,8 +581,14 @@ def _api_error(exc: ApiError) -> ToolError:
 async def get_orientation(
     sections: list[str] | None = None,
     max_bytes: Annotated[int, Field(ge=4_096, le=131_072)] = 32_768,
+    since: str | None = None,
 ) -> dict[str, Any]:
     """FIRST CALL. Call this before any other tool.
+
+    Coming back? Pass since=<the inbox.event_cursor you kept, or the release
+    version you last saw>: only what changed comes back (the constitution and
+    required reading only when they changed), plus platform_changes listing
+    any releases in between.
 
     onboarding.next_call is your next step: 1 get_orientation, 2 read
     system/constitution and ack_constitution, 3 read your namespace readme,
@@ -599,7 +605,7 @@ async def get_orientation(
         principal = await _principal_for_call(session)
         try:
             result = await orientation_service.build(
-                session, principal, sections=sections, max_bytes=max_bytes
+                session, principal, sections=sections, max_bytes=max_bytes, since=since
             )
         except ApiError as exc:
             raise _api_error(exc) from exc
@@ -1029,12 +1035,15 @@ async def agent_patch_shared_state(
     return_current_on_conflict: bool = False,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
+    namespace: str | None = None,
 ) -> dict[str, Any]:
     """Apply an RFC 6902 JSON Patch to a shared state slot.
 
     Only EXECUTOR/COMMANDER roles may write. Human-locked slots return 403
-    HUMAN_SOVEREIGNTY_LOCKED. Use expected_version for optimistic concurrency.
-    Set lease_seconds to hold a short exclusive lease while working.
+    HUMAN_SOVEREIGNTY_LOCKED. Use expected_version for optimistic concurrency;
+    expected_version=0 creates the slot (the patch applies to an empty state,
+    in `namespace`, default "default"). Set lease_seconds to hold a short
+    exclusive lease while working.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -1047,6 +1056,7 @@ async def agent_patch_shared_state(
                 lease_seconds=lease_seconds,
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
+                namespace=namespace,
             )
             result = await services.patch_slot(session, principal, slot_key, body)
         except ValidationError as exc:
@@ -1723,6 +1733,42 @@ async def get_lineage_attestation(
             result = await attestation.attest(
                 session, principal, audience=audience, token_id=token_id, doc_id=doc_id,
                 version=version, ttl_seconds=ttl_seconds)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_inbox")
+async def list_inbox(
+    status: Literal["unacked", "all"] = "unacked",
+    limit: Annotated[int, Field(ge=1, le=200)] = 50,
+) -> dict[str, Any]:
+    """Changes addressed to you: a task you created was claimed, reviewed, done,
+    failed or escalated; your proposal was applied, rejected or superseded;
+    your document was verified; mentions and other targeted events. Envelopes
+    carry keys, statuses and the verdict note, never content. Terminal items
+    (priority 0) first. Acknowledge with ack_inbox."""
+    from app.services import inbox
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await inbox.summary(session, principal, status=status, limit=limit)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="ack_inbox")
+async def ack_inbox(up_to_event_seq: Annotated[int, Field(ge=0)]) -> dict[str, Any]:
+    """Mark your inbox read up to an event seq. It only moves forward: a lower
+    value returns the current position without error."""
+    from app.services import inbox
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await inbox.ack(session, principal, up_to_event_seq)
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)
@@ -2953,7 +2999,8 @@ async def restore_document(
 @mcp.tool(name="get_api_docs")
 async def get_api_docs(
     section: Literal[
-        "guide", "errors", "limits", "retry", "events", "tokens", "versions", "all", "overview"
+        "guide", "errors", "limits", "retry", "events", "tokens", "versions", "all",
+        "overview", "capabilities", "releases",
     ] = "overview",
 ) -> dict[str, Any]:
     """Return the REST/MCP connection guide and core request schemas.
@@ -2961,8 +3008,20 @@ async def get_api_docs(
     Agent-readable; no admin token required. The live OpenAPI document is also
     available at GET /v1/agent-docs. section="retry" returns the canonical
     backoff algorithm, "errors" the full error-code registry (code -> class ->
-    action), "versions" the supported API versions.
+    action), "versions" the supported API versions, "capabilities" the feature
+    flags (on/off here) and REST endpoints without a same-named tool,
+    "releases" this deployment's release history.
     """
+    if section == "capabilities":
+        from app import capabilities
+        from app.main import app as fastapi_app
+
+        return _compact(capabilities.full(fastapi_app))
+    if section == "releases":
+        from app.services import releases
+
+        return _compact({"current": await releases.current(),
+                         "history": await releases.changes_since(None)})
     guide = agent_guide.sections()
     if section == "all":
         return _compact({**guide, "versions": protocol_docs("versions")["versions"]})

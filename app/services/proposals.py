@@ -499,6 +499,9 @@ async def reject_proposal(
 ) -> ProposalOut:
     if not principal.is_human or not principal.is_commander:
         raise Forbidden("a human owner/reviewer must reject a proposal")
+    if not (request.note or "").strip():
+        raise ApiError(422, "review_note_required",
+                       "a rejection must say why: pass a note", details={"field": "note"})
     proposal = await _get_proposal(
         session, principal.workspace.id, proposal_id, for_update=True
     )

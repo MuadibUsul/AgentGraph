@@ -54,6 +54,7 @@ from app.schemas import (
     ExternalActionCreateRequest,
     ExternalActionListResponse,
     ExternalActionOut,
+    InboxAckRequest,
     LeaseHeartbeatRequest,
     LeaseHeartbeatResponse,
     LeaseListResponse,
@@ -161,12 +162,16 @@ def _statuses(value: str | None) -> list[str] | None:
 async def orientation(
     sections: str | None = Query(default=None, description="Comma-separated section names"),
     max_bytes: int = Query(default=orientation_service.DEFAULT_MAX_BYTES),
+    since: str | None = Query(
+        default=None, max_length=200,
+        description="Event cursor or release version: return only what changed since",
+    ),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     wanted = [item.strip() for item in sections.split(",") if item.strip()] if sections else None
     return await orientation_service.build(
-        session, principal, sections=wanted, max_bytes=max_bytes
+        session, principal, sections=wanted, max_bytes=max_bytes, since=since
     )
 
 
@@ -1182,6 +1187,32 @@ async def delete_webhook(
     _webhook_manager(principal)
     await services.delete_rule(session, principal.workspace.id, rule_id)
     return Response(status_code=204)
+
+
+# ------------------------------------------------------------------ inbox
+
+
+@router.get("/inbox", summary="Changes addressed to you, unacknowledged first by priority")
+async def list_inbox(
+    status: Literal["unacked", "all"] = Query(default="unacked"),
+    limit: int = Query(default=50, ge=1, le=100_000),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import inbox
+
+    return await inbox.summary(session, principal, status=status, limit=limit)
+
+
+@router.post("/inbox/ack", summary="Acknowledge your inbox up to an event seq (only forward)")
+async def ack_inbox(
+    body: InboxAckRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import inbox
+
+    return await inbox.ack(session, principal, body.up_to_event_seq)
 
 
 # ------------------------------------------------------------------ phase 3

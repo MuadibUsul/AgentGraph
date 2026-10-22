@@ -132,6 +132,8 @@ EPHEMERAL = frozenset({
     "resource_queue",
     # Evaluation runs and probes are the operator's; signing keys never leave.
     "retrieval_eval_runs", "retrieval_probes", "tenant_signing_keys",
+    # The deployment's own release history.
+    "platform_releases",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")

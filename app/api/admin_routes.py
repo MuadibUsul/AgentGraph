@@ -71,6 +71,7 @@ from app.schemas import (
     ProposalListResponse,
     ProposalOut,
     ProposalRejectRequest,
+    ReindexRequest,
     RestoreRequest,
     RetrievalEvalRequest,
     RetrievalGateRequest,
@@ -956,19 +957,34 @@ async def change_document_taint(
     )
 
 
-@router.post(
-    "/workspaces/{workspace_id}/reindex",
-    summary="Rebuild chunk indexes",
+@router.get(
+    "/workspaces/{workspace_id}/index-status",
+    summary="Index backlog, failures and documents that need repair",
 )
-async def reindex(
+async def workspace_index_status(
     workspace_id: uuid.UUID,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     await services.get_workspace(session, workspace_id)
-    from app.services.retrieval import backfill_workspace_chunks
+    from app.services import indexer
 
-    count = await backfill_workspace_chunks(session, workspace_id)
-    return {"chunks": count}
+    return await indexer.index_status(session, workspace_id)
+
+
+@router.post(
+    "/workspaces/{workspace_id}/reindex",
+    summary="Repair broken indexes (default) or queue a confirmed full rebuild",
+)
+async def reindex(
+    workspace_id: uuid.UUID,
+    body: ReindexRequest | None = None,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    await services.get_workspace(session, workspace_id)
+    from app.services import indexer
+
+    body = body or ReindexRequest()
+    return await indexer.repair(session, workspace_id, mode=body.mode, confirm=body.confirm)
 
 
 # ------------------------------------------------------- v3.2 webhooks

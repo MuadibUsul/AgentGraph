@@ -341,6 +341,17 @@ textarea:focus-visible {
   box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.5);
 }
 
+/* ----------------------------------------------------------- index repair */
+
+.index-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.small-note { font-size: 11px; }
+
 /* --------------------------------------------------------- proposal diff */
 
 .proposal-diff-head {

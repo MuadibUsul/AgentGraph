@@ -121,8 +121,12 @@ def slot_summary(slot: ContextSlot) -> SlotSummary:
 
 
 def task_summary(task: CollabTask) -> TaskSummary:
+    from app.services.inbox import surfaced
+
     brief = task.handoff_brief if isinstance(task.handoff_brief, dict) else {}
+    status = task.status.value if hasattr(task.status, "value") else str(task.status)
     return TaskSummary(
+        surfaced=surfaced(status, task.updated_at),
         id=task.id,
         canonical_id=task.canonical_id,
         alias=task.task_key,

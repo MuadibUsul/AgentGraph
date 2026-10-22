@@ -70,7 +70,7 @@ import {
   tierLabel,
 } from "./types";
 
-const CONSOLE_BUILD = "3.2.1";
+const CONSOLE_BUILD = "3.5.0";
 const TOKEN_KEY = "agentgraph.admin_token";
 const SESSION_KEY = "agentgraph.session_token";
 const BASE_KEY = "agentgraph.api_base";
@@ -94,6 +94,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
   if (rest === "/budget") return "/v1/human/budget";
   if (rest === "/usage") return "/v1/human/usage";
   if (rest === "/reindex") return "/v1/human/reindex";
+  if (rest === "/index-status") return "/v1/index/status";
   if (rest.startsWith("/human-users")) {
     return `/v1/human/accounts${rest.slice("/human-users".length)}`;
   }

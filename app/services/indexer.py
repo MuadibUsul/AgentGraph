@@ -17,11 +17,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import async_session_factory
+from app.errors import ApiError
 from app.models import DocumentIndex, SharedDocument
 from app.services import budget
 from app.services.common import append_event
@@ -168,7 +169,80 @@ async def index_status(
         "oldest_pending_age_ms": int((now - oldest).total_seconds() * 1000) if oldest else 0,
         "p95_lag_ms_1h": p95,
         "superseded_total": sum(row.superseded for row in rows),
+        "repairable": await repairable(session, workspace_id),
     }
+
+
+def _repair_condition() -> Any:
+    """Documents whose index is wrong: missing, failed, behind, or another model.
+
+    Queued documents (pending/deferred) are not repairable; they are on their
+    way. Archived documents are left alone.
+    """
+    from app.engine.embeddings import get_embedding_provider
+    from app.models import DocumentChunk
+
+    model = get_embedding_provider().model
+    has_chunks = (
+        select(DocumentChunk.id).where(DocumentChunk.document_id == SharedDocument.id).exists()
+    )
+    queued = DocumentIndex.state.in_(("pending", "deferred"))
+    return and_(
+        SharedDocument.archived_at.is_(None),
+        or_(DocumentIndex.document_id.is_(None), not_(queued)),
+        or_(
+            DocumentIndex.state == "failed",
+            DocumentIndex.indexed_version < SharedDocument.version,
+            and_(DocumentIndex.document_id.is_(None), not_(has_chunks)),
+            func.coalesce(SharedDocument.embedding_model, "") != model,
+            and_(func.length(SharedDocument.content) > 0, not_(has_chunks)),
+        ),
+    )
+
+
+def _repair_query(workspace_id) -> Any:
+    return (
+        select(SharedDocument.id)
+        .outerjoin(DocumentIndex, DocumentIndex.document_id == SharedDocument.id)
+        .where(SharedDocument.workspace_id == workspace_id, _repair_condition())
+    )
+
+
+async def repairable(session: AsyncSession, workspace_id) -> int:
+    return int(await session.scalar(
+        select(func.count()).select_from(_repair_query(workspace_id).subquery())
+    ) or 0)
+
+
+async def repair(session: AsyncSession, workspace_id, *, mode: str = "repair",
+                 confirm: str | None = None) -> dict[str, Any]:
+    """Queue documents for re-indexing; the worker embeds them one by one.
+
+    ``repair`` (the default) queues only documents whose index is wrong, so a
+    healthy workspace costs nothing. ``full`` queues every live document and
+    needs ``confirm="REBUILD"``. Each document is indexed and committed on its
+    own by the worker, so an interrupted rebuild resumes where it stopped.
+    """
+    if mode not in ("repair", "full"):
+        raise ApiError(422, "validation_error", "mode is repair or full",
+                       details={"field": "mode", "allowed": ["repair", "full"]})
+    if mode == "full" and confirm != "REBUILD":
+        raise ApiError(409, "confirmation_required",
+                       "a full rebuild re-embeds every document; confirm with REBUILD",
+                       details={"confirm": "REBUILD"})
+    query = (
+        _repair_query(workspace_id) if mode == "repair"
+        else select(SharedDocument.id).where(SharedDocument.workspace_id == workspace_id,
+                                             SharedDocument.archived_at.is_(None))
+    )
+    ids = (await session.execute(query.order_by(SharedDocument.id))).scalars().all()
+    for document_id in ids:
+        document = await session.get(SharedDocument, document_id)
+        await after_write(session, document, defer=True)
+    await session.commit()
+    status = await index_status(session, workspace_id)
+    return {"mode": mode, "queued": len(ids), "pending_jobs": status["pending_jobs"],
+            "deferred_jobs": status["deferred_jobs"], "failed_jobs": status["failed_jobs"]}
 
 
 async def process_jobs(limit: int | None = None) -> int:

@@ -953,6 +953,11 @@ Attestations last at most 15 minutes.
 **Scheduled exports.** Set `SCHEDULED_EXPORTS=true` for a weekly full export
 and a daily increment per tenant, kept 30 days (`SCHEDULED_EXPORT_KEEP_DAYS`).
 
+**Releases and capabilities.** Every build announces itself: `platform.released`
+in every workspace, `system/changelog`, the root's `release` and `capabilities`
+(feature flags and their state) and an `AgentGraph-Build` header. Returning
+agents call `get_orientation(since=<cursor or version>)` for only what changed.
+
 **Event log partitions.** The event log is partitioned by shard (namespace),
 16 hash partitions on one Postgres; the index worker serves shards in turn.
 

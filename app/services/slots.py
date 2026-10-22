@@ -368,6 +368,17 @@ async def patch_slot(
     request: SlotPatchRequest,
 ) -> SlotMutationResponse:
     require_permission(principal, "state:write")
+    if request.expected_version == 0:
+        # Create on first patch (MCP agents cannot reach the REST PUT).
+        state, applied = apply_json_patch({}, request.ops)
+        created = await replace_slot(session, principal, slot_key, SlotReplaceRequest(
+            state=state, expected_version=0, namespace=request.namespace,
+            lease_seconds=request.lease_seconds, agent=request.agent,
+            session_batch_id=request.session_batch_id,
+            return_current_on_conflict=request.return_current_on_conflict,
+        ))
+        return SlotMutationResponse(slot=created.slot, applied_ops=applied,
+                                    session_batch_id=created.session_batch_id)
     agent = effective_agent(principal, request.agent)
     batch = request.session_batch_id or uuid.uuid4()
     slot = await _get_slot(

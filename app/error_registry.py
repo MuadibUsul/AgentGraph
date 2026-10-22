@@ -260,6 +260,8 @@ REGISTRY: dict[str, ErrorSpec] = {
     # --- abandon
     "depth_limit_exceeded": _spec(403, ABANDON, "Give up this action."),
     "forbidden": _spec(403, ABANDON, "Give up this action."),
+    "feature_disabled": _spec(
+        403, ESCALATE_HUMAN, "Switched off here; ask an operator (details.setting)."),
     "issue_not_permitted": _spec(403, ABANDON, "Give up this action."),
     "not_assignee": _spec(403, ABANDON, "Give up this action."),
     "not_lease_holder": _spec(403, ABANDON, "Give up; do not preempt."),
@@ -297,6 +299,8 @@ REGISTRY: dict[str, ErrorSpec] = {
     "external_action_error": _spec(409, ABANDON, "Re-read the action state."),
     "gone": _spec(410, ABANDON, "Give up; details carry the tombstone."),
     "reviewer_conflict": _spec(422, ABANDON, "Give up this action."),
+    "review_feedback_required": _spec(422, FIX_REQUEST, "Say why in feedback, then resend."),
+    "review_note_required": _spec(422, FIX_REQUEST, "Say why in note, then resend."),
     "share_cross_root_not_allowed": _spec(
         422, ABANDON, "Use cross-tree collaboration instead."
     ),
@@ -350,6 +354,8 @@ WARNING_CODES: dict[str, str] = {
     "legacy_alias": "Address predates the grammar; accepted, but 2026-11 rejects new ones.",
     "dangling_ref": "A $ref or part does not resolve; stored as written.",
     "namespace_auto_registered": "Namespace registered implicitly; 2026-11 requires it first.",
+    "namespace_unchanged": "The new key's prefix is not a registered namespace; the "
+    "document stayed where it was. Register the namespace and rename again to move it.",
     "namespace_undocumented": "The namespace readme is still a generated stub.",
     "frontmatter_missing": "Fields the namespace readme requires are missing.",
     "doc_key_pattern_mismatch": "doc_key does not match the namespace pattern.",

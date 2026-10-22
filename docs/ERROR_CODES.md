@@ -114,6 +114,8 @@ do not edit by hand. Every error body is
 | `policy_schema_violation` | 422 | `fix_request` | `fix_request_then_resend` | Conform to the path JSON Schema. |
 | `policy_size_limit` | 422 | `fix_request` | `fix_request_then_resend` | Shrink the content below the policy limit. |
 | `quota_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Stay within the parent's limit. |
+| `review_feedback_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in feedback, then resend. |
+| `review_note_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in note, then resend. |
 | `rollup_summary_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a rollup summary. |
 | `subject_identifier_required` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `task_tree_too_deep` | 422 | `fix_request` | `fix_request_then_resend` | Split under a shallower task. |
@@ -175,6 +177,7 @@ do not edit by hand. Every error body is
 | `budget_exceeded` | 402 | `escalate_human` | `stop_and_escalate_to_human` | Ask a human to raise the budget. |
 | `quota_exceeded` | 402 | `escalate_human` | `stop_and_escalate_to_human` | Ask a human to raise the quota. |
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` | `stop_and_escalate_to_human` | A human locked this resource; ask a human to change it. |
+| `feature_disabled` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Switched off here; ask an operator (details.setting). |
 | `tenant_deleting` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop; only an owner can cancel deletion or fetch the export. |
 | `tenant_suspended` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop writing and notify a human; reads and export still work. |
 | `backup_chain_broken` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Restore from an older full backup or take a new one. |
@@ -203,6 +206,7 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 | `legacy_alias` | Address predates the grammar; accepted, but 2026-11 rejects new ones. |
 | `dangling_ref` | A $ref or part does not resolve; stored as written. |
 | `namespace_auto_registered` | Namespace registered implicitly; 2026-11 requires it first. |
+| `namespace_unchanged` | The new key's prefix is not a registered namespace; the document stayed where it was. Register the namespace and rename again to move it. |
 | `namespace_undocumented` | The namespace readme is still a generated stub. |
 | `frontmatter_missing` | Fields the namespace readme requires are missing. |
 | `doc_key_pattern_mismatch` | doc_key does not match the namespace pattern. |

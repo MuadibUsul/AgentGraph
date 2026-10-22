@@ -216,7 +216,9 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.27.0", _MIGRATIONS_DIR / "v3_27_phase3.sql"),
     ("3.28.0", _MIGRATIONS_DIR / "v3_28_phase3_r32.sql"),
     ("3.29.0", _MIGRATIONS_DIR / "v3_29_event_partitions.sql"),
+    ("3.30.0", _MIGRATIONS_DIR / "v3_30_releases.sql"),
 ]
+CURRENT_SCHEMA_VERSION = _INCREMENTAL_MIGRATIONS[-1][0]
 
 
 async def apply_schema(dsn: str | None = None) -> None:

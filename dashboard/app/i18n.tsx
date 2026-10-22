@@ -17,6 +17,17 @@ export type Language = FormatLanguage;
 const ZH: Record<string, string> = {
   "The request timed out; the action may still have completed. Showing the latest state.":
     "请求超时，操作可能已经完成，已刷新为最新状态。",
+  "A rejection needs a reason: write feedback first.": "驳回需要理由：请先填写反馈。",
+  "A rejection needs a reason: write a review note first.": "驳回需要理由：请先填写审核备注。",
+  // Index repair
+  "A full rebuild re-embeds every document and spends embedding quota. Continue?":
+    "全量重建会重新嵌入每一篇文档并消耗 embedding 配额，确定继续吗？",
+  "Queued {count} document(s) for indexing; they are embedded in the background.":
+    "已将 {count} 篇文档加入索引队列，将在后台完成嵌入。",
+  "Every index is current; nothing to repair.": "所有索引都是最新的，无需修复。",
+  "Repair broken indexes": "修复异常索引",
+  "Full rebuild…": "全量重建…",
+  "{count} waiting to be indexed": "{count} 篇等待索引",
   // Proposal review diff
   "Comparing with base v{version}…": "正在与基线 v{version} 比对…",
   "Could not load the base version: {error}": "无法加载基线版本：{error}",

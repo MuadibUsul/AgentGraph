@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app import capabilities
 from app.api.admin_routes import router as admin_router
 from app.api.auth_routes import router as auth_router
 from app.api.human_routes import router as human_router
@@ -44,6 +45,7 @@ from app.services.indexer import index_worker_loop
 from app.services.reaper import lease_reaper_loop
 from app.services.situation import MetricsMiddleware
 from app.services.webhooks import webhook_delivery_loop
+from app.versioning import BASELINE_VERSION, LATEST_VERSION
 
 settings = get_settings()
 
@@ -79,6 +81,13 @@ async def lifespan(app: FastAPI):
             scaffolded = await backfill_all_workspaces(session)
         if scaffolded:
             logger.info("scaffolded conventions for %s workspace(s)", scaffolded)
+    # Release discipline: record this build once and announce it everywhere.
+    from app.services.releases import record_release
+
+    try:
+        await record_release(list(ROOT_PRIMITIVES))
+    except Exception:  # noqa: BLE001 - announcing must not stop the service
+        logger.exception("could not record the release")
     await event_bus.start()
     reaper_task = asyncio.create_task(
         lease_reaper_loop(), name="agentgraph-lease-reaper"
@@ -230,7 +239,8 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID", "AgentGraph-Version", "Idempotent-Replayed", "Retry-After"],
+    expose_headers=["X-Request-ID", "AgentGraph-Version", "AgentGraph-Build",
+                    "Idempotent-Replayed", "Retry-After"],
 )
 
 app.include_router(v1_router)
@@ -385,6 +395,24 @@ if settings.docs_enabled and settings.docs_require_auth:
         )
 
 
+_release_cache: dict[str, Any] = {}
+
+
+async def _current_release() -> dict[str, Any] | None:
+    """The recorded release of this build (cached; it changes only on deploy)."""
+    if "value" not in _release_cache:
+        from app.services.releases import current
+
+        try:
+            value = await current()
+        except Exception:  # noqa: BLE001 - the root page never fails on this
+            return None
+        if value is None or value["version"] != settings.app_version:
+            return value
+        _release_cache["value"] = value
+    return _release_cache["value"]
+
+
 @app.get("/", include_in_schema=False)
 async def root(request: Request) -> Any:
     descriptor = {
@@ -399,6 +427,10 @@ async def root(request: Request) -> Any:
         "agent_docs": "/v1/agent-docs",
         "first_call": "get_orientation",
         "primitives": list(ROOT_PRIMITIVES),
+        "api_versions": {"default": BASELINE_VERSION, "latest": LATEST_VERSION},
+        "release": await _current_release(),
+        "changelog": {"namespace": "system", "doc_key": "system/changelog"},
+        "capabilities": capabilities.describe(app),
     }
     headers = {"Vary": "Accept", "Cache-Control": "no-store"}
     accept = request.headers.get("accept", "").lower()

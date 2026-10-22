@@ -50,6 +50,8 @@ ROOT_PRIMITIVES: tuple[str, ...] = (
     "acquire_resource",
     "release_resource",
     "get_lineage_attestation",
+    "list_inbox",
+    "ack_inbox",
     "get_tenant_tree",
     "create_child_tenant",
     "move_tenant",

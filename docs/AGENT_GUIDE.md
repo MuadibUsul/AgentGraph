@@ -232,6 +232,8 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `policy_schema_violation` | 422 | `fix_request` |
 | `policy_size_limit` | 422 | `fix_request` |
 | `quota_exceeds_parent` | 422 | `fix_request` |
+| `review_feedback_required` | 422 | `fix_request` |
+| `review_note_required` | 422 | `fix_request` |
 | `rollup_summary_required` | 422 | `fix_request` |
 | `subject_identifier_required` | 422 | `fix_request` |
 | `task_tree_too_deep` | 422 | `fix_request` |
@@ -293,6 +295,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `budget_exceeded` | 402 | `escalate_human` |
 | `quota_exceeded` | 402 | `escalate_human` |
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` |
+| `feature_disabled` | 403 | `escalate_human` |
 | `tenant_deleting` | 403 | `escalate_human` |
 | `tenant_suspended` | 403 | `escalate_human` |
 | `backup_chain_broken` | 409 | `escalate_human` |

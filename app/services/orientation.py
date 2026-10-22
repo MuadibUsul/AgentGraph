@@ -9,6 +9,7 @@ mine, what should I read and call next". Until the collaborator directory
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -45,8 +46,9 @@ SECTIONS = (
     "server", "me", "constitution", "namespace_map", "collaborators", "my_tasks",
     "since_last_seen",
     "claimable_tasks", "required_reading", "inbox", "conventions", "events", "onboarding",
-    "next_calls", "warnings",
+    "next_calls", "warnings", "platform_changes",
 )
+_RELEASE = re.compile(r"^\d+\.\d+\.\d+$")
 # A new agent's first orientation stays small: identity, rules summary, three
 # links and one next step; the rest is a get_api_docs or MCP resource away.
 FIRST_TIME_MAX_BYTES = 12_288
@@ -370,11 +372,10 @@ def _required_reading(
 
 
 async def _inbox(session: AsyncSession, principal: Principal) -> dict[str, Any]:
-    cursor = await session.scalar(
-        select(func.max(WorkspaceEvent.id)).where(
-            WorkspaceEvent.workspace_id == principal.workspace.id
-        )
-    )
+    from app.services import events as event_service
+
+    # The same cursor poll_events and get_orientation(since=...) accept.
+    seq = await event_service.current_seq(session, principal.workspace.id)
     reviews = 0
     if principal.is_commander or can(principal, "task:review"):
         reviews = int(
@@ -386,11 +387,21 @@ async def _inbox(session: AsyncSession, principal: Principal) -> dict[str, Any]:
             )
             or 0
         )
+    from app.services import inbox
+
+    deliveries = await inbox.summary(session, principal, human=principal.is_human,
+                                     limit=inbox.ORIENTATION_ITEMS)
+    mentions = sum(1 for item in deliveries["items"] if item["type"] == "mention.created")
     return {
-        "unread_mentions": 0,
+        "unacked_count": deliveries["unacked_count"],
+        "unacked_terminal_count": deliveries["unacked_terminal_count"],
+        "items": deliveries["items"],
+        "acked_event_seq": deliveries["acked_event_seq"],
+        "ack_with": "ack_inbox(up_to_event_seq) / POST /v1/inbox/ack",
+        "unread_mentions": mentions,
         "pending_reviews_for_me": reviews,
-        "event_cursor": f"evt_{cursor}" if cursor else None,
-        "event_seq": int(cursor or 0),
+        "event_cursor": event_service.encode_cursor(seq),
+        "event_seq": seq,
         "default_subscription_id": None,
     }
 
@@ -416,7 +427,7 @@ def _next_calls(
             "rest": {"method": "POST", "path": "/v1/dereference-many", "body": {"uris": uris}},
             "why": "required reading, constitution first",
         }
-    ]
+    ] if uris else []
     constitution = pack["constitution"]
     if constitution["ack_required"]:
         calls.append(
@@ -486,12 +497,95 @@ def _truncate(pack: dict[str, Any], max_bytes: int) -> dict[str, Any]:
     return pack
 
 
+async def _since_moment(session: AsyncSession, principal: Principal,
+                       since: str) -> datetime | None:
+    """An event cursor or a release version, as the moment it stands for."""
+    from app.services import events as event_service
+
+    if _RELEASE.match(since):
+        from app.services import releases
+
+        return await releases.released_at(since)
+    seq = event_service.decode_cursor(since)
+    if seq is None:
+        raise ApiError(400, "cursor_invalid", "since is an event cursor or a release version",
+                       details={"field": "since"})
+    return await session.scalar(
+        select(WorkspaceEvent.created_at).where(
+            WorkspaceEvent.workspace_id == principal.workspace.id, WorkspaceEvent.seq <= seq)
+        .order_by(WorkspaceEvent.seq.desc()).limit(1))
+
+
+async def _incremental(session: AsyncSession, principal: Principal, pack: dict[str, Any],
+                       moment: datetime) -> dict[str, Any]:
+    """Keep only what changed after ``moment`` (retest finding 3).
+
+    The constitution and required reading come back only when changed (then
+    in full); namespaces only when their readme changed or they had events;
+    conventions only after a platform release. Identity, tasks, inbox and
+    next calls are current state and always present.
+    """
+    changed_keys = set((await session.execute(
+        select(SharedDocument.doc_key).where(
+            SharedDocument.workspace_id == principal.workspace.id,
+            SharedDocument.updated_at > moment))).scalars().all())
+    active = set((await session.execute(
+        select(WorkspaceEvent.shard_key).where(
+            WorkspaceEvent.workspace_id == principal.workspace.id,
+            WorkspaceEvent.created_at > moment).distinct())).scalars().all())
+    constitution = pack["constitution"]
+    if constitution["doc_key"] not in changed_keys:
+        pack["constitution"] = {
+            key: constitution[key]
+            for key in ("namespace", "doc_key", "id", "version", "ack_required", "acked_version")
+        } | {"unchanged": True}
+    kept = [entry for entry in pack["namespace_map"]
+            if entry["namespace"] in active
+            or (entry.get("readme") or {}).get("doc_key") in changed_keys]
+    pack["namespace_map_unchanged"] = len(pack["namespace_map"]) - len(kept)
+    pack["namespace_map"] = kept
+    pack["required_reading"] = [
+        item for item in pack["required_reading"]
+        if item["reason"] == "task_context" or item["doc_key"] in changed_keys
+    ]
+    if not pack.get("platform_changes"):
+        pack["conventions"] = {"unchanged": True}
+    pack["collaborators"] = pack["collaborators"][:10]
+    # Identity and the subscription rarely change between sessions: keep the
+    # essentials and point at the full call.
+    me = pack["me"]
+    pack["me"] = {key: me.get(key) for key in ("agent_id", "type", "role", "status")} | {
+        "token_id": (me.get("token") or {}).get("token_id"), "full": "get_orientation()"}
+    subscription = (pack.get("events") or {}).get("default_subscription") or {}
+    pack["events"] = {"default_subscription_id": subscription.get("subscription_id")}
+    return pack
+
+
+def _quiet(pack: dict[str, Any]) -> None:
+    """Incremental packs drop what is empty or only useful on a first visit."""
+    for key in ("namespace_map", "collaborators", "my_tasks", "required_reading"):
+        if not pack.get(key):
+            pack.pop(key, None)
+    if not (pack.get("claimable_tasks") or {}).get("count"):
+        pack.pop("claimable_tasks", None)
+    digest = pack.get("since_last_seen")
+    if digest is not None and not digest.get("total_events"):
+        pack["since_last_seen"] = {"total_events": 0, "cursor": digest.get("cursor")}
+    pack.pop("events", None)  # inbox.default_subscription_id carries it
+    server = pack["server"]
+    pack["server"] = {"version": server["version"], "api_version": server["api_version"],
+                      "release": (server.get("release") or {}).get("version")}
+    pack["next_calls"] = [call for call in pack["next_calls"]
+                          if call["tool"] != "list_documents"]
+
+
 async def build(
     session: AsyncSession,
     principal: Principal,
     *,
     sections: list[str] | None = None,
     max_bytes: int = DEFAULT_MAX_BYTES,
+    since: str | None = None,
 ) -> dict[str, Any]:
     if max_bytes < 4_096 or max_bytes > MAX_MAX_BYTES:
         raise ApiError(
@@ -547,11 +641,26 @@ async def build(
             session, principal, since="watermark:last_seen", max_items=20,
             advance_watermark="last_seen")
     pack["required_reading"] = _required_reading(constitution, namespace_map, my_tasks)
+    # Release discipline: the build in use, and what changed since `since`.
+    from app.services import releases
+
+    release = await releases.current()
+    pack["server"]["release"] = (
+        {"version": release["version"], "released_at": release["released_at"],
+         "changelog": release["changelog"]} if release else None)
+    moment = await _since_moment(session, principal, since) if since else None
+    if since:
+        pack["platform_changes"] = await releases.changes_since(moment)
+    if moment is not None:
+        pack = await _incremental(session, principal, pack, moment)
+        pack["incremental"] = {"since": since, "as_of": moment.isoformat()}
     writable = [
         entry["namespace"] for entry in namespace_map
         if entry["my_access"] == "write" and entry["namespace"] != onboarding.SYSTEM_NAMESPACE
     ]
     pack["next_calls"] = _next_calls(pack, writable)
+    if moment is not None:
+        _quiet(pack)
     from app.services import agent_onboarding
 
     onboarding_block = await agent_onboarding.orientation_block(session, principal, constitution)

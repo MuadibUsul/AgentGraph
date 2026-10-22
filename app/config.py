@@ -19,7 +19,8 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------------ app
     app_name: str = "AgentGraph"
-    app_version: str = "3.2.1"
+    # Bump on every release and add notes in app/services/releases.py.
+    app_version: str = "3.5.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"

@@ -13,7 +13,6 @@ from app.config import get_settings
 from app.engine.chunking import split_markdown
 from app.engine.embeddings import get_embedding_provider
 from app.models import DocumentChunk, SharedDocument
-from app.services.usage import enforce_embedding_budget
 
 settings = get_settings()
 
@@ -68,24 +67,6 @@ async def reindex_document_chunks(
     await session.flush()
     return len(chunks)
 
-
-async def backfill_workspace_chunks(
-    session: AsyncSession, workspace_id: uuid.UUID, *, limit: int = 500
-) -> int:
-    docs = (
-        await session.execute(
-            select(SharedDocument)
-            .where(SharedDocument.workspace_id == workspace_id)
-            .limit(limit)
-        )
-    ).scalars().all()
-    count = 0
-    total_chars = sum(len(document.content.encode("utf-8")) for document in docs)
-    await enforce_embedding_budget(session, workspace_id, total_chars)
-    for document in docs:
-        count += await reindex_document_chunks(session, document)
-    await session.commit()
-    return count
 
 
 async def _vector_doc_ids(

@@ -133,6 +133,7 @@ from app.services.taint import (
 )
 from app.services.usage import enforce_embedding_budget
 from app.versioning import LATEST_VERSION, at_least
+from app.warnings_context import add_warning
 
 settings = get_settings()
 
@@ -2895,8 +2896,27 @@ async def rename_document(
     await address_service.ensure_alias_available(
         session, principal.workspace.id, "document", new_alias
     )
+    # A key prefix that names another registered namespace moves the document
+    # there; otherwise the prefix would claim a namespace the document is not in.
+    old_namespace = document.namespace
+    prefix = new_alias.split("/", 1)[0] if "/" in new_alias else None
+    if prefix and prefix != document.namespace:
+        if prefix == "default" or await address_service._namespace(
+            session, principal.workspace.id, prefix
+        ) is not None:
+            ensure_namespace(principal, prefix, write=True)
+            onboarding.ensure_system_writable(principal, prefix, new_alias)
+            document.namespace = prefix
+        else:
+            add_warning(
+                "namespace_unchanged",
+                f"'{prefix}' is not a registered namespace; the document stays in "
+                f"'{document.namespace}'",
+                namespace=document.namespace, key_prefix=prefix,
+            )
     batch = request.session_batch_id or uuid.uuid4()
     before = document_snapshot(document)
+    before["namespace"] = old_namespace
     old_alias = document.doc_key
     document.doc_key = new_alias
     document.alias_legacy = is_legacy_alias(document.namespace, new_alias)
@@ -2944,6 +2964,8 @@ async def rename_document(
             "id": document.canonical_id,
             "doc_key": new_alias,
             "previous_alias": old_alias,
+            "details": {"namespace": document.namespace,
+                        "previous_namespace": old_namespace},
         },
         namespace=document.namespace,
     )

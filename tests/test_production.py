@@ -454,11 +454,29 @@ async def test_chunks_hybrid_retrieval_and_typed_links(client, admin_headers, wo
         json={"expected_version": version},
     )
     assert verified.status_code == 200, verified.text
+    # Repair queues only documents whose index is wrong (never this healthy
+    # one), so a second repair right after costs nothing.
     reindex = await client.post(
         f"/v1/admin/workspaces/{wid}/reindex", headers=admin_headers
     )
     assert reindex.status_code == 200, reindex.text
-    assert reindex.json()["chunks"] >= 1
+    assert reindex.json()["mode"] == "repair"
+    again = await client.post(f"/v1/admin/workspaces/{wid}/reindex", headers=admin_headers)
+    assert again.json()["queued"] == 0
+    conn = await asyncpg.connect(db_dsn())
+    try:
+        await conn.execute(
+            "UPDATE document_index SET indexed_version = 0 WHERE document_id = "
+            "(SELECT id FROM shared_documents WHERE workspace_id = $1::uuid AND doc_key = $2)",
+            wid, doc_key)
+    finally:
+        await conn.close()
+    behind = await client.post(f"/v1/admin/workspaces/{wid}/reindex", headers=admin_headers)
+    assert behind.json()["queued"] == 1
+    full = await client.post(f"/v1/admin/workspaces/{wid}/reindex", headers=admin_headers,
+                             json={"mode": "full"})
+    assert full.status_code == 409
+    assert full.json()["error"]["details"]["confirm"] == "REBUILD"
 
     keyword = await client.post(
         "/v1/query",

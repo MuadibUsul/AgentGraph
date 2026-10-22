@@ -86,6 +86,8 @@ EVENT_TYPES: dict[str, str] = {
     "webhook.disabled": "A webhook failed for 24 hours and was switched off.",
     "doc.superseded": "A document was superseded (details: superseded_by).",
     "review.submitted": "A peer review was submitted for a document version.",
+    "platform.released": "The platform was upgraded (details: from, to, added and removed "
+                         "primitives, summary; read system/changelog).",
     "resource.granted": "Your turn for a scarce resource: confirm within 60 s "
                         "(targets: the queued agent).",
     "alert.raised": "A high-severity anomaly (targets: the workspace's owners; at most every "
