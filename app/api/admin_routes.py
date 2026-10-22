@@ -98,6 +98,7 @@ from app.schemas import (
     WorkspaceInfo,
     WorkspaceStatsResponse,
 )
+from app.services import addresses as address_service
 from app.services import agent_onboarding as agent_onboarding_service
 from app.services import alerts as alert_service
 from app.services import backups as backup_service
@@ -544,6 +545,18 @@ async def agent_onboarding_overview(
 ) -> dict:
     await services.get_workspace(session, workspace_id)
     return await agent_onboarding_service.overview(session, workspace_id)
+
+
+@router.get(
+    "/workspaces/{workspace_id}/namespaces",
+    summary="Namespaces visible in a workspace, with document activity",
+)
+async def list_workspace_namespaces(
+    workspace_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    workspace = await services.get_workspace(session, workspace_id)
+    return await address_service.list_namespaces(session, principal_for_admin(workspace))
 
 
 @router.get(

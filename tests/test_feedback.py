@@ -65,7 +65,7 @@ async def test_browser_root_serves_human_page_and_json_stays_available(client):
     assert 'href="/dashboard/"' in response.text
     assert 'class="entry"' in response.text
     assert 'primitives' in response.text
-    assert '<span class="number">40</span>' in response.text
+    assert '<span class="number">78</span>' in response.text
     assert "COPY RESPONSE" in response.text
     assert 'href="/?format=json"' in response.text
 
@@ -74,13 +74,13 @@ async def test_browser_root_serves_human_page_and_json_stays_available(client):
     assert api.headers["content-type"].startswith("application/json")
     assert "accept" in api.headers["vary"].lower()
     assert api.json()["name"] == "AgentGraph"
-    assert len(api.json()["primitives"]) == 40
+    assert len(api.json()["primitives"]) == 78
 
     raw = await client.get("/?format=json", headers={"Accept": "text/html"})
     assert raw.status_code == 200
     assert raw.headers["content-type"].startswith("application/json")
     assert raw.json()["first_call"] == "get_orientation"
-    assert len(raw.json()["primitives"]) == 40
+    assert len(raw.json()["primitives"]) == 78
 
 
 async def test_exhaustive_cursor_listing_and_archive(client, workspace):

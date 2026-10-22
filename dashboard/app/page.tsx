@@ -69,7 +69,7 @@ import {
   tierLabel,
 } from "./types";
 
-const CONSOLE_BUILD = "3.2.1-ui.2";
+const CONSOLE_BUILD = "3.2.1";
 const TOKEN_KEY = "agentgraph.admin_token";
 const SESSION_KEY = "agentgraph.session_token";
 const BASE_KEY = "agentgraph.api_base";
@@ -83,6 +83,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
   if (rest === "/agent-tokens" || rest.startsWith("/agent-tokens/")) {
     return `/v1/human${rest}`;
   }
+  if (rest === "/namespaces") return "/v1/human/namespaces";
   if (rest === "/audit" || rest.startsWith("/audit?")) return `/v1/human/audit${rest.slice(6)}`;
   if (rest.startsWith("/batches")) return `/v1/human${rest}`;
   if (rest.startsWith("/proposals")) return `/v1/human${rest}`;

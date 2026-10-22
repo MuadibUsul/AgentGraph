@@ -67,6 +67,7 @@ from app.schemas import (
     WebhookRuleUpdateRequest,
     WorkspaceStatsResponse,
 )
+from app.services import addresses as address_service
 from app.services import agent_onboarding as agent_onboarding_service
 from app.services import budget as budget_service
 from app.services import exports as export_service
@@ -87,6 +88,17 @@ async def _owner(
     if principal.human_role not in ("OWNER", "ADMIN"):
         raise Forbidden("an owner or admin of this organisation is required")
     return principal
+
+
+@router.get(
+    "/namespaces",
+    summary="Namespaces visible to this human console, with document activity",
+)
+async def list_human_namespaces(
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await address_service.list_namespaces(session, principal)
 
 
 @router.get(

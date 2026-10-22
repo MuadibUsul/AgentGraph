@@ -417,7 +417,7 @@ active view. Filters include `tables`, `status`, `assigned_role`, and
 
 ## MCP Tools
 
-The MCP server exposes twenty-two tools over stdio and streamable HTTP:
+The MCP server exposes seventy-eight tools over stdio and streamable HTTP. The core collaboration subset is below; the complete grouped surface is in [docs/PROJECT_ARCHITECTURE.md](docs/PROJECT_ARCHITECTURE.md).
 
 | Tool | Purpose |
 |---|---|
@@ -583,7 +583,7 @@ multi-stage Docker build and FastAPI serves it at `/dashboard/`.
 | `webhook_rules` / `webhook_deliveries` | Persistent signed webhook subscriptions and retry history |
 | `workspace_budgets` / `usage_ledger` / `rate_limit_windows` | Quotas, usage accounting and fixed-window limits |
 | `workspace_events` | Transactional outbox with monotonic id for SSE replay |
-| `schema_migrations` | Applied schema versions (current `3.2.1`) |
+| `schema_migrations` | Applied schema versions (current `3.26.0`) |
 
 Canonical DDL: [`sql/init.sql`](sql/init.sql).
 
@@ -724,7 +724,7 @@ app/
     admin_routes.py        human console API
     stream_routes.py       replayable SSE (agent + admin)
   events.py                one LISTEN connection → per-subscriber queues
-  mcp_server/server.py     twenty-two MCP tools, stdio + HTTP auth
+  mcp_server/server.py     seventy-eight MCP tools, stdio + HTTP auth
 sql/
   init.sql                 canonical base schema + outbox triggers
   migrations/v3_2_production.sql  proposals/policy/taint/accounts/hybrid/webhooks/RLS

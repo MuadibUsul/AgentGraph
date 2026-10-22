@@ -229,6 +229,22 @@ const ZH: Record<string, string> = {
   "Role scope": "角色范围",
   "Allowed namespaces (comma separated, * for all)":
     "允许的命名空间（逗号分隔，* 表示全部）",
+  "Allowed namespaces": "允许的命名空间",
+  "Search namespaces": "搜索命名空间",
+  "Search or add a namespace": "搜索或输入命名空间",
+  "Recently edited": "最近编辑",
+  "Matches": "匹配结果",
+  "Namespace suggestions": "命名空间建议",
+  "No matching namespaces": "没有匹配的命名空间",
+  "Loading namespaces…": "正在加载命名空间…",
+  "documents": "篇文档",
+  "All namespaces": "全部命名空间",
+  "Remove {namespace}": "移除 {namespace}",
+  "* (all)": "*（全部）",
+  "Click a tag to add it; use × to remove. Type a name and press Enter for a new namespace.":
+    "点击标签即可加入权限，使用 × 移除；输入新名称后按 Enter 添加。",
+  "* allows every namespace. Specific namespaces narrow the token's access.":
+    "* 表示全部命名空间；指定命名空间会收窄令牌权限。",
   "Mint token": "签发令牌",
   "Mint an agent token": "签发 Agent 令牌",
   "The raw key is shown exactly once. Store it in the agent runtime.":

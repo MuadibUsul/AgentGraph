@@ -19,7 +19,7 @@ def descriptor(dashboard: str | None = "/dashboard/") -> dict:
 
 
 def test_root_primitive_list_is_the_full_mcp_surface():
-    assert len(ROOT_PRIMITIVES) == 40
+    assert len(ROOT_PRIMITIVES) == 78
     assert "get_orientation" == ROOT_PRIMITIVES[0]
     assert "get_api_docs" == ROOT_PRIMITIVES[-1]
 
@@ -31,7 +31,7 @@ def test_human_root_page_keeps_json_shape_and_marks_console_entry():
     assert 'id="flow"' in page
     assert 'href="/dashboard/"' in page
     assert 'class="entry"' in page
-    assert '<span class="number">40</span>' in page
+    assert '<span class="number">78</span>' in page
     assert "COPY RESPONSE" in page
     assert 'href="/?format=json"' in page
     assert '<span class="value">3.2.1</span>' in page

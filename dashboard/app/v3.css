@@ -4642,3 +4642,174 @@ body::before {
     grid-template-columns: 1fr;
   }
 }
+
+/* --------------------------------------------------- namespace picker */
+
+.namespace-picker {
+  position: relative;
+}
+
+.namespace-selected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 7px 9px;
+  border: 1px solid var(--ds-border-control);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-surface-inset);
+  cursor: text;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.namespace-selected:focus-within {
+  border-color: var(--ds-focus-ring);
+  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.12);
+}
+
+.namespace-selected input {
+  flex: 1 1 160px;
+  width: auto;
+  min-width: 120px;
+  min-height: 24px;
+  padding: 2px 3px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ds-text-primary);
+  font-size: var(--ds-text-body);
+  outline: none;
+}
+
+.namespace-selected input:focus {
+  border: 0;
+}
+
+.namespace-chip.selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: 1px solid var(--ds-accent-border);
+  border-radius: 5px;
+  background: var(--ds-accent-soft);
+  color: var(--ds-accent-strong);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.namespace-chip.selected.all {
+  border-color: var(--ds-border-default);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ds-text-secondary);
+}
+
+.namespace-chip.selected button {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ds-text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.namespace-chip.selected button:hover,
+.namespace-chip.selected button:focus-visible {
+  color: var(--ds-text-primary);
+  outline: none;
+}
+
+.namespace-dropdown {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 8px;
+  background: var(--ds-surface-panel);
+}
+
+.namespace-dropdown-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--ds-text-muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.namespace-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 164px;
+  overflow: auto;
+}
+
+.namespace-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 6px;
+  background: var(--ds-surface-inset);
+  color: var(--ds-text-secondary);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: left;
+}
+
+.namespace-option span {
+  overflow-wrap: anywhere;
+}
+
+.namespace-option small {
+  color: var(--ds-text-muted);
+  font-size: 8.5px;
+  white-space: nowrap;
+}
+
+.namespace-option:hover,
+.namespace-option:focus-visible {
+  border-color: var(--ds-accent-border);
+  background: var(--ds-accent-soft);
+  color: var(--ds-text-primary);
+  outline: none;
+}
+
+.namespace-option[aria-selected="true"] {
+  border-color: var(--ds-accent-border);
+  color: var(--ds-accent-strong);
+}
+
+.namespace-help {
+  margin-top: 8px;
+  color: var(--ds-text-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.namespace-empty {
+  padding: 8px 2px;
+  color: var(--ds-text-muted);
+  font-size: 11px;
+}
+
+.field-hint {
+  color: var(--ds-text-muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+}

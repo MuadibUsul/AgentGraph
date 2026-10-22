@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
 import type { AgentToken, ApiRequest } from "../types";
@@ -25,6 +25,42 @@ interface AgentOnboardingOverview {
     orientation_rate: number;
     constitution_ack_rate: number;
   };
+}
+
+interface NamespaceOption {
+  namespace: string;
+  purpose?: string | null;
+  documents?: number;
+  my_access?: string;
+  last_updated_at?: string | null;
+  created_at?: string;
+}
+
+interface NamespaceListResponse {
+  items: NamespaceOption[];
+}
+
+function namespaceTimestamp(item: NamespaceOption): number {
+  const raw = item.last_updated_at ?? item.created_at;
+  const parsed = raw ? Date.parse(raw) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function fuzzyScore(value: string, query: string): number {
+  const candidate = value.toLowerCase();
+  const needle = query.trim().toLowerCase();
+  if (!needle) return 1;
+  if (candidate === needle) return 100;
+  if (candidate.startsWith(needle)) return 80;
+  const position = candidate.indexOf(needle);
+  if (position >= 0) return 60 - Math.min(position, 20);
+  let cursor = 0;
+  for (const character of needle) {
+    cursor = candidate.indexOf(character, cursor);
+    if (cursor === -1) return 0;
+    cursor += 1;
+  }
+  return 30;
 }
 
 const ROLES = [
@@ -66,6 +102,9 @@ export function AgentsView({
   const { t } = useI18n();
   const [showCreate, setShowCreate] = useState(false);
   const [progress, setProgress] = useState<AgentOnboardingOverview | null>(null);
+  const requestRef = useRef(request);
+  requestRef.current = request;
+  const namespaceInputRef = useRef<HTMLInputElement>(null);
 
   const loadProgress = useCallback(async () => {
     try {
@@ -87,14 +126,102 @@ export function AgentsView({
     if (openCreateSignal > 0) setShowCreate(true);
   }, [openCreateSignal]);
 
+  const [selectedNamespaces, setSelectedNamespaces] = useState<string[]>(["*"]);
+  const [namespaceQuery, setNamespaceQuery] = useState("");
+  const [namespaceOptions, setNamespaceOptions] = useState<NamespaceOption[]>([]);
+  const [namespaceOpen, setNamespaceOpen] = useState(false);
+  const [namespaceLoading, setNamespaceLoading] = useState(false);
+
+  const loadNamespaces = useCallback(async () => {
+    setNamespaceLoading(true);
+    try {
+      const result = await requestRef.current<NamespaceListResponse>(
+        `/v1/admin/workspaces/${workspaceId}/namespaces`,
+      );
+      setNamespaceOptions(result.items ?? []);
+    } catch {
+      setNamespaceOptions([]);
+    } finally {
+      setNamespaceLoading(false);
+    }
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (showCreate) void loadNamespaces();
+  }, [showCreate, loadNamespaces]);
+
+  useEffect(() => {
+    setSelectedNamespaces(["*"]);
+    setNamespaceOptions([]);
+    setNamespaceQuery("");
+    setNamespaceOpen(false);
+  }, [workspaceId]);
+
+  const recentNamespaces = useMemo(
+    () =>
+      [...namespaceOptions]
+        .sort((a, b) => namespaceTimestamp(b) - namespaceTimestamp(a))
+        .slice(0, 10),
+    [namespaceOptions],
+  );
+
+  const namespaceMatches = useMemo(() => {
+    const query = namespaceQuery.trim();
+    const source = query ? namespaceOptions : recentNamespaces;
+    return source
+      .map((item) => ({ item, score: fuzzyScore(item.namespace, query) }))
+      .filter((entry) => entry.score > 0)
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          namespaceTimestamp(b.item) - namespaceTimestamp(a.item),
+      )
+      .slice(0, 10)
+      .map((entry) => entry.item);
+  }, [namespaceOptions, namespaceQuery, recentNamespaces]);
+
   const byAgent = new Map(
     (progress?.items ?? []).map((item) => [item.agent_signature, item] as const),
   );
   const [signature, setSignature] = useState("");
   const [role, setRole] = useState("EXECUTOR");
-  const [namespaces, setNamespaces] = useState("*");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function addNamespace(value: string) {
+    const name = value.trim();
+    if (!name) return;
+    if (name === "*") {
+      setSelectedNamespaces(["*"]);
+    } else {
+      setSelectedNamespaces((current) => {
+        const narrowed = current.filter((item) => item !== "*");
+        return narrowed.includes(name) ? narrowed : [...narrowed, name];
+      });
+    }
+    setNamespaceQuery("");
+    setNamespaceOpen(true);
+    namespaceInputRef.current?.focus();
+  }
+
+  function removeNamespace(name: string) {
+    setSelectedNamespaces((current) => current.filter((item) => item !== name));
+  }
+
+  function handleNamespaceKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter" || event.key === "," || event.key === " ") {
+      if (namespaceQuery.trim()) {
+        event.preventDefault();
+        addNamespace(namespaceQuery);
+      }
+    } else if (
+      event.key === "Backspace" &&
+      !namespaceQuery &&
+      selectedNamespaces.length > 0
+    ) {
+      setSelectedNamespaces((current) => current.slice(0, -1));
+    }
+  }
 
   async function create(event: React.FormEvent) {
     event.preventDefault();
@@ -108,15 +235,15 @@ export function AgentsView({
           body: JSON.stringify({
             agent_signature: signature.trim(),
             role_scope: role,
-            allowed_namespaces: namespaces
-              .split(",")
-              .map((item) => item.trim())
-              .filter(Boolean),
+            allowed_namespaces: selectedNamespaces,
           }),
         },
       );
       setShowCreate(false);
       setSignature("");
+      setSelectedNamespaces(["*"]);
+      setNamespaceQuery("");
+      setNamespaceOpen(false);
       onKey(result.api_key, result.token.agent_signature);
       await onRefresh();
       notify(t("Agent token for {name} minted.", { name: result.token.agent_signature }));
@@ -274,7 +401,7 @@ export function AgentsView({
                 type="submit"
                 form="agent-token-form"
                 className="button primary"
-                disabled={busy || !signature.trim()}
+                disabled={busy || !signature.trim() || selectedNamespaces.length === 0}
               >
                 {busy ? <Spinner /> : <IconKey />} {t("Mint token")}
               </button>
@@ -300,10 +427,112 @@ export function AgentsView({
                 ))}
               </select>
             </label>
-            <label className="field">
-              <span>{t("Allowed namespaces (comma separated, * for all)")}</span>
-              <input value={namespaces} onChange={(e) => setNamespaces(e.target.value)} />
-            </label>
+            <div className="field namespace-field">
+              <span>{t("Allowed namespaces")}</span>
+              <div
+                className={`namespace-picker${namespaceOpen ? " open" : ""}`}
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setNamespaceOpen(false);
+                  }
+                }}
+              >
+                <div
+                  className="namespace-selected"
+                  onClick={() => {
+                    setNamespaceOpen(true);
+                    namespaceInputRef.current?.focus();
+                  }}
+                >
+                  {selectedNamespaces.map((namespace) => (
+                    <span
+                      className={`namespace-chip selected${namespace === "*" ? " all" : ""}`}
+                      key={namespace}
+                      title={namespace === "*" ? t("All namespaces") : namespace}
+                    >
+                      {namespace === "*" ? t("* (all)") : namespace}
+                      <button
+                        type="button"
+                        aria-label={t("Remove {namespace}", { namespace })}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeNamespace(namespace);
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    ref={namespaceInputRef}
+                    value={namespaceQuery}
+                    onChange={(event) => {
+                      setNamespaceQuery(event.target.value);
+                      setNamespaceOpen(true);
+                    }}
+                    onFocus={() => setNamespaceOpen(true)}
+                    onKeyDown={handleNamespaceKeyDown}
+                    placeholder={
+                      selectedNamespaces.length
+                        ? t("Search or add a namespace")
+                        : t("Search namespaces")
+                    }
+                    aria-label={t("Search namespaces")}
+                    aria-autocomplete="list"
+                    aria-expanded={namespaceOpen}
+                    aria-controls="namespace-options"
+                    role="combobox"
+                  />
+                </div>
+                {namespaceOpen && (
+                  <div className="namespace-dropdown">
+                    <div className="namespace-dropdown-head">
+                      <span>{namespaceQuery.trim() ? t("Matches") : t("Recently edited")}</span>
+                      {namespaceLoading && <Spinner />}
+                    </div>
+                    {namespaceMatches.length > 0 ? (
+                      <div
+                        className="namespace-options"
+                        id="namespace-options"
+                        role="listbox"
+                        aria-label={t("Namespace suggestions")}
+                      >
+                        {namespaceMatches.map((option) => (
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selectedNamespaces.includes(option.namespace)}
+                            className="namespace-option"
+                            key={option.namespace}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => addNamespace(option.namespace)}
+                          >
+                            <span>{option.namespace}</span>
+                            <small>
+                              {option.documents ?? 0} {t("documents")}
+                            </small>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="namespace-empty">
+                        {namespaceLoading
+                          ? t("Loading namespaces…")
+                          : t("No matching namespaces")}
+                      </div>
+                    )}
+                    <div className="namespace-help">
+                      {t(
+                        "Click a tag to add it; use × to remove. Type a name and press Enter for a new namespace.",
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <small className="field-hint">
+                {t("* allows every namespace. Specific namespaces narrow the token's access.")}
+              </small>
+            </div>
             <div className="inline-note">
               {t("After minting you can copy a ready MCP config and test the connection.")}{" "}
               <a href="/docs/auth/" target="_blank" rel="noreferrer">{t("Tokens and roles")}</a>
