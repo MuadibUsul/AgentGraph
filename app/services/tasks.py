@@ -60,6 +60,7 @@ from app.schemas import (
     TaskReviewRequest,
 )
 from app.services import addresses as address_service
+from app.services import agent_onboarding
 from app.services import leases as lease_service
 from app.services.common import (
     append_event,
@@ -462,6 +463,7 @@ async def _create_task_core(
     return task
 
 
+@agent_onboarding.records("task_create")
 async def create_task(
     session: AsyncSession, principal: Principal, request: TaskCreateRequest
 ) -> TaskOut:
@@ -514,6 +516,7 @@ async def get_task(
     return task_out(task)
 
 
+@agent_onboarding.records("task_claim")
 @_task_failure_event("CLAIM")
 async def claim_task(
     session: AsyncSession,
@@ -913,6 +916,7 @@ async def handoff_task(
     )
 
 
+@agent_onboarding.records("review")
 @_task_failure_event("REVIEW")
 async def review_task(
     session: AsyncSession,

@@ -82,7 +82,7 @@ from app.schemas import (
     TombstoneOut,
 )
 from app.services import addresses as address_service
-from app.services import budget, indexer, onboarding
+from app.services import agent_onboarding, budget, indexer, onboarding
 from app.services.common import (
     PLATFORM_DOC_NAMESPACES,
     append_event,
@@ -509,6 +509,7 @@ def _project(summary: dict[str, Any], fields: list[str] | None) -> dict[str, Any
     return {key: summary.get(key) for key in keep}
 
 
+@agent_onboarding.records("read")
 async def list_documents(
     session: AsyncSession,
     principal: Principal,
@@ -834,6 +835,7 @@ async def restore_document(
     )
 
 
+@agent_onboarding.records("document")
 async def batch_upsert_documents(
     session: AsyncSession,
     principal: Principal,
@@ -891,6 +893,7 @@ async def batch_dereference(
     return DereferenceBatchResponse(items=items)
 
 
+@agent_onboarding.records_read
 async def get_document(
     session: AsyncSession,
     principal: Principal,
@@ -912,6 +915,7 @@ async def get_document(
     return document_out(document)
 
 
+@agent_onboarding.records("document")
 async def upsert_document(
     session: AsyncSession,
     principal: Principal,
@@ -1237,6 +1241,7 @@ def _strip_matching_heading(text: str, heading: str) -> str:
     return text
 
 
+@agent_onboarding.records("document")
 async def patch_document_section(
     session: AsyncSession,
     principal: Principal,
@@ -1370,6 +1375,7 @@ async def patch_document_section(
     return await _mutation_response(session, document, batch)
 
 
+@agent_onboarding.records("read")
 async def query_documents(
     session: AsyncSession,
     principal: Principal,
@@ -1589,6 +1595,7 @@ def _snippet(text: str, needle: str, width: int = 240) -> str:
     return text[start : start + width]
 
 
+@agent_onboarding.records_read
 async def dereference(
     session: AsyncSession,
     principal: Principal,

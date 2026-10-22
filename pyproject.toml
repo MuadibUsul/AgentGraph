@@ -7,6 +7,10 @@ extend-exclude = ["dashboard"]
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
 
+[tool.ruff.lint.per-file-ignores]
+# Bilingual prose for the public docs site: sentences stay whole for translators.
+"app/docs_site.py" = ["E501"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"

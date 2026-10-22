@@ -85,6 +85,8 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "webhook_rules": ("objects.jsonl", ("secret",)),
     "usage_ledger": ("objects.jsonl", ()),
     "event_subscriptions": ("objects.jsonl", ()),
+    "onboarding_progress": ("objects.jsonl", ()),
+    "agent_onboarding": ("objects.jsonl", ()),
     # The per-workspace event counter: imported logs continue their seq.
     "workspace_event_seq": ("objects.jsonl", ()),
     "timeline_streams": ("events.jsonl", ()),

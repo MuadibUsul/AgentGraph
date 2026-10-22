@@ -42,9 +42,12 @@ DEFAULT_MAX_BYTES = 32_768
 MAX_MAX_BYTES = 131_072
 SECTIONS = (
     "server", "me", "constitution", "namespace_map", "collaborators", "my_tasks",
-    "claimable_tasks", "required_reading", "inbox", "conventions", "events", "next_calls",
-    "warnings",
+    "claimable_tasks", "required_reading", "inbox", "conventions", "events", "onboarding",
+    "next_calls", "warnings",
 )
+# A new agent's first orientation stays small: identity, rules summary, three
+# links and one next step; the rest is a get_api_docs or MCP resource away.
+FIRST_TIME_MAX_BYTES = 12_288
 _OPEN = (TaskStatus.DONE, TaskStatus.FAILED)
 
 
@@ -451,6 +454,13 @@ async def build(
         if entry["my_access"] == "write" and entry["namespace"] != onboarding.SYSTEM_NAMESPACE
     ]
     pack["next_calls"] = _next_calls(pack, writable)
+    from app.services import agent_onboarding
+
+    onboarding_block = await agent_onboarding.orientation_block(session, principal, constitution)
+    if onboarding_block is not None:
+        pack["onboarding"] = onboarding_block
+        if onboarding_block["first_time"] and max_bytes == DEFAULT_MAX_BYTES:
+            max_bytes = FIRST_TIME_MAX_BYTES
     warnings = [{"code": "not_registered",
                  "message": "the collaborator directory is not live yet; identity is inferred"}]
     if constitution["stub"]:
@@ -468,14 +478,19 @@ async def build(
             key: value for key, value in pack.items()
             if key in sections or key in ("schema_version", "generated_at")
         }
+    if onboarding_block is not None:
+        pack["onboarding"] = onboarding_block  # always present, whatever sections were asked
     pack = _truncate(json.loads(json.dumps(pack, default=str)), max_bytes)
-    session.add(
-        AccessAudit(
-            workspace_id=principal.workspace.id,
-            action="agent.oriented",
-            details={"principal": principal.agent_signature, "sections": sections or "all"},
+    if onboarding_block is None:
+        # Agents are audited once, on their first orientation (agent onboarding).
+        session.add(
+            AccessAudit(
+                workspace_id=principal.workspace.id,
+                action="agent.oriented",
+                details={"principal": principal.agent_signature,
+                         "sections": sections or "all"},
+            )
         )
-    )
     await session.commit()
     return pack
 
@@ -508,4 +523,10 @@ async def ack_constitution(
         existing.version = version
         existing.acked_at = utcnow()
     await session.commit()
-    return {"acked_version": version, "doc_key": document.doc_key, "principal": key}
+    from app.services import agent_onboarding
+
+    result = {"acked_version": version, "doc_key": document.doc_key, "principal": key}
+    hint = await agent_onboarding.observe(principal, "acked", version=version, attach=False)
+    if hint is not None:
+        result["onboarding"] = hint
+    return result

@@ -32,6 +32,7 @@ from app.schemas import (
     ProposalVoteOut,
     ProposalVoteRequest,
 )
+from app.services import agent_onboarding
 from app.services.common import (
     append_event,
     document_out,
@@ -127,6 +128,7 @@ async def _get_proposal(
     return proposal
 
 
+@agent_onboarding.records("proposal")
 async def create_proposal(
     session: AsyncSession,
     principal: Principal,

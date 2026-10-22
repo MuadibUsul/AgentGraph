@@ -38,6 +38,7 @@ from app.schemas import (
     HumanUserListResponse,
     HumanUserOut,
     HumanUserUpdateRequest,
+    OnboardingUpdate,
     PolicyCreateRequest,
     PolicyListResponse,
     PolicyOut,
@@ -64,8 +65,10 @@ from app.schemas import (
     WebhookRuleUpdateRequest,
     WorkspaceStatsResponse,
 )
+from app.services import agent_onboarding as agent_onboarding_service
 from app.services import budget as budget_service
 from app.services import exports as export_service
+from app.services import human_onboarding as onboarding_service
 from app.services import leases as lease_service
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
@@ -92,6 +95,17 @@ async def list_agent_tokens(
     session: AsyncSession = Depends(get_db),
 ) -> AgentTokenListResponse:
     return await services.list_agent_tokens(session, principal.workspace)
+
+
+@router.get(
+    "/agent-onboarding",
+    summary="Onboarding state of every agent token: steps, first action, last activity",
+)
+async def agent_onboarding_overview(
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await agent_onboarding_service.overview(session, principal.workspace.id)
 
 
 @router.post(
@@ -740,6 +754,23 @@ async def tenant(
     session: AsyncSession = Depends(get_db),
 ) -> TenantOut:
     return await tenant_service.describe_tenant(session, principal.tenant_id)
+
+
+@router.get("/onboarding", summary="Getting-started checklist for the signed-in person")
+async def onboarding_status(
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await onboarding_service.status(session, principal)
+
+
+@router.post("/onboarding", summary="Tick, skip, close or reopen the getting-started checklist")
+async def onboarding_update(
+    body: OnboardingUpdate,
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await onboarding_service.update(session, principal, action=body.action, step=body.step)
 
 
 @router.get(

@@ -23,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.admin_routes import router as admin_router
 from app.api.auth_routes import router as auth_router
 from app.api.human_routes import router as human_router
+from app.api.public_docs import router as public_docs_router
 from app.api.stream_routes import admin_router as admin_stream_router
 from app.api.stream_routes import router as stream_router
 from app.api.v1_routes import router as v1_router
@@ -117,8 +118,9 @@ app = FastAPI(
         "capability-scoped service layer."
     ),
     lifespan=lifespan,
+    # /docs is the public documentation site; Swagger UI lives at /api-reference.
     docs_url=(
-        "/docs"
+        "/api-reference"
         if settings.docs_enabled and not settings.docs_require_auth
         else None
     ),
@@ -168,7 +170,10 @@ async def security_headers(request: Request, call_next):
         response.headers.setdefault(
             "Cache-Control", "public, max-age=31536000, immutable"
         )
-    elif path.startswith("/dashboard/") or path == "/dashboard":
+    elif (
+        path.startswith("/dashboard/") or path == "/dashboard"
+        or path.startswith("/docs/") or path == "/docs"
+    ):
         response.headers.setdefault(
             "Cache-Control", "no-store, max-age=0, must-revalidate"
         )
@@ -208,6 +213,13 @@ if dashboard_dir.is_dir():
         StaticFiles(directory=str(dashboard_dir), html=True),
         name="dashboard",
     )
+# Public documentation site (no login). The Next.js export renders it at
+# /docs; without a console build the API serves the same content as plain HTML.
+docs_site_dir = dashboard_dir / "docs"
+if docs_site_dir.is_dir():
+    app.mount("/docs", StaticFiles(directory=str(docs_site_dir), html=True), name="docs")
+else:
+    app.include_router(public_docs_router)
 
 
 @app.exception_handler(ApiError)
@@ -324,7 +336,7 @@ if settings.docs_enabled and settings.docs_require_auth:
     ) -> JSONResponse:
         return JSONResponse(app.openapi())
 
-    @app.get("/docs", include_in_schema=False)
+    @app.get("/api-reference", include_in_schema=False)
     async def protected_docs(
         _: None = Depends(_require_docs_auth),
     ) -> HTMLResponse:
@@ -344,7 +356,8 @@ async def root(request: Request) -> Any:
     return {
         "name": settings.app_name,
         "version": settings.app_version,
-        "docs": "/docs" if settings.docs_enabled else None,
+        "docs": "/docs/",
+        "api_reference": "/api-reference" if settings.docs_enabled else None,
         "health": "/healthz",
         "rest": "/v1",
         "mcp": "/mcp/" if settings.mcp_enabled else None,

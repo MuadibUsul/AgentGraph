@@ -88,6 +88,7 @@ from app.schemas import (
     WorkspaceInfo,
     WorkspaceStatsResponse,
 )
+from app.services import agent_onboarding as agent_onboarding_service
 from app.services import budget as budget_service
 from app.services import exports as export_service
 from app.services import tenants as tenant_service
@@ -519,6 +520,17 @@ async def human_update_document(
 
 
 # ------------------------------------------------------------- agent tokens
+
+
+@router.get(
+    "/workspaces/{workspace_id}/agent-onboarding",
+    summary="Onboarding state of every agent token in a workspace",
+)
+async def agent_onboarding_overview(
+    workspace_id: uuid.UUID, session: AsyncSession = Depends(get_db)
+) -> dict:
+    await services.get_workspace(session, workspace_id)
+    return await agent_onboarding_service.overview(session, workspace_id)
 
 
 @router.get(

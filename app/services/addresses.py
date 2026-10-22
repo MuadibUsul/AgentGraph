@@ -359,7 +359,13 @@ async def register_namespace(
 
 
 async def list_namespaces(session: AsyncSession, principal: Principal) -> dict[str, Any]:
+    from app.services import agent_onboarding
     from app.services.onboarding import namespace_overview
+
+    if agent_onboarding.tracked(principal) and agent_onboarding.primary_namespace(
+            principal) is None:
+        # A token without namespaces reads the namespace map instead of a readme.
+        await agent_onboarding.observe(principal, "readme_read", namespace=None)
 
     entries = await namespace_overview(session, principal)
     rows = {

@@ -49,6 +49,7 @@ from app.schemas import (
     WorkspaceOutput,
     WorkspaceStatsResponse,
 )
+from app.services import agent_onboarding
 from app.services.common import (
     PLATFORM_DOC_NAMESPACES,
     agent_token_out,
@@ -134,6 +135,7 @@ def _document_visibility(
     return conditions
 
 
+@agent_onboarding.records("read")
 async def workspace_map(
     session: AsyncSession,
     principal: Principal,

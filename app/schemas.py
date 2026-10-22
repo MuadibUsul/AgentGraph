@@ -840,6 +840,11 @@ class TransferResponsibilitiesResponse(BaseModel):
     skipped: dict[str, str] = Field(default_factory=dict)
 
 
+class OnboardingUpdate(StrictModel):
+    action: Literal["complete", "skip", "unskip", "dismiss", "reopen"]
+    step: str | None = Field(default=None, max_length=64)
+
+
 class SubscriptionRequest(StrictModel):
     prefixes: list[str] = Field(
         default_factory=list, max_length=50,

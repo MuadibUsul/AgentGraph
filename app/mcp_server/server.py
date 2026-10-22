@@ -317,8 +317,11 @@ class AgentGraphFastMCP(FastMCP):
 mcp = AgentGraphFastMCP(
     name="AgentGraph",
     instructions=(
+        "Call get_orientation first before any other tool. Read system/constitution, "
+        "acknowledge it, read your namespace readme, then take your first role-specific "
+        "action. Every response carries onboarding.next_call until you are done. "
         "A human-in-the-loop shared blackboard for multi-agent teams. "
-        "FIRST CALL get_orientation: it returns your identity, the constitution, "
+        "get_orientation returns your identity, the constitution, "
         "namespaces, your tasks and next_calls. "
         "Use workspace_sync for the L0 map, create_task to create work, "
         "agent_claim_and_read to claim a task and read only L1 briefs, "
@@ -525,9 +528,14 @@ async def get_orientation(
     sections: list[str] | None = None,
     max_bytes: Annotated[int, Field(ge=4_096, le=131_072)] = 32_768,
 ) -> dict[str, Any]:
-    """Call this first after connecting.
+    """FIRST CALL. Call this before any other tool.
 
-    Returns who you are (role, token, scopes), the workspace constitution,
+    onboarding.next_call is your next step: 1 get_orientation, 2 read
+    system/constitution and ack_constitution, 3 read your namespace readme,
+    4 your role's first action (SCOUT: draft or proposal; ANALYST: create or
+    claim a task; AUDITOR: review a task; EXECUTOR: claim a task). The first
+    response is kept small; read required_reading and the agent-guide
+    resource when needed. Returns who you are (role, token, scopes), the workspace constitution,
     the namespace map with your access, collaborators, your open tasks,
     claimable tasks, required reading (constitution first), an event cursor,
     the conventions and limits, and next_calls: ready-to-run calls that follow
