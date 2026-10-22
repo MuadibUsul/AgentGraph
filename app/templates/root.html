@@ -1,0 +1,834 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#05070b">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="AgentGraph. The homepage is the interface.">
+<title>AgentGraph — A response, not a landing page.</title>
+<style>
+  :root {
+    --bg: #05070b;
+    --fg: #dde0ec;
+    --muted: #777e92;
+    --key: #abb8d6;
+    --string: #e3dcff;
+    --accent: #ac97ff;
+    --line: rgba(155, 163, 201, .14);
+    --mono: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    min-height: 100svh;
+    overflow-x: hidden;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #flow {
+    position: fixed;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    opacity: .96;
+    pointer-events: none;
+    filter: blur(.25px) saturate(1.12) brightness(1.08);
+    -webkit-mask-image: radial-gradient(ellipse 58% 52% at 39% 54%, rgba(0,0,0,.68), #000 78%);
+    mask-image: radial-gradient(ellipse 58% 52% at 39% 54%, rgba(0,0,0,.68), #000 78%);
+  }
+
+  .frost {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 72% 66% at 46% 47%, transparent 24%, rgba(4,6,10,.28) 66%, rgba(4,6,10,.64) 100%),
+      linear-gradient(180deg, rgba(4,6,10,.18), rgba(4,6,10,.44));
+    -webkit-backdrop-filter: blur(1.6px) saturate(110%);
+    backdrop-filter: blur(1.6px) saturate(110%);
+  }
+  .frost::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(118deg, rgba(199,210,254,.035) 0%, transparent 27%, transparent 65%, rgba(103,232,249,.018) 100%);
+    mix-blend-mode: screen;
+  }
+  .frost::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    opacity: .035;
+    mix-blend-mode: screen;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+  }
+
+  .outer {
+    position: relative;
+    z-index: 2;
+    min-height: 100svh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+  }
+  .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 0 60px;
+    padding: 43px 0 21px;
+    border-bottom: 1px solid var(--line);
+    color: #656b7e;
+    font: 11px var(--mono);
+    letter-spacing: .08em;
+  }
+  .wordmark {
+    color: #b8bfd5;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .14em;
+    white-space: nowrap;
+  }
+  .wordmark .cursor-slash { color: #686079; padding: 0 9px; }
+  .wordmark .soft { color: #626980; font-weight: 400; }
+  .topright {
+    display: flex;
+    align-items: center;
+    gap: 23px;
+    white-space: nowrap;
+  }
+  .dot {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-right: 8px;
+    border-radius: 50%;
+    background: #a4b8a9;
+    box-shadow: 0 0 12px rgba(164,184,169,.65);
+    vertical-align: 2px;
+  }
+  .topright strong { color: #abb7a7; font-weight: 500; }
+  .shell {
+    align-self: center;
+    width: min(100%, 960px);
+    margin: 76px auto 88px;
+    padding: 0 45px;
+    position: relative;
+  }
+  .exchange {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-right: 36px;
+    margin-bottom: 33px;
+    color: #54596d;
+    font: 500 11px var(--mono);
+    letter-spacing: .065em;
+  }
+  .request { color: #868ba2; }
+  .request span { color: #54596d; margin-left: 16px; }
+  .context { display: flex; gap: 17px; align-items: center; }
+  .context .slash { color: #424656; }
+  .code-area { position: relative; width: 100%; }
+  .code-area::before {
+    content: "";
+    position: absolute;
+    left: -27px;
+    top: 25px;
+    bottom: 29px;
+    width: 1px;
+    background: linear-gradient(transparent, rgba(155,138,235,.27) 24%, rgba(155,138,235,.27) 75%, transparent);
+  }
+  .code-area::after {
+    content: "";
+    position: absolute;
+    left: -29px;
+    top: 44px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #b1a0ff;
+    box-shadow: 0 0 14px rgba(177,160,255,.5);
+  }
+  .code {
+    margin: 0;
+    padding: 0;
+    color: var(--fg);
+    font: 400 clamp(17px, 1.53vw, 23px) / 1.86 var(--mono);
+    letter-spacing: -.032em;
+    white-space: normal;
+    font-variant-ligatures: none;
+    tab-size: 2;
+    text-shadow: 0 2px 22px rgba(0,0,0,.45);
+  }
+  .code-line {
+    display: block;
+    width: max-content;
+    min-width: 90%;
+    min-height: 1.86em;
+    position: relative;
+    border-radius: 2px;
+    white-space: pre;
+    transition: background .2s;
+  }
+  .code-line.inner { padding-left: 2ch; }
+  .code-line .punctuation { color: #70778c; }
+  .code-line .key { color: var(--key); }
+  .code-line .value { color: var(--string); }
+  .code-line .number { color: #b8a5f4; }
+  .code-line .quoted { color: #848a9b; }
+  .code-line .brace { color: #c5bbfa; font-weight: 500; }
+  .code-line .comma { color: #676e7e; }
+  .code-line:hover .key { color: #cad4ef; }
+  .code-line:hover .value { color: #fff; }
+  .code-line.last { display: inline-block; }
+  .end-caret {
+    display: inline-block;
+    width: 2px;
+    height: .9em;
+    margin-left: 1.1ch;
+    top: .16em;
+    position: relative;
+    background: var(--accent);
+    opacity: .8;
+    box-shadow: 0 0 13px rgba(172,151,255,.5);
+    animation: blink 1.3s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .entry {
+    color: inherit;
+    text-decoration: none;
+    outline-offset: 6px;
+    transition: color .18s;
+  }
+  .entry .value {
+    border-bottom: 2px solid rgba(199,210,254,.78);
+    background: linear-gradient(180deg, transparent 44%, rgba(99,102,241,.24) 44%);
+    padding: 0 4px 2px;
+    margin: 0 -4px;
+    transition: border-color .18s, background .18s;
+  }
+  .entry-arrow {
+    display: inline-block;
+    margin-left: 6px;
+    color: var(--accent);
+    font-size: .9em;
+    text-shadow: 0 0 18px rgba(172,151,255,.5);
+    transition: color .18s, transform .18s;
+  }
+  .entry:hover .value,
+  .entry:focus-visible .value {
+    color: #fff;
+    border-color: #fff;
+    background: linear-gradient(180deg, transparent 36%, rgba(129,140,248,.36) 36%);
+  }
+  .entry:hover .entry-arrow,
+  .entry:focus-visible .entry-arrow { color: #f0ecff; transform: translate(1px, -1px); }
+  .entry:focus-visible { outline: 2px solid var(--accent); border-radius: 2px; }
+
+  .subline {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 772px;
+    margin-top: 33px;
+    padding-top: 23px;
+    border-top: 1px solid var(--line);
+    color: #656c80;
+    font: 400 11px var(--mono);
+    letter-spacing: .035em;
+  }
+  .response-meta { display: flex; gap: 22px; align-items: center; }
+  .response-meta .hex { color: #4b5163; }
+  .actions { display: flex; align-items: center; gap: 23px; }
+  .actions button, .actions a {
+    background: none;
+    border: 0;
+    padding: 5px 0;
+    outline-offset: 6px;
+    color: #8b8ba4;
+    cursor: pointer;
+    text-decoration: none;
+    font: 500 10px var(--mono);
+    letter-spacing: .09em;
+    transition: color .18s;
+  }
+  .actions button:hover, .actions a:hover { color: #ede4ff; }
+  .actions .copy-icon { display: inline-block; margin-right: 7px; font-size: 12px; }
+
+  .bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 60px;
+    padding: 22px 0 35px;
+    border-top: 1px solid var(--line);
+    color: #454a5c;
+    font: 400 10px var(--mono);
+    letter-spacing: .075em;
+  }
+  .bottom .foot-phrase { color: #60667a; }
+  .bottom .flag { color: #7b718c; }
+  .bottom .in-between { margin: 0 10px; color: #393c48; }
+  ::selection { background: #5f4e9d; color: white; }
+
+  @media (min-width: 1500px) {
+    .shell { transform: translateX(36px); }
+  }
+  @media (max-width: 760px) {
+    .top { margin: 0 23px; padding: 25px 0 19px; font-size: 9px; }
+    .topright { gap: 7px; }
+    .topright .type { display: none; }
+    .wordmark { font-size: 10px; }
+    .shell { width: min(100%, 650px); margin: 45px auto 50px; padding: 0 30px; }
+    .exchange { padding-right: 0; margin-bottom: 26px; font-size: 10px; }
+    .context { gap: 9px; }
+    .code-area::before { left: -14px; }
+    .code-area::after { left: -16px; }
+    .code { font-size: clamp(11px, 3.05vw, 18px); line-height: 2.05; letter-spacing: -.045em; }
+    .code-line { min-height: 2.05em; }
+    .subline { margin-top: 29px; padding-top: 18px; font-size: 9px; }
+    .response-meta { gap: 11px; }
+    .response-meta .hex { display: none; }
+    .bottom { margin: 0 23px; padding: 21px 0 26px; font-size: 9px; }
+    .bottom .flag { display: none; }
+  }
+  @media (max-width: 400px) {
+    .shell { padding: 0 24px; }
+    .code { font-size: clamp(10.9px, 3vw, 12px); }
+    .context .slash { display: none; }
+    .topright span.type { display: none; }
+    .bottom .foot-phrase { font-size: 8.5px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="flow" aria-hidden="true"></canvas>
+  <div class="frost" aria-hidden="true"></div>
+
+  <div class="outer">
+    <header class="top">
+      <div class="wordmark">AGENTGRAPH<span class="cursor-slash">/</span><span class="soft">ROOT</span></div>
+      <div class="topright"><span class="type">HTTP/1.1</span><span><i class="dot"></i><strong>200 OK</strong></span></div>
+    </header>
+
+    <main class="shell" aria-label="AgentGraph JSON response homepage">
+      <div class="exchange">
+        <div class="request">GET <span>/</span></div>
+        <div class="context"><span>RESPONSE</span><span class="slash">/</span><span>application/json</span></div>
+      </div>
+      <div class="code-area">
+        <div class="code" role="region" aria-label="API response">
+__CODE_LINES__
+        </div>
+      </div>
+
+      <div class="subline">
+        <div class="response-meta"><span>BODY</span><span id="byte-size">— BYTES</span><span class="hex">UTF-8</span></div>
+        <div class="actions">
+          <button id="copy" type="button"><span class="copy-icon">⧉</span><span id="copy-label">COPY RESPONSE</span></button>
+          <a href="/?format=json" target="_blank" rel="noopener">RAW ↗</a>
+        </div>
+      </div>
+    </main>
+
+    <footer class="bottom">
+      <div class="foot-phrase">NOT A LANDING PAGE. <span class="flag">AN ENDPOINT.</span></div>
+      <div><span>001</span><span class="in-between">/</span><span>001</span></div>
+    </footer>
+  </div>
+
+<script>
+const payload = __PAYLOAD__;
+const byteSize = new TextEncoder().encode(payload).length;
+document.getElementById("byte-size").textContent = byteSize + " BYTES";
+document.getElementById("copy").addEventListener("click", async () => {
+  const label = document.getElementById("copy-label");
+  try {
+    await navigator.clipboard.writeText(payload);
+    label.textContent = "COPIED ✓";
+  } catch (error) {
+    label.textContent = "SELECT & COPY";
+  }
+  setTimeout(() => { label.textContent = "COPY RESPONSE"; }, 1600);
+});
+</script>
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("flow");
+  const ctx = canvas.getContext("2d", { alpha: true });
+  if (!ctx) return;
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const TAU = Math.PI * 2;
+  const PALETTE = {
+    indigo: [129, 140, 248],
+    iris: [165, 180, 252],
+    cyan: [103, 232, 249]
+  };
+
+  const rand = (min, max) => min + Math.random() * (max - min);
+  const rgba = (rgb, alpha) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
+
+  let width = 0;
+  let height = 0;
+  let nodes = [];
+  let edges = [];
+  let pulses = [];
+  let ripples = [];
+  let streams = [];
+  let glints = [];
+  let core = null;
+  let clock = 0;
+  let last = 0;
+  let spawnAccumulator = 0;
+  let nextId = 0;
+
+  function makeGlow(rgb) {
+    const sprite = document.createElement("canvas");
+    sprite.width = sprite.height = 128;
+    const sctx = sprite.getContext("2d");
+    const gradient = sctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gradient.addColorStop(0, rgba(rgb, .92));
+    gradient.addColorStop(.22, rgba(rgb, .38));
+    gradient.addColorStop(.58, rgba(rgb, .10));
+    gradient.addColorStop(1, rgba(rgb, 0));
+    sctx.fillStyle = gradient;
+    sctx.fillRect(0, 0, 128, 128);
+    return sprite;
+  }
+
+  const glowIndigo = makeGlow(PALETTE.indigo);
+  const glowIris = makeGlow(PALETTE.iris);
+  const glowCyan = makeGlow(PALETTE.cyan);
+
+  function distanceSquared(a, b) {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
+  }
+
+  function addEdge(a, b, long, backbone) {
+    if (!a || !b || a === b) return;
+    const key = a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`;
+    if (addEdge.seen.has(key)) return;
+    addEdge.seen.add(key);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const bend = length * (long ? .10 : .055) * (Math.random() < .5 ? -1 : 1);
+    edges.push({
+      a,
+      b,
+      cx: (a.x + b.x) / 2 + (-dy / length) * bend,
+      cy: (a.y + b.y) / 2 + (dx / length) * bend,
+      long: Boolean(long),
+      backbone: Boolean(backbone),
+      phase: rand(0, TAU),
+      alpha: backbone ? .085 : long ? .028 : .110 + Math.min(a.depth, b.depth) * .100
+    });
+  }
+  addEdge.seen = new Set();
+
+  function pointOnEdge(edge, t) {
+    const mt = 1 - t;
+    return {
+      x: mt * mt * edge.a.x + 2 * mt * t * edge.cx + t * t * edge.b.x,
+      y: mt * mt * edge.a.y + 2 * mt * t * edge.cy + t * t * edge.b.y
+    };
+  }
+
+  function pointOnStream(stream, t) {
+    const mt = 1 - t;
+    return {
+      x: mt * mt * mt * stream.p0.x + 3 * mt * mt * t * stream.p1.x + 3 * mt * t * t * stream.p2.x + t * t * t * stream.p3.x,
+      y: mt * mt * mt * stream.p0.y + 3 * mt * mt * t * stream.p1.y + 3 * mt * t * t * stream.p2.y + t * t * t * stream.p3.y
+    };
+  }
+
+  function build() {
+    nodes = [];
+    edges = [];
+    pulses = [];
+    ripples = [];
+    streams = [];
+    glints = [];
+    nextId = 0;
+    addEdge.seen = new Set();
+
+    const count = width < 700 ? 54 : width < 1100 ? 84 : 112;
+    const clusters = [
+      [.10, .15], [.38, .10], [.89, .16],
+      [.09, .80], [.48, .90], [.90, .78]
+    ];
+    for (let i = 0; i < count; i += 1) {
+      const depth = Math.random();
+      const cluster = clusters[i % clusters.length];
+      const clustered = Math.random() > .16;
+      const spread = Math.min(width, height) * .115;
+      const angle = rand(0, TAU);
+      const radius = Math.sqrt(Math.random()) * spread;
+      const x = clustered
+        ? cluster[0] * width + Math.cos(angle) * radius * 1.35
+        : rand(0, width);
+      const y = clustered
+        ? cluster[1] * height + Math.sin(angle) * radius
+        : rand(0, height);
+      nodes.push({
+        id: nextId++,
+        x,
+        y,
+        vx: rand(-.075, .075) * (.35 + depth),
+        vy: rand(-.055, .055) * (.35 + depth),
+        r: .7 + depth * 1.7,
+        depth,
+        hue: Math.random() < .22 ? "cyan" : (Math.random() < .16 ? "iris" : "indigo"),
+        energy: rand(0, .22),
+        phase: rand(0, TAU),
+        hub: clustered && (i < clusters.length || i % 23 === 0),
+        core: false,
+        dead: false
+      });
+    }
+
+    core = {
+      id: nextId++,
+      x: width * .87,
+      y: height * .52,
+      vx: 0,
+      vy: 0,
+      r: 2.4,
+      depth: 1,
+      hue: "iris",
+      energy: .35,
+      phase: 0,
+      hub: true,
+      core: true,
+      dead: false
+    };
+    nodes.push(core);
+
+    for (const a of nodes) {
+      if (a.core) continue;
+      const nearest = nodes
+        .filter((b) => b !== a && !b.core)
+        .sort((b, c) => distanceSquared(a, b) - distanceSquared(a, c))
+        .slice(0, 3);
+      for (const b of nearest) addEdge(a, b, false);
+      if (a.hub) addEdge(a, core, true, true);
+    }
+
+    const hubs = nodes.filter((node) => node.hub && !node.core);
+    for (let i = 0; i < hubs.length; i += 1) {
+      addEdge(hubs[i], hubs[(i + 1) % hubs.length], true, true);
+    }
+
+    for (let i = 0; i < 18; i += 1) {
+      const a = nodes[Math.floor(rand(0, nodes.length))];
+      const b = nodes[Math.floor(rand(0, nodes.length))];
+      addEdge(a, b, true);
+    }
+    for (let i = 0; i < 10; i += 1) {
+      const a = nodes[Math.floor(rand(0, nodes.length))];
+      addEdge(a, core, true, true);
+    }
+
+    streams = [
+      { p0: [-.10, .24], p1: [.28, .13], p2: [.62, .82], p3: [1.10, .70] },
+      { p0: [-.10, .76], p1: [.34, .94], p2: [.66, .18], p3: [1.10, .34] },
+      { p0: [-.10, .52], p1: [.32, .32], p2: [.68, .74], p3: [1.10, .54] }
+    ].map((stream) => ({
+      p0: { x: stream.p0[0] * width, y: stream.p0[1] * height },
+      p1: { x: stream.p1[0] * width, y: stream.p1[1] * height },
+      p2: { x: stream.p2[0] * width, y: stream.p2[1] * height },
+      p3: { x: stream.p3[0] * width, y: stream.p3[1] * height }
+    }));
+
+    glints = [];
+    for (const stream of streams) {
+      for (let i = 0; i < 3; i += 1) {
+        glints.push({
+          stream,
+          t: rand(0, 1),
+          speed: rand(.025, .055),
+          size: rand(1.2, 2.2),
+          hue: Math.random() < .25 ? "cyan" : "iris"
+        });
+      }
+    }
+
+    for (let i = 0; i < 34; i += 1) spawnPulse(true);
+  }
+
+  function pickEdge() {
+    if (!edges.length) return null;
+    const convergence = edges.filter(
+      (edge) => edge.a.core || edge.b.core || edge.a.hub || edge.b.hub
+    );
+    const pool = Math.random() < .62 && convergence.length ? convergence : edges;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  function spawnPulse(seeded) {
+    const limit = width < 700 ? 56 : 96;
+    if (pulses.length >= limit) return;
+    const edge = pickEdge();
+    if (!edge) return;
+    pulses.push({
+      a: edge.a,
+      b: edge.b,
+      cx: edge.cx,
+      cy: edge.cy,
+      t: seeded ? Math.random() : 0,
+      speed: Math.random() < .10 ? rand(.75, 1.15) : rand(.26, .58),
+      size: rand(1.1, 2.1),
+      hue: Math.random() < .18 ? "cyan" : "iris",
+      dead: false
+    });
+  }
+
+  function emitRipple(node) {
+    const isCore = Boolean(node.core);
+    ripples.push({
+      x: node.x,
+      y: node.y,
+      radius: isCore ? 18 : 3,
+      maxRadius: isCore ? Math.max(width, height) * .34 : rand(36, 72),
+      alpha: isCore ? .26 : .18,
+      decay: isCore ? .16 : .32,
+      dead: false
+    });
+  }
+
+  function update(dt) {
+    for (const node of nodes) {
+      if (node.core) {
+        node.energy = Math.min(1.35, node.energy + dt * .018);
+        node.phase += dt * .22;
+        if (node.energy > 1.22) {
+          node.energy = .42;
+          emitRipple(node);
+        }
+        continue;
+      }
+      node.x += node.vx * dt * 32;
+      node.y += node.vy * dt * 32;
+      if (node.x < -24) node.x = width + 24;
+      if (node.x > width + 24) node.x = -24;
+      if (node.y < -24) node.y = height + 24;
+      if (node.y > height + 24) node.y = -24;
+      node.phase += dt * (.35 + node.depth * .55);
+      node.energy *= Math.pow(.986, dt * 60);
+      if (node.energy < .02) node.energy = .02;
+    }
+
+    for (const pulse of pulses) {
+      pulse.t += pulse.speed * dt;
+      if (pulse.t >= 1) {
+        pulse.dead = true;
+        const target = pulse.b;
+        target.energy = Math.min(1.55, target.energy + (target.hub ? .16 : .10));
+        if (target.core) {
+          target.energy = Math.min(1.5, target.energy + .05);
+        } else if (target.energy > 1.06 && Math.random() < .65) {
+          emitRipple(target);
+          target.energy = .48;
+          for (let i = 0; i < 2; i += 1) spawnPulse(false);
+        }
+      }
+    }
+    pulses = pulses.filter((pulse) => !pulse.dead);
+
+    spawnAccumulator += dt;
+    while (spawnAccumulator > .12) {
+      spawnAccumulator -= .12;
+      spawnPulse(false);
+    }
+
+    for (const glint of glints) {
+      glint.t += glint.speed * dt;
+      if (glint.t > 1) glint.t -= 1;
+    }
+
+    for (const ripple of ripples) {
+      ripple.radius += (ripple.maxRadius > 100 ? 58 : 34) * dt;
+      ripple.alpha -= ripple.decay * dt;
+      if (ripple.alpha <= 0 || ripple.radius > ripple.maxRadius) ripple.dead = true;
+    }
+    ripples = ripples.filter((ripple) => !ripple.dead);
+  }
+
+  function drawGlow(sprite, x, y, size, alpha) {
+    if (alpha <= .002) return;
+    ctx.globalAlpha = Math.min(1, alpha);
+    ctx.drawImage(sprite, x - size / 2, y - size / 2, size, size);
+    ctx.globalAlpha = 1;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, width, height);
+    ctx.globalCompositeOperation = "lighter";
+
+    for (const stream of streams) {
+      ctx.strokeStyle = rgba(PALETTE.indigo, .028);
+      ctx.lineWidth = .8;
+      ctx.beginPath();
+      ctx.moveTo(stream.p0.x, stream.p0.y);
+      ctx.bezierCurveTo(stream.p1.x, stream.p1.y, stream.p2.x, stream.p2.y, stream.p3.x, stream.p3.y);
+      ctx.stroke();
+    }
+
+    for (const glint of glints) {
+      const point = pointOnStream(glint.stream, glint.t);
+      const tail = pointOnStream(glint.stream, Math.max(0, glint.t - .025));
+      const tint = glint.hue === "cyan" ? PALETTE.cyan : PALETTE.iris;
+      ctx.strokeStyle = rgba(tint, .10);
+      ctx.lineWidth = glint.size * .8;
+      ctx.beginPath();
+      ctx.moveTo(tail.x, tail.y);
+      ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+      drawGlow(glint.hue === "cyan" ? glowCyan : glowIris, point.x, point.y, 14 + glint.size * 7, .10 + glint.size * .02);
+    }
+
+    if (core) {
+      const corePulse = .5 + .5 * Math.sin(clock * .55 + core.phase);
+      drawGlow(glowIris, core.x, core.y, 420 + core.energy * 160, .10 + core.energy * .14 + corePulse * .024);
+      ctx.strokeStyle = rgba(PALETTE.iris, .075 + core.energy * .05);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(core.x, core.y, 46 + corePulse * 6, 0, TAU);
+      ctx.stroke();
+      ctx.strokeStyle = rgba(PALETTE.cyan, .032 + corePulse * .022);
+      ctx.beginPath();
+      ctx.arc(core.x, core.y, 92 + corePulse * 12, 0, TAU);
+      ctx.stroke();
+    }
+
+    for (const edge of edges) {
+      const shimmer = .75 + .25 * Math.sin(clock * .5 + edge.phase);
+      ctx.strokeStyle = rgba(PALETTE.indigo, edge.alpha * shimmer);
+      ctx.lineWidth = edge.backbone ? 1.1 : edge.long ? .8 : 1.0;
+      ctx.beginPath();
+      ctx.moveTo(edge.a.x, edge.a.y);
+      ctx.quadraticCurveTo(edge.cx, edge.cy, edge.b.x, edge.b.y);
+      ctx.stroke();
+    }
+
+    for (const ripple of ripples) {
+      ctx.strokeStyle = rgba(PALETTE.iris, Math.max(0, ripple.alpha));
+      ctx.lineWidth = ripple.maxRadius > 100 ? 1 : .8;
+      ctx.beginPath();
+      ctx.arc(ripple.x, ripple.y, ripple.radius, 0, TAU);
+      ctx.stroke();
+    }
+
+    for (const node of nodes) {
+      if (node.core) continue;
+      const sprite = node.hue === "cyan" ? glowCyan : node.hue === "iris" ? glowIris : glowIndigo;
+      const base = .075 + node.depth * .12;
+      const energy = node.energy * .24;
+      drawGlow(sprite, node.x, node.y, 11 + node.r * 10 + node.energy * 28, base + energy);
+      ctx.fillStyle = rgba(PALETTE[node.hue], .24 + node.depth * .30 + node.energy * .25);
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, node.r, 0, TAU);
+      ctx.fill();
+      if (node.hub) {
+        ctx.strokeStyle = rgba(PALETTE.iris, .035 + node.energy * .06);
+        ctx.lineWidth = .8;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, 7 + node.energy * 8, 0, TAU);
+        ctx.stroke();
+      }
+    }
+
+    for (const pulse of pulses) {
+      const eased = pulse.t * pulse.t * (3 - 2 * pulse.t);
+      const point = pointOnEdge(pulse, eased);
+      const tail = pointOnEdge(pulse, Math.max(0, eased - .09));
+      const x = point.x;
+      const y = point.y;
+      const tx = tail.x;
+      const ty = tail.y;
+      const tint = pulse.hue === "cyan" ? PALETTE.cyan : PALETTE.iris;
+      const fade = Math.sin(Math.min(1, pulse.t) * Math.PI);
+      ctx.strokeStyle = rgba(tint, .16 + fade * .34);
+      ctx.lineWidth = pulse.size * 1.15;
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      drawGlow(pulse.hue === "cyan" ? glowCyan : glowIris, x, y, 16 + pulse.size * 10, .20 + fade * .46);
+      ctx.fillStyle = rgba(tint, .42 + fade * .38);
+      ctx.beginPath();
+      ctx.arc(x, y, pulse.size * .9, 0, TAU);
+      ctx.fill();
+    }
+
+    if (core) {
+      ctx.fillStyle = rgba(PALETTE.iris, .35 + core.energy * .2);
+      ctx.beginPath();
+      ctx.arc(core.x, core.y, core.r, 0, TAU);
+      ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  function frame(timestamp) {
+    if (!last) last = timestamp;
+    const dt = Math.min((timestamp - last) / 1000, .05);
+    last = timestamp;
+    if (!document.hidden) {
+      clock += dt;
+      update(dt);
+      draw();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = Math.floor(width * DPR);
+    canvas.height = Math.floor(height * DPR);
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    build();
+    if (reduceMotion.matches) draw();
+  }
+
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => {
+    window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(resize, 140);
+  }, { passive: true });
+
+  document.addEventListener("visibilitychange", () => { last = 0; });
+
+  resize();
+  if (reduceMotion.matches) {
+    draw();
+  } else {
+    requestAnimationFrame(frame);
+  }
+})();
+</script>
+</body>
+</html>

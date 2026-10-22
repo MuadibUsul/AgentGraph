@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
@@ -35,6 +35,7 @@ from app.events import event_bus
 from app.mcp_server.server import create_http_app, mcp
 from app.middleware import RequestContextMiddleware
 from app.protocol_middleware import ProtocolMiddleware
+from app.root_page import ROOT_PRIMITIVES, render_root_page
 from app.services.external_actions import external_action_loop
 from app.services.indexer import index_worker_loop
 from app.services.reaper import lease_reaper_loop
@@ -172,6 +173,8 @@ async def security_headers(request: Request, call_next):
         response.headers.setdefault(
             "Cache-Control", "no-store, max-age=0, must-revalidate"
         )
+    elif path == "/":
+        response.headers.setdefault("Cache-Control", "no-store")
     elif path.startswith("/v1/") or path.startswith("/mcp"):
         response.headers.setdefault("Cache-Control", "no-store")
     return response
@@ -336,12 +339,7 @@ if settings.docs_enabled and settings.docs_require_auth:
 
 @app.get("/", include_in_schema=False)
 async def root(request: Request) -> Any:
-    if (
-        dashboard_dir.is_dir()
-        and "text/html" in request.headers.get("accept", "").lower()
-    ):
-        return RedirectResponse(url="/dashboard/", status_code=307)
-    return {
+    descriptor = {
         "name": settings.app_name,
         "version": settings.app_version,
         "docs": "/docs" if settings.docs_enabled else None,
@@ -351,49 +349,13 @@ async def root(request: Request) -> Any:
         "dashboard": "/dashboard/" if dashboard_dir.is_dir() else None,
         "agent_docs": "/v1/agent-docs",
         "first_call": "get_orientation",
-        "primitives": [
-            "get_orientation",
-            "ack_constitution",
-            "get_usage",
-            "get_index_status",
-            "heartbeat",
-            "release_lease",
-            "list_leases",
-            "export_workspace",
-            "get_export",
-            "list_exports",
-            "workspace_sync",
-            "create_task",
-            "review_task",
-            "request_human_review",
-            "agent_claim_and_read",
-            "agent_patch_shared_state",
-            "agent_handoff_task",
-            "agent_escalate_to_human",
-            "upsert_shared_doc",
-            "upsert_many",
-            "patch_doc_section",
-            "query_workspace",
-            "list_documents",
-            "dereference",
-            "dereference_many",
-            "archive_document",
-            "restore_document",
-            "rename_document",
-            "register_namespace",
-            "list_namespaces",
-            "get_token",
-            "get_lineage",
-            "list_token_tree",
-            "explain_write",
-            "register_parts",
-            "propose_document_change",
-            "vote_on_proposal",
-            "list_document_proposals",
-            "draft_external_action",
-            "get_api_docs",
-        ],
+        "primitives": list(ROOT_PRIMITIVES),
     }
+    headers = {"Vary": "Accept", "Cache-Control": "no-store"}
+    accept = request.headers.get("accept", "").lower()
+    if "text/html" in accept and request.query_params.get("format") != "json":
+        return HTMLResponse(render_root_page(descriptor), headers=headers)
+    return JSONResponse(descriptor, headers=headers)
 
 
 @app.get("/healthz", tags=["Health"], summary="Liveness probe")

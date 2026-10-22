@@ -56,14 +56,31 @@ async def upsert_doc(
     return response
 
 
-async def test_browser_root_redirects_to_console(client):
+async def test_browser_root_serves_human_page_and_json_stays_available(client):
     response = await client.get("/", headers={"Accept": "text/html"})
-    assert response.status_code == 307
-    assert response.headers["location"] == "/dashboard/"
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "accept" in response.headers["vary"].lower()
+    assert 'id="flow"' in response.text
+    assert 'href="/dashboard/"' in response.text
+    assert 'class="entry"' in response.text
+    assert 'primitives' in response.text
+    assert '<span class="number">40</span>' in response.text
+    assert "COPY RESPONSE" in response.text
+    assert 'href="/?format=json"' in response.text
 
     api = await client.get("/", headers={"Accept": "application/json"})
     assert api.status_code == 200
+    assert api.headers["content-type"].startswith("application/json")
+    assert "accept" in api.headers["vary"].lower()
     assert api.json()["name"] == "AgentGraph"
+    assert len(api.json()["primitives"]) == 40
+
+    raw = await client.get("/?format=json", headers={"Accept": "text/html"})
+    assert raw.status_code == 200
+    assert raw.headers["content-type"].startswith("application/json")
+    assert raw.json()["first_call"] == "get_orientation"
+    assert len(raw.json()["primitives"]) == 40
 
 
 async def test_exhaustive_cursor_listing_and_archive(client, workspace):
