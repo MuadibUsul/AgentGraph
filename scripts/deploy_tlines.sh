@@ -20,7 +20,7 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 API_CONTAINER="${API_CONTAINER:-agentgraph-api}"
 PUBLIC_URL="${PUBLIC_URL:-https://veynod.com}"
 BACKUP_DIR="${BACKUP_DIR:-backups}"
-EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.33.0}"
+EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.34.0}"
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 log() { printf '\033[1m[deploy]\033[0m %s\n' "$*"; }
@@ -50,8 +50,9 @@ backup_db() {
   compose exec -T db pg_dump -U "$user" -d "$db" --no-owner --clean --if-exists \
     | gzip -9 > "$file"
   chmod 600 "$file"
-  [ "$(gzip -dc "$file" | head -c 4096 | wc -c)" -gt 0 ] || fail "backup is empty"
-  gzip -dc "$file" | grep -q "CREATE TABLE" || fail "backup has no tables"
+  [ -s "$file" ] || fail "backup is empty"
+  gzip -t "$file" || fail "backup is corrupt"
+  gzip -dc "$file" | grep "CREATE TABLE" >/dev/null || fail "backup has no tables"
   log "backup ok ($(du -h "$file" | cut -f1))"
 }
 
@@ -91,7 +92,7 @@ PY
 
 verify() {
   log "verifying deployment"
-  in_api <<'PY'
+  in_api <<'PY' || return 1
 import json
 import os
 import sys
@@ -122,7 +123,7 @@ check("readyz 200", code == 200, str(code))
 code, body = status("/healthz")
 check("healthz reports backup timestamps", code == 200 and "last_backup_at" in body, str(code))
 code, body = status("/docs/")
-check("public /docs/ 200", code == 200 and "AgentGraph" in body, str(code))
+check("public /docs/ 200", code == 200 and ("AgentGraph" in body or "Veynod" in body), str(code))
 code, _ = status("/docs/quickstart/")
 check("public /docs/quickstart/ 200", code == 200, str(code))
 code, body = status("/docs/api-reference/")
