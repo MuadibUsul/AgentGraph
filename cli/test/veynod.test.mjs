@@ -53,6 +53,6 @@ test("client config shapes", () => {
   const desktop = claudeDesktopEntry("https://x/mcp/", "agt_3");
   assert.deepEqual(desktop.args.slice(0, 3), ["-y", "mcp-remote", "https://x/mcp/"]);
   assert.equal(desktop.env.VEYNOD_AUTH, "Bearer agt_3");
-  assert.ok(claudeDesktopConfigPath("/home/u", "darwin").includes("Application Support/Claude"));
-  assert.ok(claudeDesktopConfigPath("/home/u", "linux").endsWith(".config/Claude/claude_desktop_config.json"));
+  assert.ok(claudeDesktopConfigPath("/home/u", "darwin").replaceAll("\\", "/").includes("Application Support/Claude"));
+  assert.ok(claudeDesktopConfigPath("/home/u", "linux").replaceAll("\\", "/").endsWith(".config/Claude/claude_desktop_config.json"));
 });
