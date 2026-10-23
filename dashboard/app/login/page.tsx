@@ -88,10 +88,10 @@ export default function LoginPage() {
         googleRef.current;
       const width = Math.max(
         220,
-        Math.min(360, Math.floor(widthSource.getBoundingClientRect().width || 320)),
+        Math.min(400, Math.floor(widthSource.getBoundingClientRect().width || 320)),
       );
       id.renderButton(googleRef.current, {
-        theme: "filled_black",
+        theme: "outline",
         size: "large",
         shape: "rectangular",
         logo_alignment: "left",
