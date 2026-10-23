@@ -3185,7 +3185,7 @@
          "type": "string[] | null"
         },
         {
-         "description": "Allow this token to issue child tokens (requires CHILD_TOKEN_ISSUANCE)",
+         "description": "Allow this token to issue child tokens (when the server enables child-token issuance)",
          "name": "can_issue",
          "required": false,
          "type": "boolean | null"
