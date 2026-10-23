@@ -44,6 +44,6 @@ export function pageTitle(slug: string, lang: "en" | "zh" = "en"): string {
   for (const group of site.nav) {
     for (const page of group.pages) if (page.slug === slug) return page.title[lang];
   }
-  return "AgentGraph";
+  return "Veynod";
 }
 

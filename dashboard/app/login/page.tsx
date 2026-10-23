@@ -3,7 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import { LanguageToggle, useI18n } from "../i18n";
-import { IconGraph } from "../components/ui";
+import {
+  IconEye,
+  IconEyeOff,
+  IconGraph,
+  IconLock,
+  IconMail,
+} from "../components/ui";
 import type { AuthConfig, AuthSession } from "../types";
 import { normalizeBase } from "../types";
 
@@ -20,6 +26,7 @@ export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -93,6 +100,7 @@ export default function LoginPage() {
         220,
         Math.min(400, Math.floor(widthSource.getBoundingClientRect().width || 320)),
       );
+      googleRef.current.replaceChildren();
       id.renderButton(googleRef.current, {
         theme: "outline",
         size: "large",
@@ -217,7 +225,7 @@ export default function LoginPage() {
         <a className="auth-brand" href="/dashboard/">
           <span className="auth-brand-mark"><IconGraph size={22} /></span>
           <span>
-            <strong>AgentGraph<span className="accent">.</span></strong>
+            <strong>Veynod<span className="accent">.</span></strong>
             <small>{t("Human · Agent Blackboard")}</small>
           </span>
         </a>
@@ -260,25 +268,18 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div className="auth-capabilities" aria-label={t("Platform capabilities")}>
-            <span>{t("PostgreSQL 16 + pgvector")}</span>
-            <span>{t("MCP-native")}</span>
-            <span>{t("Lease fencing")}</span>
-            <span>{t("Immutable versions")}</span>
-            <span>{t("Batch undo")}</span>
-          </div>
         </section>
 
         <section className="auth-card-wrap">
           <div className="auth-card">
             <div className="auth-card-head">
               <span className="auth-card-kicker">
-                {mode === "login" ? t("Welcome back") : t("Start your workspace")}
+                {mode === "login" ? t("Account access") : t("New workspace")}
               </span>
-              <h2>{mode === "login" ? t("Sign in to AgentGraph") : t("Create your account")}</h2>
+              <h2>{mode === "login" ? t("Welcome back") : t("Create your account")}</h2>
               <p>
                 {mode === "login"
-                  ? t("Your workspace is waiting on the other side.")
+                  ? t("Continue to your workspace.")
                   : t("A free workspace, ready for your first agent team.")}
               </p>
             </div>
@@ -339,30 +340,45 @@ export default function LoginPage() {
               )}
               <label className="field">
                 <span>{t("Email")}</span>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="you@example.com"
-                  autoComplete="email"
-                  required
-                />
+                <div className="auth-input">
+                  <IconMail size={16} />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                    required
+                  />
+                </div>
               </label>
               <label className="field">
                 <span>{t("Password")}</span>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder={
-                    mode === "register"
-                      ? t("At least 8 characters")
-                      : t("Your password")
-                  }
-                  autoComplete={mode === "register" ? "new-password" : "current-password"}
-                  minLength={8}
-                  required
-                />
+                <div className="auth-input">
+                  <IconLock size={16} />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder={
+                      mode === "register"
+                        ? t("At least 8 characters")
+                        : t("Your password")
+                    }
+                    autoComplete={mode === "register" ? "new-password" : "current-password"}
+                    minLength={8}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle"
+                    onClick={() => setShowPassword((value) => !value)}
+                    aria-label={showPassword ? t("Hide password") : t("Show password")}
+                    aria-pressed={showPassword}
+                  >
+                    {showPassword ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+                  </button>
+                </div>
               </label>
               {error && <div className="inline-error" role="alert">{error}</div>}
               <button type="submit" className="auth-submit" disabled={busy}>
@@ -383,7 +399,10 @@ export default function LoginPage() {
             )}
 
             <div className="auth-card-foot">
-              <span>{t("Free workspace · no card required")}</span>
+              <span className="auth-foot-note">
+                <IconLock size={12} />
+                {t("Free workspace · no card required")}
+              </span>
             </div>
           </div>
           <p className="auth-legal">

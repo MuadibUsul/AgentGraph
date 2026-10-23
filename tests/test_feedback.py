@@ -75,7 +75,7 @@ async def test_browser_root_serves_human_page_and_json_stays_available(client):
     assert api.status_code == 200
     assert api.headers["content-type"].startswith("application/json")
     assert "accept" in api.headers["vary"].lower()
-    assert api.json()["name"] == "AgentGraph"
+    assert api.json()["name"] == "Veynod"
     assert len(api.json()["primitives"]) == len(ROOT_PRIMITIVES)
 
     raw = await client.get("/?format=json", headers={"Accept": "text/html"})

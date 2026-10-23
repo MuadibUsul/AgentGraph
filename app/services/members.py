@@ -253,7 +253,7 @@ async def invite_member(session: AsyncSession, principal: Principal, tenant_ref:
     from app.services.mailer import queue_email
 
     await queue_email(
-        session, to=email, subject="You are invited to an AgentGraph workspace",
+        session, to=email, subject="You are invited to an Veynod workspace",
         body=(f"You were invited as {role}. Accept within {INVITE_DAYS} days with "
               f"POST /v1/auth/accept-invite and this code:\n\n{token}\n"),
         ref=invitation,

@@ -144,7 +144,7 @@ def _code_line(key: str, value: Any, *, last: bool = False) -> str:
             '<span class="quoted">&quot;</span><span class="key">dashboard</span>'
             '<span class="quoted">&quot;</span><span class="punctuation">: </span>'
             '<a class="entry" href="/dashboard/" '
-            'aria-label="Open the AgentGraph human console">'
+            'aria-label="Open the Veynod human console">'
             '<span class="quoted">&quot;</span>'
             f'<span class="value">{html.escape(value)}</span>'
             '<span class="quoted">&quot;</span>'

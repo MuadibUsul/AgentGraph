@@ -1,4 +1,4 @@
-"""Contrast gate for the AgentGraph console's core semantic pairs."""
+"""Contrast gate for the Veynod console's core semantic pairs."""
 
 from __future__ import annotations
 

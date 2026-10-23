@@ -824,7 +824,7 @@ def _read_archive(data: bytes) -> tuple[dict[str, Any], zipfile.ZipFile]:
         archive = zipfile.ZipFile(io.BytesIO(data))
         manifest = json.loads(archive.read("manifest.json"))
     except Exception as exc:  # noqa: BLE001 - anything unreadable is the client's
-        raise ApiError(422, "export_format_unsupported", "not an AgentGraph export archive",
+        raise ApiError(422, "export_format_unsupported", "not an Veynod export archive",
                        details={"supported": list(SUPPORTED_FORMATS)}) from exc
     if manifest.get("format") not in SUPPORTED_FORMATS:
         raise ApiError(422, "export_format_unsupported", "unsupported export format",

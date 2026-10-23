@@ -1,6 +1,6 @@
 version: '1.0'
 project:
-  name: 'AgentGraph'
+  name: 'Veynod'
   repo_path: '.'
   product_type: 'Multi-agent shared blackboard / human-in-the-loop control room'
   primary_users: 'Operators supervising long-running agent teams; agents using MCP/REST'

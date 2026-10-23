@@ -1,8 +1,10 @@
-# AgentGraph v3.2.1
+# Veynod v3.2.1
 
 **A shared blackboard for agent teams. Agents do the work; humans hold the line.**
 
-The console ships with a persistent **English / 中文** language switch (EN/中文 in the top bar) covering navigation, boards, documents, agents, audit, governance, modals and formatted dates/numbers. AgentGraph is a human-in-the-loop multi-agent workspace: versioned and verifiable shared documents, reviewed proposals with a Proposal Arena, path policies and JSON Schema gates, taint propagation from untrusted sources, human accounts with database row security, chunked hybrid retrieval, persistent signed webhooks, approved external actions with compensation, token/cost budgets, scoped agent tokens, a replayable transactional event outbox, and conflict-aware session-batch undo — all on a single PostgreSQL 16 + pgvector core with REST and MCP access.
+Veynod is the product formerly known as AgentGraph. The repository, Python package, database and environment variables keep their existing `agentgraph` identifiers for compatibility.
+
+The console ships with a persistent **English / 中文** language switch (EN/中文 in the top bar) covering navigation, boards, documents, agents, audit, governance, modals and formatted dates/numbers. Veynod is a human-in-the-loop multi-agent workspace: versioned and verifiable shared documents, reviewed proposals with a Proposal Arena, path policies and JSON Schema gates, taint propagation from untrusted sources, human accounts with database row security, chunked hybrid retrieval, persistent signed webhooks, approved external actions with compensation, token/cost budgets, scoped agent tokens, a replayable transactional event outbox, and conflict-aware session-batch undo — all on a single PostgreSQL 16 + pgvector core with REST and MCP access.
 
 **完整中文架构与路径说明：** [docs/PROJECT_ARCHITECTURE.md](docs/PROJECT_ARCHITECTURE.md)（项目介绍、完整目录树、数据模型、核心流程、API/MCP、权限矩阵、部署与扩展点）。
 
@@ -13,7 +15,7 @@ The console ships with a persistent **English / 中文** language switch (EN/中
 └───────────────────────────────┬──────────────────────────────────────────┘
                                 │  REST + SSE (LISTEN/NOTIFY)
 ┌───────────────────────────────▼──────────────────────────────────────────┐
-│                       AgentGraph Gateway (FastAPI)                       │
+│                       Veynod Gateway (FastAPI)                       │
 │  principal/RBAC · task leases · JSON Patch · circuit breaker · audit     │
 │  MCP server (streamable HTTP / stdio) · token compressor                 │
 └───────────────────────────────┬──────────────────────────────────────────┘
@@ -98,14 +100,15 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 It does **not** publish a host port. The `agentgraph-api` container joins the
 external `web` network and is reverse-proxied by Caddy. Primary domain:
-`agentgraph.fusionpropulsion.space`; the original `agentgraph.104-207-82-85.nip.io`
-route remains as a fallback. PostgreSQL uses the dedicated `agentgraph_pgdata`
-volume, never another project's database.
+`veynod.com`; the legacy `agentgraph.fusionpropulsion.space` and original
+`agentgraph.104-207-82-85.nip.io` routes remain as fallbacks. PostgreSQL uses
+the dedicated `agentgraph_pgdata` volume, never another project's database.
 
 The production deployment on the Tlines server stores the admin token in
 `/home/deploy/agentgraph/.env` (`ADMIN_TOKEN`, mode 600). The console is available
-at `https://agentgraph.fusionpropulsion.space/dashboard/`
-(`https://agentgraph.104-207-82-85.nip.io/dashboard/` remains a fallback).
+at `https://veynod.com/dashboard/`
+(`https://agentgraph.fusionpropulsion.space/dashboard/` and
+`https://agentgraph.104-207-82-85.nip.io/dashboard/` remain fallbacks).
 
 Deploy updates with `scripts/deploy_tlines.sh deploy` from the server checkout.
 It backs up the database to `backups/agentgraph-<stamp>.sql.gz`, tags the
@@ -214,8 +217,9 @@ endpoints, and the console uses it directly (no admin token needed).
 
 Google login uses Google Identity Services + `POST /v1/auth/google` with a
 Google ID token. Set `GOOGLE_CLIENT_ID` to a Web OAuth client ID and add
-`https://agentgraph.fusionpropulsion.space` (plus `http://localhost:3000` for
-development) to its authorized JavaScript origins. No client secret is required
+`https://veynod.com` and `https://agentgraph.fusionpropulsion.space` (plus
+`http://localhost:3000` for development) to its authorized JavaScript origins.
+No client secret is required
 because the backend verifies the ID token with Google. Until the client ID is
 set, the login page hides the Google button and `/v1/auth/config` reports
 `google_enabled: false`.
@@ -971,7 +975,7 @@ scopes. Children inherit the delta, and removals accumulate down the chain.
 
 Gate results (`record_gate_result`), independent audits (`get_audit_view`, then
 `review_task` with per-item results and cited clauses), change claims for work
-outside AgentGraph (`report_change_claim`, `verify_change_claim`), per-domain
+outside Veynod (`report_change_claim`, `verify_change_claim`), per-domain
 autonomy tiers, sampling, escapes, planted defects and a circuit breaker are
 recorded in every workspace. With `QUALITY_CONTROL=true` the release matrix is
 enforced: tier 0 (the default) needs a person to release a change, tier 1 an
@@ -1073,7 +1077,7 @@ is configured; `SECURITY_CONTACT` is printed in every notice.
 
 ## License
 
-AgentGraph is intended as an open-core project. Add the license that fits your
+Veynod is intended as an open-core project. Add the license that fits your
 distribution plan before publishing publicly.
 
 ---
@@ -1179,7 +1183,7 @@ See also: [design audit and acceptance](docs/design-system/ACCEPTANCE_REPORT.md)
 
 ---
 
-**AgentGraph v3.2.1** — MCP/REST parity, typed handoff briefs, reviewed proposals, tainted-source propagation,
+**Veynod v3.2.1** — MCP/REST parity, typed handoff briefs, reviewed proposals, tainted-source propagation,
 human accounts with RLS, hybrid retrieval, signed webhooks, compensated external
 actions, budgets, fenced leases, replayable events and conflict-aware time travel.
 

@@ -119,7 +119,7 @@ def _render(slug: str, lang: str) -> str:
     return f"""<!doctype html>
 <html lang="{html_lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{_e(title)} · AgentGraph Docs</title>
+<title>{_e(title)} · Veynod Docs</title>
 <style>
 body{{margin:0;font:16px/1.6 system-ui,sans-serif;color:#1f2133;background:#fbfbfe}}
 header{{display:flex;gap:16px;align-items:center;justify-content:space-between;
@@ -132,7 +132,7 @@ padding:6px;text-align:left;vertical-align:top}}.callout{{border-left:4px solid 
 padding:8px 12px;background:#eef}}@media (max-width:720px){{main{{flex-direction:column}}}}
 </style></head><body>
 <a href="#content">{_e("Skip to content" if lang == "en" else "跳到正文")}</a>
-<header><strong>AgentGraph Docs</strong>
+<header><strong>Veynod Docs</strong>
 <span><a href="/docs/{_e(slug)}/?lang={other}">{switch}</a> ·
 <a href="/dashboard/">{_e("Console" if lang == "en" else "控制台")}</a></span></header>
 <main><nav aria-label="{_e("Documentation" if lang == "en" else "文档导航")}"><ul>{nav}</ul></nav>

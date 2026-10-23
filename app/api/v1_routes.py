@@ -138,7 +138,7 @@ from app.services import orientation as orientation_service
 from app.services import recall as recall_service
 from app.services import tasks as task_service
 
-router = APIRouter(prefix="/v1", tags=["AgentGraph v3"])
+router = APIRouter(prefix="/v1", tags=["Veynod v3"])
 
 
 def _statuses(value: str | None) -> list[str] | None:
@@ -313,7 +313,7 @@ async def agent_docs(
     paths = _agent_paths(openapi)
     base = str(request.base_url).rstrip("/")
     return {
-        "name": "AgentGraph",
+        "name": "Veynod",
         "version": openapi.get("info", {}).get("version"),
         "base_url": f"{base}/v1",
         "mcp_endpoint": f"{base}/mcp/",
@@ -1282,7 +1282,7 @@ async def update_task_acceptance(
 
 
 @router.post("/quality/claims", status_code=201,
-             summary="Report a change made outside AgentGraph (idempotent per ref and commit)")
+             summary="Report a change made outside Veynod (idempotent per ref and commit)")
 async def report_change_claim(
     body: q_schemas.ChangeClaimRequest,
     principal: Principal = Depends(get_principal),

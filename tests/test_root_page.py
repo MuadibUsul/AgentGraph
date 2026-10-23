@@ -8,7 +8,7 @@ TOOL_COUNT = len(ROOT_PRIMITIVES)
 
 def descriptor(dashboard: str | None = "/dashboard/") -> dict:
     return {
-        "name": "AgentGraph",
+        "name": "Veynod",
         "version": "3.2.1",
         "docs": "/docs",
         "health": "/healthz",

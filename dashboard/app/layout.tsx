@@ -6,7 +6,7 @@ import "./v3.css";
 import "./cult.css";
 
 export const metadata: Metadata = {
-  title: "AgentGraph Console",
+  title: "Veynod Console",
   description:
     "Human-in-the-loop shared blackboard for multi-agent teams: tasks, state grid, documents, agents and audit.",
 };

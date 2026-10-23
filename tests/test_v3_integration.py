@@ -1245,4 +1245,4 @@ async def test_dashboard_root_and_openapi(client):
     if out.exists():
         dashboard = await client.get("/dashboard/")
         assert dashboard.status_code == 200
-        assert "AgentGraph Console" in dashboard.text
+        assert "Veynod Console" in dashboard.text

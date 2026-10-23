@@ -1,12 +1,12 @@
-# AgentGraph 项目介绍、架构与路径
+# Veynod 项目介绍、架构与路径
 
 | 项 | 值 |
 |---|---|
 | 产品版本 | **v3.2.1** |
 | 数据库 schema | **3.26.0** |
-| 文档更新时间 | **2026-10-22** |
+| 文档更新时间 | **2026-10-23** |
 | 本地仓库 | `E:\Codes\AgentGraph` |
-| 生产地址 | `https://agentgraph.fusionpropulsion.space` |
+| 生产地址 | `https://veynod.com`（旧域名 `agentgraph.fusionpropulsion.space` 保留为备用） |
 | 远程仓库 | `MuadibUsul/AgentGraph`（private，`main`） |
 
 ---
@@ -15,7 +15,7 @@
 
 ### 1.1 一句话
 
-**AgentGraph 是一个面向多 Agent 团队的共享黑板（shared blackboard）和人机协作控制台。**
+**Veynod（原名 AgentGraph）是一个面向多 Agent 团队的共享黑板（shared blackboard）和人机协作控制台。**
 
 Agent 通过 REST 或 MCP 领取任务、读写共享状态与文档；人类通过 Web 控制台审批、修正、冻结关键状态、查看审计并撤销 Agent 的整批操作。它不是“再做一个聊天界面”，而是把多 Agent 协作中最容易失控的几件事做成存储层和服务层能力：
 
@@ -38,7 +38,7 @@ Agent 通过 REST 或 MCP 领取任务、读写共享状态与文档；人类通
 
 ### 1.3 要解决的问题
 
-| 问题 | AgentGraph 的机制 |
+| 问题 | Veynod 的机制 |
 |---|---|
 | **上下文爆炸** | L0 工作区地图 → L1 结构化 handoff brief → L2 文档 artifact，按需 `dereference` |
 | **并发覆盖 / 死锁** | 任务与状态槽 TTL 租约、心跳、数据库时钟、fencing token、后台 reaper |
@@ -55,7 +55,7 @@ Agent 通过 REST 或 MCP 领取任务、读写共享状态与文档；人类通
 
 ### 1.4 产品边界
 
-AgentGraph 目前**不是**：
+Veynod 目前**不是**：
 
 - 通用聊天机器人或 Agent 编排框架；
 - 只会做向量检索的“记忆数据库”；
@@ -79,11 +79,11 @@ AgentGraph 目前**不是**：
                 ▼                       ▼                          ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                         Caddy / TLS / 反向代理                               │
-│              agentgraph.fusionpropulsion.space → agentgraph-api:8000        │
+│              veynod.com → agentgraph-api:8000                              │
 └───────────────────────────────────┬──────────────────────────────────────────┘
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                         AgentGraph Gateway (FastAPI)                         │
+│                         Veynod Gateway (FastAPI)                         │
 │                                                                              │
 │  Middleware                                                                  │
 │  ─ RequestContext / X-Request-ID   ─ Protocol / AgentGraph-Version           │
@@ -864,14 +864,14 @@ python:3.12-slim
 | 服务器目录 | `/home/deploy/agentgraph` |
 | Compose | `docker-compose.prod.yml`（项目名 `agentgraph`） |
 | API 容器 | `agentgraph-api` |
-| 镜像 | `agentgraph:3.2.1`（内含当前 v3.26 schema 代码） |
+| 镜像 | `agentgraph:3.2.1-veynod`（内含当前 v3.26 schema 代码） |
 | 数据库 | 独立 `agentgraph_pgdata` 卷，不与其他项目共用 |
 | 网络 | 内部 `agentgraph_internal` + 共享 `web`；不发布宿主端口 |
-| 反向代理 | Caddy：`agentgraph.fusionpropulsion.space` → `agentgraph-api:8000` |
-| 备用域名 | `agentgraph.104-207-82-85.nip.io` |
-| 主控制台 | `https://agentgraph.fusionpropulsion.space/dashboard/` |
-| MCP | `https://agentgraph.fusionpropulsion.space/mcp/` |
-| 健康检查 | `https://agentgraph.fusionpropulsion.space/readyz` |
+| 反向代理 | Caddy：`veynod.com` → `agentgraph-api:8000` |
+| 备用域名 | `agentgraph.fusionpropulsion.space`、`agentgraph.104-207-82-85.nip.io` |
+| 主控制台 | `https://veynod.com/dashboard/` |
+| MCP | `https://veynod.com/mcp/` |
+| 健康检查 | `https://veynod.com/readyz` |
 | Admin Token | `/home/deploy/agentgraph/.env` 的 `ADMIN_TOKEN`，权限 600 |
 | 回滚镜像 | `agentgraph:pre-v3.15-rollback` |
 
@@ -1045,4 +1045,4 @@ ruff check .
 
 ---
 
-*AgentGraph v3.2.1 · schema 3.26.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*
+*Veynod v3.2.1 · schema 3.26.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*

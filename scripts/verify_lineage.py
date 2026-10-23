@@ -1,6 +1,6 @@
 """Reference verifier for lineage attestations (PRD AG-ID-08).
 
-Depends on nothing from AgentGraph: only the issuing tenant's public keys
+Depends on nothing from Veynod: only the issuing tenant's public keys
 (``GET /.well-known/agentgraph/tenants/<alias>/jwks.json``) and the
 ``cryptography`` package. It checks the EdDSA signature, the audience, the
 expiry and that every link of the chain grants a subset of the link above it.

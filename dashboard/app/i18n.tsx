@@ -115,8 +115,8 @@ const ZH: Record<string, string> = {
   "Create workspace": "新建工作区",
   "Control plane": "控制平面",
   "Connection": "连接设置",
-  "Connect to the AgentGraph API with the endpoint and admin token from your deployment.":
-    "使用部署的 API 地址和管理员令牌连接到 AgentGraph。",
+  "Connect to the Veynod API with the endpoint and admin token from your deployment.":
+    "使用部署的 API 地址和管理员令牌连接到 Veynod。",
   "API endpoint": "API 地址",
   "Admin token": "管理员令牌",
   "Connect to gateway": "连接到网关",
@@ -137,7 +137,7 @@ const ZH: Record<string, string> = {
   "No workspace selected": "未选择工作区",
   "Create a workspace to provision a shared blackboard for your agent team.":
     "创建一个工作区，为你的 Agent 团队提供共享黑板。",
-  "Connected to the AgentGraph control plane.": "已连接到 AgentGraph 控制平面。",
+  "Connected to the Veynod control plane.": "已连接到 Veynod 控制平面。",
   "Skip to workspace content": "跳到工作区内容",
   "Dismiss notification": "关闭通知",
   "Awaiting human review: {count}": "待人工审核：{count}",
@@ -519,7 +519,7 @@ const ZH: Record<string, string> = {
     "运维人员仍可在侧栏使用管理员令牌连接。",
   "Your session expired. Sign in again.": "登录已过期，请重新登录。",
   "Signed in as {email}.": "已登录：{email}",
-  "Workspace created. Welcome to AgentGraph.": "工作区已创建，欢迎使用 AgentGraph。",
+  "Workspace created. Welcome to Veynod.": "工作区已创建，欢迎使用 Veynod。",
   "Unable to sign in.": "无法登录。",
   "Google sign-in failed.": "Google 登录失败。",
   "Human-in-the-loop control plane": "人机共驾控制平面",
@@ -536,10 +536,10 @@ const ZH: Record<string, string> = {
   "Lease fencing": "租约围栏",
   "Immutable versions": "不可变版本",
   "Welcome back": "欢迎回来",
-  "Start your workspace": "创建你的工作区",
-  "Sign in to AgentGraph": "登录 AgentGraph",
+  "Continue to your workspace.": "继续进入你的工作区。",
   "Create your account": "创建账号",
-  "Your workspace is waiting on the other side.": "你的工作区正在另一边等你。",
+  "Show password": "显示密码",
+  "Hide password": "隐藏密码",
   "A free workspace, ready for your first agent team.": "免费工作区，准备好迎接你的第一支 Agent 团队。",
   "Create free workspace": "创建免费工作区",
   "Enter workspace": "进入工作区",
@@ -569,8 +569,8 @@ const ZH: Record<string, string> = {
   "User sign in": "用户登录",
   "Deployment operator": "部署运维",
   "Control-plane access": "控制平面入口",
-  "This door is for the operator of this AgentGraph deployment. It is separate from customer workspaces and never appears on the sign-in page.":
-    "这是本 AgentGraph 部署运维人员的入口，与客户工作区分离，不会出现在用户登录页。",
+  "This door is for the operator of this Veynod deployment. It is separate from customer workspaces and never appears on the sign-in page.":
+    "这是本 Veynod 部署运维人员的入口，与客户工作区分离，不会出现在用户登录页。",
   "The admin token stays in this browser.": "管理员令牌只保存在当前浏览器。",
   "It is never written to the repository or application logs.": "不会写入代码仓库或应用日志。",
   "Customer accounts use email or Google sign-in.": "客户账号使用邮箱或 Google 登录。",
@@ -778,7 +778,7 @@ const ZH: Record<string, string> = {
   "Review feedback": "审核反馈",
   "Reviewer": "审核人",
   // Docs site, getting started and agent onboarding
-  "AgentGraph Docs": "AgentGraph 文档",
+  "Veynod Docs": "Veynod 文档",
   "Skip to content": "跳到正文",
   "Docs": "文档",
   "Close menu": "关闭菜单",

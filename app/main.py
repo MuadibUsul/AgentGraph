@@ -1,4 +1,4 @@
-"""AgentGraph FastAPI gateway: REST, admin API, MCP mount, health."""
+"""Veynod FastAPI gateway: REST, admin API, MCP mount, health."""
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ async def lifespan(app: FastAPI):
         if settings.mcp_enabled:
             async with mcp.session_manager.run():
                 logger.info(
-                    "AgentGraph %s ready (embedding=%s, mcp=/mcp)",
+                    "Veynod %s ready (embedding=%s, mcp=/mcp)",
                     settings.app_version,
                     settings.embedding_provider,
                 )
@@ -161,7 +161,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AgentGraph — Human-in-the-Loop Shared Blackboard",
+    title="Veynod — Human-in-the-Loop Shared Blackboard",
     version=settings.app_version,
     description=(
         "A multi-agent shared workspace with TTL task leases, progressive "
@@ -382,7 +382,7 @@ def _require_docs_auth(
         raise HTTPException(
             status_code=401,
             detail="API docs require the admin token (HTTP Basic password)",
-            headers={"WWW-Authenticate": 'Basic realm="AgentGraph docs"'},
+            headers={"WWW-Authenticate": 'Basic realm="Veynod docs"'},
         )
 
 

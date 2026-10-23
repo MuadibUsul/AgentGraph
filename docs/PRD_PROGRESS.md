@@ -124,7 +124,7 @@ implemented with acceptance tests in `tests/`; deviations are listed.
 
 Not started: AG-CO-10 (waits for a product decision), AG-CO-11 (deferred by the PRD), AG-CO-09 beyond the reserved `room_id`.
 
-## Field feedback (2026-10-22/23 retests on AgentGraph)
+## Field feedback (2026-10-22/23 retests on Veynod)
 
 | Item | Status | Notes |
 |---|---|---|

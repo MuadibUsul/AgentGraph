@@ -22,7 +22,7 @@ export function DocsView({ slug }: { slug: string }) {
   const next = index >= 0 && index < flat.length - 1 ? flat[index + 1] : null;
 
   useEffect(() => {
-    document.title = `${pageTitle(slug, lang)} · ${t("AgentGraph Docs")}`;
+    document.title = `${pageTitle(slug, lang)} · ${t("Veynod Docs")}`;
   }, [slug, lang, t]);
 
   useEffect(() => {
@@ -40,7 +40,7 @@ export function DocsView({ slug }: { slug: string }) {
       <header className="docs-header">
         <a className="docs-brand" href="/docs/">
           <span className="brand-mark"><IconGraph size={18} /></span>
-          <span>AgentGraph <span className="docs-brand-sub">{t("Docs")}</span></span>
+          <span>Veynod <span className="docs-brand-sub">{t("Docs")}</span></span>
         </a>
         <button
           type="button"

@@ -13,7 +13,7 @@ export function generateStaticParams() {
 
 export function generateMetadata({ params }: { params: { slug: string } }): Metadata {
   return {
-    title: `${pageTitle(params.slug)} · AgentGraph Docs`,
+    title: `${pageTitle(params.slug)} · Veynod Docs`,
     description: site.pages[params.slug]?.summary.en,
   };
 }
