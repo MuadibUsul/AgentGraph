@@ -138,9 +138,13 @@ async def flush() -> int:
         async with async_session_factory() as session:
             for (workspace_id, key, minute), values in batch.items():
                 await session.execute(
+                    # A workspace deleted since the request was counted drops
+                    # its bucket instead of failing (and re-queuing) the batch.
                     text("INSERT INTO principal_metrics (workspace_id, principal_key, minute, "
-                         + ", ".join(FIELDS) + ") VALUES (:ws, :key, :minute, "
-                         + ", ".join(f":{field}" for field in FIELDS) + ") ON CONFLICT "
+                         + ", ".join(FIELDS) + ") SELECT :ws, :key, :minute, "
+                         + ", ".join(f":{field}" for field in FIELDS)
+                         + " WHERE EXISTS (SELECT 1 FROM workspaces WHERE id = CAST(:ws AS uuid))"
+                         " ON CONFLICT "
                          "(workspace_id, principal_key, minute) DO UPDATE SET "
                          + ", ".join(f"{field} = principal_metrics.{field} + EXCLUDED.{field}"
                                      for field in FIELDS)),
