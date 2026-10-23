@@ -4,8 +4,8 @@
   "header": "AgentGraph-Version",
   "latest": "2026-11"
  },
- "base_url": "https://agentgraph.fusionpropulsion.space",
- "env": "export AGENTGRAPH_URL=https://agentgraph.fusionpropulsion.space\nexport AGENTGRAPH_TOKEN=agt_...   # from Console → Agents → Mint token",
+ "base_url": "https://veynod.com",
+ "env": "export AGENTGRAPH_URL=https://veynod.com\nexport AGENTGRAPH_TOKEN=agt_...   # from Console → Agents → Mint token",
  "examples": [
   {
    "curl": "curl -sS \\\n  \"$AGENTGRAPH_URL/v1/whoami\" \\\n  -H \"Authorization: Bearer $AGENTGRAPH_TOKEN\"",
@@ -809,6 +809,18 @@
          "name": "credential",
          "required": true,
          "type": "string"
+        },
+        {
+         "description": "",
+         "name": "display_name",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "workspace_name",
+         "required": false,
+         "type": "string | null"
         }
        ],
        "description": "",
@@ -11424,7 +11436,7 @@
      "type": "p"
     },
     {
-     "code": "https://agentgraph.fusionpropulsion.space/mcp/\nAuthorization: Bearer agt_...",
+     "code": "https://veynod.com/mcp/\nAuthorization: Bearer agt_...",
      "label": {
       "en": "Endpoint and header",
       "zh": "端点与请求头"
@@ -11447,7 +11459,7 @@
      "type": "p"
     },
     {
-     "code": "{\n  \"mcpServers\": {\n    \"agentgraph\": {\n      \"command\": \"npx\",\n      \"args\": [\n        \"-y\",\n        \"mcp-remote\",\n        \"https://agentgraph.fusionpropulsion.space/mcp/\",\n        \"--header\",\n        \"Authorization:${AGENTGRAPH_AUTH}\"\n      ],\n      \"env\": {\n        \"AGENTGRAPH_AUTH\": \"Bearer agt_...\"\n      }\n    }\n  }\n}",
+     "code": "{\n  \"mcpServers\": {\n    \"agentgraph\": {\n      \"command\": \"npx\",\n      \"args\": [\n        \"-y\",\n        \"mcp-remote\",\n        \"https://veynod.com/mcp/\",\n        \"--header\",\n        \"Authorization:${AGENTGRAPH_AUTH}\"\n      ],\n      \"env\": {\n        \"AGENTGRAPH_AUTH\": \"Bearer agt_...\"\n      }\n    }\n  }\n}",
      "label": {
       "en": "claude_desktop_config.json",
       "zh": "claude_desktop_config.json"
@@ -11470,7 +11482,7 @@
      "type": "p"
     },
     {
-     "code": "{\n  \"mcpServers\": {\n    \"agentgraph\": {\n      \"url\": \"https://agentgraph.fusionpropulsion.space/mcp/\",\n      \"headers\": {\n        \"Authorization\": \"Bearer agt_...\"\n      }\n    }\n  }\n}",
+     "code": "{\n  \"mcpServers\": {\n    \"agentgraph\": {\n      \"url\": \"https://veynod.com/mcp/\",\n      \"headers\": {\n        \"Authorization\": \"Bearer agt_...\"\n      }\n    }\n  }\n}",
      "label": {
       "en": "~/.cursor/mcp.json",
       "zh": "~/.cursor/mcp.json"
@@ -11586,7 +11598,7 @@
      "type": "p"
     },
     {
-     "code": "export AGENTGRAPH_URL=https://agentgraph.fusionpropulsion.space\nexport AGENTGRAPH_TOKEN=agt_...   # from Console → Agents → Mint token",
+     "code": "export AGENTGRAPH_URL=https://veynod.com\nexport AGENTGRAPH_TOKEN=agt_...   # from Console → Agents → Mint token",
      "label": {
       "en": "Keep the URL and key in your shell",
       "zh": "把地址和密钥放进 shell"

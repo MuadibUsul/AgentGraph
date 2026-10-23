@@ -4,9 +4,9 @@
 |---|---|
 | 产品版本 | **v3.2.1** |
 | 数据库 schema | **3.26.0** |
-| 文档更新时间 | **2026-10-22** |
+| 文档更新时间 | **2026-10-23** |
 | 本地仓库 | `E:\Codes\AgentGraph` |
-| 生产地址 | `https://agentgraph.fusionpropulsion.space` |
+| 生产地址 | `https://veynod.com`（旧域名 `agentgraph.fusionpropulsion.space` 保留为备用） |
 | 远程仓库 | `MuadibUsul/AgentGraph`（private，`main`） |
 
 ---
@@ -79,7 +79,7 @@ AgentGraph 目前**不是**：
                 ▼                       ▼                          ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                         Caddy / TLS / 反向代理                               │
-│              agentgraph.fusionpropulsion.space → agentgraph-api:8000        │
+│              veynod.com → agentgraph-api:8000                              │
 └───────────────────────────────────┬──────────────────────────────────────────┘
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -864,14 +864,14 @@ python:3.12-slim
 | 服务器目录 | `/home/deploy/agentgraph` |
 | Compose | `docker-compose.prod.yml`（项目名 `agentgraph`） |
 | API 容器 | `agentgraph-api` |
-| 镜像 | `agentgraph:3.2.1`（内含当前 v3.26 schema 代码） |
+| 镜像 | `agentgraph:3.2.1-veynod`（内含当前 v3.26 schema 代码） |
 | 数据库 | 独立 `agentgraph_pgdata` 卷，不与其他项目共用 |
 | 网络 | 内部 `agentgraph_internal` + 共享 `web`；不发布宿主端口 |
-| 反向代理 | Caddy：`agentgraph.fusionpropulsion.space` → `agentgraph-api:8000` |
-| 备用域名 | `agentgraph.104-207-82-85.nip.io` |
-| 主控制台 | `https://agentgraph.fusionpropulsion.space/dashboard/` |
-| MCP | `https://agentgraph.fusionpropulsion.space/mcp/` |
-| 健康检查 | `https://agentgraph.fusionpropulsion.space/readyz` |
+| 反向代理 | Caddy：`veynod.com` → `agentgraph-api:8000` |
+| 备用域名 | `agentgraph.fusionpropulsion.space`、`agentgraph.104-207-82-85.nip.io` |
+| 主控制台 | `https://veynod.com/dashboard/` |
+| MCP | `https://veynod.com/mcp/` |
+| 健康检查 | `https://veynod.com/readyz` |
 | Admin Token | `/home/deploy/agentgraph/.env` 的 `ADMIN_TOKEN`，权限 600 |
 | 回滚镜像 | `agentgraph:pre-v3.15-rollback` |
 

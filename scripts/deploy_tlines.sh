@@ -18,7 +18,7 @@ set -euo pipefail
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 API_CONTAINER="${API_CONTAINER:-agentgraph-api}"
-PUBLIC_URL="${PUBLIC_URL:-https://agentgraph.fusionpropulsion.space}"
+PUBLIC_URL="${PUBLIC_URL:-https://veynod.com}"
 BACKUP_DIR="${BACKUP_DIR:-backups}"
 EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.32.0}"
 
