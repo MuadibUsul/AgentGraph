@@ -750,7 +750,8 @@ class AgentTokenUpdateRequest(StrictModel):
     )
     can_issue: bool | None = Field(
         default=None,
-        description="Allow this token to issue child tokens (when the server enables child-token issuance)",
+        description="Allow this token to issue child tokens "
+                    "(when the server enables child-token issuance)",
     )
     max_descendants: int | None = Field(
         default=None, ge=0, le=10_000,
@@ -1229,6 +1230,16 @@ class TokenIssueRequest(StrictModel):
 class TokenRevokeRequest(StrictModel):
     reason: str = Field(min_length=1, max_length=500)
     taint_writes_since: datetime | None = None
+    keep_self: bool = Field(
+        default=False,
+        description="Revoke only what this token delegated (every generation below it); "
+                    "the token itself keeps working",
+    )
+
+
+class DelegatedRevokeRequest(StrictModel):
+    reason: str = Field(default="delegation taken back from the console",
+                        min_length=1, max_length=500)
 
 
 class TokenRenewRequest(StrictModel):

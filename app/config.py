@@ -186,6 +186,12 @@ class Settings(BaseSettings):
     # e-mails or @domains, e.g. "me@example.com,@veynod.com".
     metrics_internal_emails: str = ""
 
+    # Agent-delegated tokens (depth 2+): default lifetime when the issuer
+    # asks for none (the workspace policy token_max_ttl_seconds still caps
+    # it), and how long expired or revoked ones are kept before purging.
+    delegated_token_default_ttl_seconds: int = Field(default=3_600, ge=60, le=72 * 3_600)
+    delegated_token_retention_days: int = Field(default=7, ge=1, le=365)
+
     # ---------------------------------------------------------- row security
     rls_enabled: bool = True
     rls_role: str = "agentgraph_app"

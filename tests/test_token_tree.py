@@ -481,3 +481,59 @@ async def test_console_lists_people_issued_tokens_and_folds_delegated_ones(tree)
 
     overview = (await client.get("/v1/human/agent-onboarding", headers=ws["human"])).json()
     assert overview["summary"]["tokens"] == body["human_issued"]
+
+
+@pytest.mark.integration
+async def test_agents_narrow_roles_and_take_delegations_back(tree):
+    """Delegation without capability tokens: lower roles, short lives, one-call take-back."""
+    client = tree
+    ws = await _workspace(client)
+    lead = await _issued(client, ws["root"], role_scope="EXECUTOR",
+                         scopes=["docs:read", "docs:write", "tasks:read", "token:issue"],
+                         max_descendants=10)
+
+    scout = await _issued(client, lead["headers"], role_scope="SCOUT", scopes=["docs:read"])
+    assert scout["role_scope"] == "SCOUT"
+    lives = datetime.fromisoformat(scout["expires_at"]) - datetime.now(timezone.utc)
+    assert 0.95 * 3_600 < lives.total_seconds() <= 3_600  # default: one hour
+    auditor = await _issue(client, lead["headers"], role_scope="AUDITOR", scopes=["docs:read"])
+    assert auditor.status_code == 403
+    assert auditor.json()["error"]["code"] == "scope_escalation"
+    assert "SCOUT" in auditor.json()["error"]["details"]["allowed_roles"]
+
+    helper = await _issued(client, lead["headers"], scopes=["docs:read"])
+    taken = await client.post(f"/v1/tokens/{lead['token_id']}/revoke", headers=lead["headers"],
+                              json={"reason": "task finished", "keep_self": True})
+    assert taken.status_code == 200, taken.text
+    assert set(taken.json()["revoked"]) == {scout["token_id"], helper["token_id"]}
+    assert taken.json()["kept"] == lead["token_id"]
+    assert (await client.get("/v1/documents", headers=lead["headers"])).status_code == 200
+    assert (await client.get("/v1/documents", headers=helper["headers"])).status_code == 401
+
+    # The console does the same by row id.
+    again = await _issued(client, lead["headers"], scopes=["docs:read"])
+    row = (await client.get("/v1/human/agent-tokens", headers=ws["human"])).json()
+    lead_row = next(item for item in row["items"] if item["canonical_id"] == lead["token_id"])
+    assert lead_row["delegated_active"] == 1
+    console = await client.post(f"/v1/human/agent-tokens/{lead_row['id']}/revoke-delegated",
+                                headers=ws["human"], json={})
+    assert console.status_code == 200, console.text
+    assert console.json()["revoked"] == [again["token_id"]]
+
+    # Long-dead delegated tokens are purged; people-issued ones never are.
+    conn = await asyncpg.connect(_dsn())
+    try:
+        await conn.execute("UPDATE agent_tokens SET revoked_at = NOW() - INTERVAL '8 days' "
+                           "WHERE canonical_id = ANY($1::text[])",
+                           [scout["token_id"], helper["token_id"]])
+        await conn.execute("UPDATE agent_tokens SET revoked_at = NOW() - INTERVAL '8 days', "
+                           "is_active = FALSE WHERE canonical_id = $1", lead["token_id"])
+        from app.services.token_tree import purge_stale_delegated
+
+        assert await purge_stale_delegated(force=True) >= 2
+        left = await conn.fetch("SELECT canonical_id FROM agent_tokens WHERE canonical_id = "
+                                "ANY($1::text[])", [scout["token_id"], helper["token_id"],
+                                                    again["token_id"], lead["token_id"]])
+    finally:
+        await conn.close()
+    assert {row["canonical_id"] for row in left} == {again["token_id"], lead["token_id"]}

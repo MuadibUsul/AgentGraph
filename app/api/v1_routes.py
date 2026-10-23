@@ -832,7 +832,8 @@ async def issue_child_token(
 
 
 @router.post("/tokens/{ref}/revoke",
-             summary="Revoke a token and its whole subtree (optionally taint their writes)")
+             summary="Revoke a token and its whole subtree, or with keep_self only what it "
+                     "delegated (optionally taint their writes)")
 async def revoke_token(
     ref: str,
     body: TokenRevokeRequest,
@@ -840,7 +841,8 @@ async def revoke_token(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     return await token_tree.revoke_token(session, principal, ref, reason=body.reason,
-                                         taint_writes_since=body.taint_writes_since)
+                                         taint_writes_since=body.taint_writes_since,
+                                         keep_self=body.keep_self)
 
 
 @router.post("/tokens/{ref}/renew", summary="Renew a token (its parent or an ancestor renews)")

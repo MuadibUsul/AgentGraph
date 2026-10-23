@@ -3219,6 +3219,33 @@
        "body": [
         {
          "description": "",
+         "name": "reason",
+         "required": false,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "token_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/human/agent-tokens/{token_id}/revoke-delegated",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Take back every token this agent delegated; the agent's own token keeps working"
+      },
+      {
+       "body": [
+        {
+         "description": "",
          "name": "legacy",
          "required": true,
          "type": "string"
@@ -8942,6 +8969,12 @@
          "name": "taint_writes_since",
          "required": false,
          "type": "string | null"
+        },
+        {
+         "description": "Revoke only what this token delegated (every generation below it); the token itself keeps working",
+         "name": "keep_self",
+         "required": false,
+         "type": "boolean"
         }
        ],
        "description": "",
@@ -8960,7 +8993,7 @@
         "200",
         "422"
        ],
-       "summary": "Revoke a token and its whole subtree (optionally taint their writes)"
+       "summary": "Revoke a token and its whole subtree, or with keep_self only what it delegated (optionally taint their writes)"
       },
       {
        "body": [],

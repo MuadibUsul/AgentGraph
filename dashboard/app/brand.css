@@ -463,3 +463,11 @@
 }
 
 .delegated-list code { font-family: var(--ds-font-mono); font-size: 11.5px; }
+
+.delegated-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 8px 34px;
+}

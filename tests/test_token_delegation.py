@@ -108,7 +108,7 @@ async def test_bad_deltas_are_refused(tree):  # noqa: F811
 
 
 async def test_children_inherit_removals_and_live_shorter(tree):  # noqa: F811
-    """A removal on a branch reaches every child it issues; children default to 12 hours."""
+    """A removal on a branch reaches every child it issues; children default to 1 hour."""
     client = tree
     ws = await _workspace(client)
     branch = await _issued(client, ws["root"], role_scope="AUDITOR",
@@ -124,7 +124,7 @@ async def test_children_inherit_removals_and_live_shorter(tree):  # noqa: F811
     assert "proposal:vote" not in view["effective_permissions"]
     assert "doc:propose" in view["effective_permissions"]
     lives = (datetime.fromisoformat(child["expires_at"]) - datetime.now(timezone.utc))
-    assert 11.9 * 3_600 < lives.total_seconds() <= 12 * 3_600
+    assert 0.95 * 3_600 < lives.total_seconds() <= 3_600
 
     too_long = await _issue(client, branch["headers"], scopes=["docs:read"],
                             ttl_seconds=73 * 3_600)

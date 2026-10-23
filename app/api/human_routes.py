@@ -160,6 +160,21 @@ async def update_agent_token(
     return agent_token_out(token)
 
 
+@router.post(
+    "/agent-tokens/{token_id}/revoke-delegated",
+    summary="Take back every token this agent delegated; the agent's own token keeps working",
+)
+async def revoke_delegated_tokens(
+    token_id: uuid.UUID,
+    body: q_schemas.DelegatedRevokeRequest,
+    principal: Principal = Depends(_owner),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import token_tree
+
+    return await token_tree.revoke_delegated(session, principal, token_id, reason=body.reason)
+
+
 @router.get(
     "/workspace",
     response_model=WorkspaceStatsResponse,

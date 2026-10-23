@@ -201,14 +201,24 @@ async def _findings(session: AsyncSession) -> list[dict[str, Any]]:
             id=row["canonical_id"], conflicts_total=row["conflicts_total"], contended=True)
     for row in (await session.execute(text(
             "WITH spend AS (SELECT workspace_id, metadata->>'principal_key' AS principal, "
-            "sum(amount) AS used FROM usage_ledger WHERE category = 'embedding_tokens' AND "
+            "sum(amount) AS used, "
+            "sum(amount) FILTER (WHERE metadata->>'kind' = 'chunks') AS indexing, "
+            "sum(amount) FILTER (WHERE metadata->>'kind' = 'query') AS queries "
+            "FROM usage_ledger WHERE category = 'embedding_tokens' AND "
             "created_at >= date_trunc('day', NOW()) GROUP BY 1, 2), total AS (SELECT "
             "workspace_id, sum(used) AS used FROM spend GROUP BY 1) SELECT s.workspace_id, "
-            "s.principal, s.used, t.used AS total FROM spend s JOIN total t USING "
-            "(workspace_id) WHERE s.principal IS NOT NULL AND t.used >= 10000 AND "
-            "s.used >= 0.4 * t.used"))).mappings():
+            "s.principal, s.used, s.indexing, s.queries, t.used AS total FROM spend s "
+            "JOIN total t USING (workspace_id) WHERE s.principal IS NOT NULL "
+            # Platform work (index rebuilds) is not an agent's anomaly.
+            "AND s.principal NOT LIKE 'system%' AND s.principal <> 'admin' "
+            "AND t.used >= 10000 AND s.used >= 0.4 * t.used"))).mappings():
+        # The breakdown says whether the agent searched a lot or its documents
+        # were (re)indexed: indexing runs after the write, sometimes a day
+        # later when the quota deferred it.
         add("cost_anomaly", row["workspace_id"], "principal", row["principal"],
-            embedding_tokens=float(row["used"]), workspace_total=float(row["total"]))
+            embedding_tokens=float(row["used"]), workspace_total=float(row["total"]),
+            indexing_tokens=float(row["indexing"] or 0),
+            query_tokens=float(row["queries"] or 0))
     for row in (await session.execute(text(
             "SELECT workspace_id, principal_key, reason FROM budget_circuits WHERE "
             "cleared_at IS NULL AND reopen_at > NOW()"))).mappings():

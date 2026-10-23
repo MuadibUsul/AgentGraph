@@ -36,6 +36,7 @@ from app.schemas import (
     BudgetUpdateRequest,
     ChildTenantCreateRequest,
     CreateWorkspaceRequest,
+    DelegatedRevokeRequest,
     DocumentHumanUpdateRequest,
     DocumentListResponse,
     DocumentMutationResponse,
@@ -613,6 +614,23 @@ async def create_agent_token(
 ) -> AgentTokenCreatedResponse:
     workspace = await services.get_workspace(session, workspace_id)
     return await services.create_agent_token(session, workspace, body)
+
+
+@router.post(
+    "/workspaces/{workspace_id}/agent-tokens/{token_id}/revoke-delegated",
+    summary="Take back every token this agent delegated; the agent's own token keeps working",
+)
+async def revoke_delegated_tokens(
+    workspace_id: uuid.UUID,
+    token_id: uuid.UUID,
+    body: DelegatedRevokeRequest,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import token_tree
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await token_tree.revoke_delegated(
+        session, principal_for_admin(workspace), token_id, reason=body.reason)
 
 
 @router.post(

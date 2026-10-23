@@ -2725,20 +2725,24 @@ async def issue_child_token(
 
 @mcp.tool(name="revoke_token")
 async def revoke_token(
-    token_id: str, reason: str, taint_writes_since: datetime | None = None
+    token_id: str, reason: str, taint_writes_since: datetime | None = None,
+    keep_self: bool = False,
 ) -> dict[str, Any]:
-    """Revoke a token and its whole subtree at once (no non-cascading option).
+    """Revoke a token and its whole subtree at once.
 
     Callable by the token itself, any ancestor, or a human. Leases the subtree
     held go back to the board; with taint_writes_since, everything the subtree
     wrote since then is tainted and the taint follows references downstream.
+    keep_self=true takes back only what the token delegated (every generation
+    below it) and leaves the token itself working: pass your own token_id to
+    end all your delegations in one call.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
             result = await token_tree.revoke_token(
                 session, principal, token_id, reason=reason,
-                taint_writes_since=taint_writes_since)
+                taint_writes_since=taint_writes_since, keep_self=keep_self)
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)

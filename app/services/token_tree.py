@@ -46,8 +46,10 @@ from app.warnings_context import add_warning
 settings = get_settings()
 
 ROOT_KEY_PREFIX = "agr_"
-# Token delegation 1.0 (T-2, T-3): children live 12 hours by default, 72 at most.
-CHILD_TTL_DEFAULT = 12 * 3_600
+# Token delegation 1.0 (T-3): children live 72 hours at most. Their default
+# lifetime is DELEGATED_TOKEN_DEFAULT_TTL_SECONDS (1 hour; T-2 had 12 hours):
+# delegation is for a task or a session, and expiry is how it is taken back.
+CHILD_TTL_DEFAULT = settings.delegated_token_default_ttl_seconds
 CHILD_TTL_MAX = 72 * 3_600
 BRANCH_TTL_DEFAULT = 30 * 86_400
 BRANCH_TTL_MAX = 90 * 86_400
@@ -177,6 +179,12 @@ def _namespaces_extra(requested: list[str], allowed: list[str]) -> list[str]:
     if "*" in requested:
         return ["*"]
     return sorted(set(requested) - set(allowed))
+
+
+def _roles_within(role: str) -> list[str]:
+    """Roles whose permissions are all held by ``role`` (what it may delegate)."""
+    mine = PERMISSIONS[RoleScope(role)]
+    return [item.value for item in AgentRole if PERMISSIONS[RoleScope(item.value)] <= mine]
 
 
 def _role_for(scopes: list[str], parent: Principal) -> AgentRole:
@@ -404,9 +412,18 @@ async def issue_child_token(
 
     role = AgentRole(request["role_scope"]) if request.get("role_scope") else _role_for(
         scopes, principal)
-    if principal.auth_kind is AuthKind.AGENT and role.value != principal.role.value:
-        raise ApiError(403, "scope_escalation", "a child token keeps its issuer's role",
-                       details={"requested_extra": [], "role_scope": principal.role.value})
+    # An agent may hand a child its own role or a narrower one (EXECUTOR may
+    # issue ANALYST or SCOUT), never a role with any permission it lacks.
+    if principal.auth_kind is AuthKind.AGENT and not (
+        PERMISSIONS[RoleScope(role.value)] <= PERMISSIONS[RoleScope(principal.role.value)]
+    ):
+        raise ApiError(403, "scope_escalation",
+                       "a child token keeps or narrows its issuer's role",
+                       details={"requested_extra": sorted(
+                                    PERMISSIONS[RoleScope(role.value)]
+                                    - PERMISSIONS[RoleScope(principal.role.value)]),
+                                "role_scope": principal.role.value,
+                                "allowed_roles": _roles_within(principal.role.value)})
     raw_key = generate_agent_key()
     token = AgentToken(
         workspace_id=workspace.id,
@@ -505,8 +522,14 @@ def _may_manage(principal: Principal, token: AgentToken, *, allow_self: bool) ->
 
 async def revoke_token(
     session: AsyncSession, principal: Principal, token_id: str, *, reason: str,
-    taint_writes_since: datetime | None = None,
+    taint_writes_since: datetime | None = None, keep_self: bool = False,
 ) -> dict[str, Any]:
+    """Revoke a token and its whole subtree.
+
+    With ``keep_self`` only what the token delegated is revoked (every
+    generation below it) and the token itself keeps working: one call takes
+    a delegation back without re-issuing the agent's own identity.
+    """
     if not reason or not reason.strip() or len(reason) > 500:
         raise ApiError(422, "validation_error", "a reason (at most 500 characters) is required",
                        details={"field": "reason"})
@@ -523,7 +546,9 @@ async def revoke_token(
             .order_by(AgentToken.depth)
         )
     ).scalars().all()
-    if target not in subtree and target.revoked_at is None:
+    if keep_self:
+        subtree = [token for token in subtree if token.id != target.id]
+    elif target not in subtree and target.revoked_at is None:
         subtree = [target, *subtree]
     from app.services.leases import revoke_holder
 
@@ -544,7 +569,7 @@ async def revoke_token(
     await append_event(session, workspace_id=workspace.id, agent="tokens",
                        event_type="TOKEN_REVOKED",
                        payload={"token_id": target.canonical_id, "count": len(ids),
-                                "reason": reason.strip(),
+                                "reason": reason.strip(), "kept_self": keep_self,
                                 "targets": sorted(set(await _humans(session, workspace.id)
                                                       + ([f"agent:{issuer}"] if issuer else [])))})
     from app.services import directory
@@ -553,7 +578,19 @@ async def revoke_token(
                                                           for token in subtree])
     await session.commit()
     return {"revoked": ids, "count": len(ids), "revoked_at": now,
+            "kept": target.canonical_id if keep_self else None,
             "released_leases": released, "tainted_documents": tainted}
+
+
+async def revoke_delegated(
+    session: AsyncSession, principal: Principal, row_id: uuid.UUID, *, reason: str,
+) -> dict[str, Any]:
+    """Console path: take back everything a token delegated, by its row id."""
+    token = await session.get(AgentToken, row_id)
+    if token is None or token.workspace_id != principal.workspace.id:
+        raise NotFound("agent_token")
+    return await revoke_token(session, principal, token.canonical_id, reason=reason,
+                              keep_self=True)
 
 
 async def revoke_subtrees(session: AsyncSession, tenant_id: str, token_ids: list[str], *,
@@ -692,3 +729,36 @@ async def still_valid(principal: Principal) -> None:
                        details={"revoked_at": row[0].isoformat() if row and row[0] else None,
                                 "revoked_ancestor": (row[1] or row[2]) if row else None},
                        headers={"WWW-Authenticate": "Bearer"})
+
+
+_last_purge: datetime | None = None
+
+
+async def purge_stale_delegated(*, force: bool = False) -> int:
+    """Delete agent-delegated tokens that expired or were revoked long ago.
+
+    Only depth 2+ rows (people-issued tokens are never purged), only after
+    DELEGATED_TOKEN_RETENTION_DAYS, and never a token with a live descendant.
+    Their audit trail stays: events and stamps carry the canonical id and the
+    agent label, not a reference to this row. Runs at most hourly.
+    """
+    global _last_purge
+    now = _now()
+    if not force and _last_purge is not None and now - _last_purge < timedelta(hours=1):
+        return 0
+    _last_purge = now
+    cutoff = now - timedelta(days=settings.delegated_token_retention_days)
+    async with async_session_factory() as session:
+        result = await session.execute(
+            text(
+                "DELETE FROM agent_tokens t WHERE t.depth > 1 "
+                "AND (t.revoked_at < :cutoff OR t.expires_at < :cutoff) "
+                "AND NOT EXISTS (SELECT 1 FROM agent_tokens d "
+                "  WHERE d.workspace_id = t.workspace_id AND d.id <> t.id "
+                "  AND t.canonical_id = ANY(d.lineage) AND d.revoked_at IS NULL "
+                "  AND (d.expires_at IS NULL OR d.expires_at >= :cutoff))"
+            ),
+            {"cutoff": cutoff},
+        )
+        await session.commit()
+    return int(result.rowcount or 0)
