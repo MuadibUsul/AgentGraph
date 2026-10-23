@@ -324,6 +324,8 @@ def agent_token_out(token: AgentToken) -> AgentTokenOut:
         monthly_token_budget=token.monthly_token_budget,
         scope_add=list(token.scope_add or []),
         scope_remove=list(token.scope_remove or []),
+        can_issue=bool(token.can_issue),
+        max_descendants=int(token.max_descendants or 0),
     )
 
 

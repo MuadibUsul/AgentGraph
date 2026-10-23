@@ -801,6 +801,12 @@ async def update_agent_token(
         token.monthly_token_budget = request.monthly_token_budget
     if request.scope_add is not None or request.scope_remove is not None:
         _apply_delta(token, request.scope_add, request.scope_remove)
+    if request.can_issue is not None:
+        token.can_issue = request.can_issue
+        if not request.can_issue:
+            token.max_descendants = 0
+    if request.max_descendants is not None:
+        token.max_descendants = request.max_descendants
     grant_changed = any(
         value is not None
         for value in (
@@ -812,6 +818,8 @@ async def update_agent_token(
             request.monthly_token_budget,
             request.scope_add,
             request.scope_remove,
+            request.can_issue,
+            request.max_descendants,
         )
     )
     if grant_changed:

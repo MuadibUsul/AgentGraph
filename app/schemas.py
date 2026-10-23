@@ -748,6 +748,14 @@ class AgentTokenUpdateRequest(StrictModel):
         default=None, max_length=50,
         description="Permissions removed from the role package (e.g. proposal:vote)",
     )
+    can_issue: bool | None = Field(
+        default=None,
+        description="Allow this token to issue child tokens (requires CHILD_TOKEN_ISSUANCE)",
+    )
+    max_descendants: int | None = Field(
+        default=None, ge=0, le=10_000,
+        description="How many live descendants this token may create",
+    )
 
     @field_validator("agent_signature")
     @classmethod
@@ -773,6 +781,8 @@ class AgentTokenUpdateRequest(StrictModel):
                 self.monthly_token_budget,
                 self.scope_add,
                 self.scope_remove,
+                self.can_issue,
+                self.max_descendants,
             )
         ):
             raise ValueError("at least one token field is required")
@@ -1864,6 +1874,8 @@ class AgentTokenOut(BaseModel):
     revoked_at: datetime | None = None
     scope_add: list[str] = Field(default_factory=list)
     scope_remove: list[str] = Field(default_factory=list)
+    can_issue: bool = False
+    max_descendants: int = 0
     per_minute_limit: int | None = None
     monthly_token_budget: int | None = None
 
