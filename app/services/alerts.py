@@ -59,7 +59,7 @@ async def raise_alert(
             await queue_email(
                 session,
                 to=settings.platform_admin_email,
-                subject=f"[AgentGraph {severity}] {message[:180]}",
+                subject=f"[Veynod {severity}] {message[:180]}",
                 body=f"{message}\n\n{json.dumps(details or {}, indent=2, default=str)}",
                 ref=row["id"],
             )

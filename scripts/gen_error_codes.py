@@ -24,7 +24,7 @@ TARGET = ROOT / "docs" / "ERROR_CODES.md"
 
 def render() -> str:
     lines = [
-        "# AgentGraph error codes",
+        "# Veynod error codes",
         "",
         "Generated from `app/error_registry.py` by `scripts/gen_error_codes.py`;",
         "do not edit by hand. Every error body is",

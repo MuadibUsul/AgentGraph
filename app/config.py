@@ -1,4 +1,4 @@
-"""Application configuration for AgentGraph v3.2.1."""
+"""Application configuration for Veynod v3.2.1."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------ app
-    app_name: str = "AgentGraph"
+    app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
     app_version: str = "3.5.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
@@ -139,7 +139,7 @@ class Settings(BaseSettings):
     smtp_port: int = Field(default=587, ge=1, le=65_535)
     smtp_username: str | None = None
     smtp_password: str | None = None
-    smtp_from: str = "AgentGraph <no-reply@localhost>"
+    smtp_from: str = "Veynod <no-reply@localhost>"
     smtp_starttls: bool = True
     # Per-token access log (scope resolution for reads).
     access_log_flush_seconds: float = Field(default=5.0, ge=0.1, le=300)

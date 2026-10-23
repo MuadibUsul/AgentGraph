@@ -377,7 +377,7 @@ def ensure_tenant_usable(principal: Principal, *, write: bool, path: str = "") -
                 "since": (
                     tenant.status_changed_at.isoformat() if tenant.status_changed_at else None
                 ),
-                "contact": "the workspace owner or the AgentGraph operator",
+                "contact": "the workspace owner or the Veynod operator",
             },
         )
 

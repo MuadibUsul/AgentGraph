@@ -346,7 +346,7 @@ class AgentGraphFastMCP(FastMCP):
 
 
 mcp = AgentGraphFastMCP(
-    name="AgentGraph",
+    name="Veynod",
     instructions=(
         "Call get_orientation first before any other tool. Read system/constitution, "
         "acknowledge it, read your namespace readme, then take your first role-specific "
@@ -1851,7 +1851,7 @@ async def report_change_claim(
     related_doc_key: str | None = None,
     related_task_key: str | None = None,
 ) -> dict[str, Any]:
-    """After a change outside AgentGraph (a push, a PR), report it: the PR or
+    """After a change outside Veynod (a push, a PR), report it: the PR or
     commit URL, the commit sha, and the doc or task it belongs to. The claim is
     unverified until an AUDITOR or a person verifies it. Reporting the same ref
     and commit again returns the same claim."""
@@ -3154,7 +3154,7 @@ async def get_api_docs(
     return _compact(
         {
             "protocol": protocol_docs("summary"),
-            "name": "AgentGraph",
+            "name": "Veynod",
             "version": settings.app_version,
             "rest_base": "/v1",
             "mcp_endpoint": "/mcp/",

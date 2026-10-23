@@ -1,6 +1,6 @@
 """Minimal signed webhook receiver for a bot-side notification worker.
 
-Run next to the bot runtime, point an AgentGraph webhook rule at
+Run next to the bot runtime, point an Veynod webhook rule at
 ``http://<host>:<port>/agentgraph`` and set ``AGENTGRAPH_WEBHOOK_SECRET`` to the
 rule secret. Events are verified, then appended as JSON Lines to
 ``AGENTGRAPH_WEBHOOK_OUTBOX`` so the bot loop can react without giving the
@@ -45,7 +45,7 @@ def verify(timestamp: str | None, signature: str | None, body: bytes) -> bool:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "AgentGraphWebhookReceiver/1.0"
+    server_version = "VeynodWebhookReceiver/1.0"
 
     def do_POST(self) -> None:  # noqa: N802 - http.server API
         if self.path.rstrip("/") != "/agentgraph":

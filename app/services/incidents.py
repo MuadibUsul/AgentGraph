@@ -702,7 +702,7 @@ async def _deliver(session: AsyncSession, incident_id: str,
             notice_id = await session.scalar(text("SELECT agentgraph_new_id('ntc')"))
             outbox = await queue_email(
                 session, to=recipient["email"],
-                subject=f"[AgentGraph security] {content['title']}"
+                subject=f"[Veynod security] {content['title']}"
                 + (" (update)" if kind == "update" else ""),
                 body=_email_body(content), ref=notice_id,
             )

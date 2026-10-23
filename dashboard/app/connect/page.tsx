@@ -66,7 +66,7 @@ export default function ConnectPage() {
         <a className="auth-brand" href="/dashboard/login/">
           <span className="auth-brand-mark"><IconGraph size={22} /></span>
           <span>
-            <strong>AgentGraph<span className="accent">.</span></strong>
+            <strong>Veynod<span className="accent">.</span></strong>
             <small>{t("Human · Agent Blackboard")}</small>
           </span>
         </a>
@@ -86,7 +86,7 @@ export default function ConnectPage() {
           </div>
           <h1>{t("Control-plane access")}</h1>
           <p>
-            {t("This door is for the operator of this AgentGraph deployment. It is separate from customer workspaces and never appears on the sign-in page.")}
+            {t("This door is for the operator of this Veynod deployment. It is separate from customer workspaces and never appears on the sign-in page.")}
           </p>
           <ul className="auth-connect-list">
             <li>{t("The admin token stays in this browser.")}</li>

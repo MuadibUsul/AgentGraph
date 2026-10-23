@@ -7,7 +7,7 @@ are never the same principal; a check a machine can assert is never left to an
 agent's judgement; only people raise a tier, the system may lower it.
 
 A domain (``scope_key``) is a task's namespace, or ``owner/repo:path`` for a
-change made outside AgentGraph (a change claim). No ``autonomy_tiers`` row
+change made outside Veynod (a change claim). No ``autonomy_tiers`` row
 means tier 0. Gate results, audits, claims, samples and escapes are always
 recorded; ``QUALITY_CONTROL=true`` enforces the release matrix on reviews and
 hand-offs (§6).

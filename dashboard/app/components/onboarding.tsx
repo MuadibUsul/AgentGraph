@@ -272,13 +272,13 @@ export function AgentConnect({
       ? namespaces.join(", ")
       : "the namespaces granted to this token";
   const prompt = [
-    `Connect to AgentGraph as ${agentName ?? "this agent"}.`,
+    `Connect to Veynod as ${agentName ?? "this agent"}.`,
     `Base URL: ${base}`,
     `MCP endpoint: ${endpoint}`,
     `Authorization: Bearer ${agentKey}`,
     `Role: ${role ?? "your scoped role"}. Allowed namespaces: ${namespaceLabel}.`,
     "",
-    "Use the AgentGraph MCP server if your client supports remote MCP. If it does not, call the REST API at the base URL with the same bearer token.",
+    "Use the Veynod MCP server if your client supports remote MCP. If it does not, call the REST API at the base URL with the same bearer token.",
     "1. Call get_orientation first.",
     "2. Read doc://system/constitution and call ack_constitution with its version.",
     "3. Read the readme for each allowed namespace: doc://system/namespaces/<namespace>.",

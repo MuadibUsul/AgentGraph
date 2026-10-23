@@ -217,7 +217,7 @@ export default function LoginPage() {
         <a className="auth-brand" href="/dashboard/">
           <span className="auth-brand-mark"><IconGraph size={22} /></span>
           <span>
-            <strong>AgentGraph<span className="accent">.</span></strong>
+            <strong>Veynod<span className="accent">.</span></strong>
             <small>{t("Human · Agent Blackboard")}</small>
           </span>
         </a>
@@ -275,7 +275,7 @@ export default function LoginPage() {
               <span className="auth-card-kicker">
                 {mode === "login" ? t("Welcome back") : t("Start your workspace")}
               </span>
-              <h2>{mode === "login" ? t("Sign in to AgentGraph") : t("Create your account")}</h2>
+              <h2>{mode === "login" ? t("Sign in to Veynod") : t("Create your account")}</h2>
               <p>
                 {mode === "login"
                   ? t("Your workspace is waiting on the other side.")

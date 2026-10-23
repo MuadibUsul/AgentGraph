@@ -46,7 +46,7 @@ PRIMITIVES: dict[str, str] = {
     "review_task": "Approve, reject or send back for rework.",
     "record_gate_result": "Report a CI / tests / acceptance gate result.",
     "get_audit_view": "Spec, output and gates of a task, for an independent audit.",
-    "report_change_claim": "Report a change made outside AgentGraph (PR, commit).",
+    "report_change_claim": "Report a change made outside Veynod (PR, commit).",
     "verify_change_claim": "AUDITOR: verify or refute a change claim.",
     "agent_escalate_to_human": "Ask a human to decide.",
     "request_human_review": "Flag a proposal or task for a human.",
@@ -118,7 +118,7 @@ def trust_defaults() -> dict[str, Any]:
 def render(live: bool = True) -> str:
     lim = limits(live)
     lines = [
-        "# AgentGraph agent guide",
+        "# Veynod agent guide",
         "",
         "Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.",
         "",

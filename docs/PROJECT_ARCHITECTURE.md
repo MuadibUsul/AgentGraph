@@ -1,4 +1,4 @@
-# AgentGraph 项目介绍、架构与路径
+# Veynod 项目介绍、架构与路径
 
 | 项 | 值 |
 |---|---|
@@ -15,7 +15,7 @@
 
 ### 1.1 一句话
 
-**AgentGraph 是一个面向多 Agent 团队的共享黑板（shared blackboard）和人机协作控制台。**
+**Veynod（原名 AgentGraph）是一个面向多 Agent 团队的共享黑板（shared blackboard）和人机协作控制台。**
 
 Agent 通过 REST 或 MCP 领取任务、读写共享状态与文档；人类通过 Web 控制台审批、修正、冻结关键状态、查看审计并撤销 Agent 的整批操作。它不是“再做一个聊天界面”，而是把多 Agent 协作中最容易失控的几件事做成存储层和服务层能力：
 
@@ -38,7 +38,7 @@ Agent 通过 REST 或 MCP 领取任务、读写共享状态与文档；人类通
 
 ### 1.3 要解决的问题
 
-| 问题 | AgentGraph 的机制 |
+| 问题 | Veynod 的机制 |
 |---|---|
 | **上下文爆炸** | L0 工作区地图 → L1 结构化 handoff brief → L2 文档 artifact，按需 `dereference` |
 | **并发覆盖 / 死锁** | 任务与状态槽 TTL 租约、心跳、数据库时钟、fencing token、后台 reaper |
@@ -55,7 +55,7 @@ Agent 通过 REST 或 MCP 领取任务、读写共享状态与文档；人类通
 
 ### 1.4 产品边界
 
-AgentGraph 目前**不是**：
+Veynod 目前**不是**：
 
 - 通用聊天机器人或 Agent 编排框架；
 - 只会做向量检索的“记忆数据库”；
@@ -83,7 +83,7 @@ AgentGraph 目前**不是**：
 └───────────────────────────────────┬──────────────────────────────────────────┘
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                         AgentGraph Gateway (FastAPI)                         │
+│                         Veynod Gateway (FastAPI)                         │
 │                                                                              │
 │  Middleware                                                                  │
 │  ─ RequestContext / X-Request-ID   ─ Protocol / AgentGraph-Version           │
@@ -1045,4 +1045,4 @@ ruff check .
 
 ---
 
-*AgentGraph v3.2.1 · schema 3.26.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*
+*Veynod v3.2.1 · schema 3.26.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*

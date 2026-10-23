@@ -495,7 +495,7 @@ export default function ConsolePage() {
           ? current
           : list[0]?.id ?? null,
       );
-      if (!options.silent) setNotice(t("Connected to the AgentGraph control plane."));
+      if (!options.silent) setNotice(t("Connected to the Veynod control plane."));
       void probe(cleanBase);
     } catch (caught) {
       setConnected(false);
@@ -1170,7 +1170,7 @@ export default function ConsolePage() {
         <div className="brand">
           <div className="brand-mark"><IconGraph /></div>
           <div>
-            <div className="brand-name">AgentGraph<span className="accent">.</span></div>
+            <div className="brand-name">Veynod<span className="accent">.</span></div>
             <div className="brand-sub">{t("Human · Agent Blackboard")}</div>
           </div>
         </div>

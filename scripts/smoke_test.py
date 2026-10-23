@@ -1,4 +1,4 @@
-"""Deployment smoke test for AgentGraph v3.2.
+"""Deployment smoke test for Veynod v3.2.
 
 Usage:
     python scripts/smoke_test.py --admin-token "$ADMIN_TOKEN"

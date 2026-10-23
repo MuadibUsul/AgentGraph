@@ -93,7 +93,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m app.cli", description="AgentGraph operator CLI"
+        prog="python -m app.cli", description="Veynod operator CLI"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

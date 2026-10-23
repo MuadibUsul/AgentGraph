@@ -1,4 +1,4 @@
-"""End-to-end retrieval benchmark for AgentGraph's hybrid search.
+"""End-to-end retrieval benchmark for Veynod's hybrid search.
 
 Creates an isolated benchmark workspace, seeds a deterministic corpus, verifies
 the documents, then measures recall@k, MRR and latency for semantic, keyword,

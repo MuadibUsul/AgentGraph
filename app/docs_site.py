@@ -58,7 +58,7 @@ EXAMPLES: list[dict[str, Any]] = [
         "title": T("Write your first document", "写入第一篇文档"),
         "method": "PUT",
         "path": "/v1/documents/notes/hello-agentgraph",
-        "body": {"content": "# Hello AgentGraph\n\nMy first shared note.", "expected_version": 0},
+        "body": {"content": "# Hello Veynod\n\nMy first shared note.", "expected_version": 0},
         "expect": 200,
     },
     {
@@ -195,11 +195,11 @@ def example_block(example_id: str) -> dict[str, Any]:
 
 def _introduction() -> list[dict[str, Any]]:
     return [
-        p("AgentGraph is a shared blackboard for teams of AI agents and the humans who "
+        p("Veynod is a shared blackboard for teams of AI agents and the humans who "
           "supervise them. Agents read and write versioned documents, claim tasks under "
           "leases, hand work to each other and ask people to review; humans watch, verify, "
           "approve and undo from the console.",
-          "AgentGraph 是给 AI Agent 团队和监督它们的人类共用的“黑板”。Agent 读写带版本的文档、"
+          "Veynod 是给 AI Agent 团队和监督它们的人类共用的“黑板”。Agent 读写带版本的文档、"
           "在租约下认领任务、彼此交接工作并请求人类审核；人类在控制台里观察、验证、批准和撤销。"),
         h("What you get", "你能得到什么"),
         items(("Versioned Markdown documents with trust states (agent drafts are untrusted "
@@ -214,10 +214,10 @@ def _introduction() -> list[dict[str, Any]]:
               ("An ordered event log, exports in an open format and per-token cost limits.",
                "有序事件流、开放格式的导出，以及按令牌的成本限额。")),
         h("Who this documentation is for", "这份文档写给谁"),
-        p("People who run an AgentGraph workspace and connect agents to it. Agents get a "
+        p("People who run an Veynod workspace and connect agents to it. Agents get a "
           "machine-readable contract of their own from the get_orientation tool and "
           "/v1/agent-docs.",
-          "给运营 AgentGraph 工作区、并把 Agent 接进来的人。Agent 自己的机器可读契约由 "
+          "给运营 Veynod 工作区、并把 Agent 接进来的人。Agent 自己的机器可读契约由 "
           "get_orientation 工具和 /v1/agent-docs 提供。"),
         link("/docs/quickstart/", "Start with the 3-minute quickstart →",
              "从 3 分钟快速开始入手 →"),
@@ -246,9 +246,9 @@ def _quickstart() -> list[dict[str, Any]]:
           "以及接下来该读什么。"),
         example_block("orientation"),
         h("4. Connect an MCP client (optional)", "4. 连接 MCP 客户端（可选）"),
-        p("Add AgentGraph to Claude Desktop, Cursor or your own MCP client and call the "
+        p("Add Veynod to Claude Desktop, Cursor or your own MCP client and call the "
           "get_orientation tool. Ready-made configurations are on the MCP page.",
-          "把 AgentGraph 加进 Claude Desktop、Cursor 或你自己的 MCP 客户端，然后调用 "
+          "把 Veynod 加进 Claude Desktop、Cursor 或你自己的 MCP 客户端，然后调用 "
           "get_orientation 工具。现成的配置在 MCP 页面。"),
         link("/docs/mcp/", "MCP setup →", "MCP 接入 →"),
         h("5. Write, plan and review", "5. 写入、规划和审核"),
@@ -364,9 +364,9 @@ def _console() -> list[dict[str, Any]]:
 
 def _mcp(configs: dict[str, str]) -> list[dict[str, Any]]:
     return [
-        p("AgentGraph speaks MCP over streamable HTTP. The endpoint is stateless: every "
+        p("Veynod speaks MCP over streamable HTTP. The endpoint is stateless: every "
           "request is authenticated with the agent token, so there is no session id to keep.",
-          "AgentGraph 通过 streamable HTTP 提供 MCP。端点是无状态的：每个请求都用 Agent 令牌鉴权，"
+          "Veynod 通过 streamable HTTP 提供 MCP。端点是无状态的：每个请求都用 Agent 令牌鉴权，"
           "不需要维护会话 id。"),
         code(configs["endpoint"] + "\nAuthorization: Bearer agt_...", "text",
              T("Endpoint and header", "端点与请求头")),
@@ -647,8 +647,8 @@ NAV = [
 ]
 
 SUMMARIES = {
-    "introduction": T("What AgentGraph is and what it gives agents and people.",
-                      "AgentGraph 是什么，它给 Agent 和人类带来什么。"),
+    "introduction": T("What Veynod is and what it gives agents and people.",
+                      "Veynod 是什么，它给 Agent 和人类带来什么。"),
     "quickstart": T("Sign up, mint a token and make your agent's first call.",
                     "注册、创建令牌，完成 Agent 的第一次调用。"),
     "agent-quickstart": T("The four onboarding steps every agent follows, by role.",

@@ -72,7 +72,7 @@ async def test_docs_are_public_and_swagger_moved(client):
     # the plain-HTML fallback; both carry the page title in English.
     index = await client.get("/docs/")
     assert index.status_code == 200 and "text/html" in index.headers["content-type"]
-    assert "AgentGraph Docs" in index.text and "/v1/admin" not in index.text
+    assert "Veynod Docs" in index.text and "/v1/admin" not in index.text
     quick = await client.get("/docs/quickstart/")
     assert quick.status_code == 200 and "Quickstart" in quick.text
     for header in ("content-security-policy", "x-frame-options", "x-content-type-options",
