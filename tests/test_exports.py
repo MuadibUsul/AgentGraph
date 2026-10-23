@@ -67,13 +67,16 @@ async def _export(client, headers, **body):
     response = await client.post("/v1/exports", headers=headers, json=body)
     assert response.status_code == 202, response.text
     export_id = response.json()["export_id"]
+    # Poll and download as the operator: the owner's requests would bump the
+    # workspace's token_access_log rows after the export's snapshot.
+    admin = {"Authorization": "Bearer test-admin"}
     for _ in range(300):
-        status = (await client.get(f"/v1/exports/{export_id}", headers=headers)).json()
+        status = (await client.get(f"/v1/admin/exports/{export_id}", headers=admin)).json()
         if status["status"] in ("done", "failed"):
             break
         await asyncio.sleep(0.2)
     assert status["status"] == "done", status
-    archive = await client.get(f"/v1/exports/{export_id}/download", headers=headers)
+    archive = await client.get(f"/v1/admin/exports/{export_id}/download", headers=admin)
     assert archive.status_code == 200
     return status, archive.content
 
