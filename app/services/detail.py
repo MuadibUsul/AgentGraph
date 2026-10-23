@@ -54,7 +54,8 @@ def sync(payload: dict[str, Any], detail: str, *, cards: bool = True) -> dict[st
         return payload
     timeline = payload.get("timeline") or []
     cap = TIMELINE_CAP[detail]
-    payload["timeline_truncated"] = len(timeline) > cap
+    total = payload.get("timeline_total", len(timeline))  # compact already cut it
+    payload["timeline_truncated"] = total > cap or len(timeline) > cap
     timeline = timeline[:cap]
     if detail == "summary":
         timeline = [_timeline_item(item) for item in timeline]

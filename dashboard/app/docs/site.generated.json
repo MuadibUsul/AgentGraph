@@ -829,6 +829,18 @@
          "name": "credential",
          "required": true,
          "type": "string"
+        },
+        {
+         "description": "",
+         "name": "display_name",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "workspace_name",
+         "required": false,
+         "type": "string | null"
         }
        ],
        "description": "",
