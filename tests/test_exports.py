@@ -86,7 +86,9 @@ async def _settled(workspace_id: str) -> None:
         last = None
         for _ in range(40):
             count = await conn.fetchval(
-                "SELECT count(*) FROM usage_ledger WHERE workspace_id = $1::uuid", workspace_id)
+                "SELECT (SELECT count(*) FROM usage_ledger WHERE workspace_id = $1::uuid) "
+                "+ (SELECT count(*) FROM token_access_log WHERE workspace_id = $1::uuid)",
+                workspace_id)
             if count == last:
                 return
             last = count

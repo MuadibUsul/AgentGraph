@@ -347,12 +347,22 @@ async def process_deliveries(session: AsyncSession) -> int:
             delivered += 1
         else:
             delivery.last_error = result.error or "delivery failed"
-            if delivery.attempts >= settings.webhook_max_delivery_attempts:
-                delivery.status = "FAILED"
+            delays = settings.webhook_retry_delays_seconds
+            if delivery.attempts > len(delays):
+                # Every retry failed: DEAD, never retried again (poke delivery D-1).
+                delivery.status = "DEAD"
+                await append_event(
+                    session, workspace_id=rule.workspace_id, agent="webhooks",
+                    event_type="WEBHOOK_DEAD",
+                    payload={"targets": ["human"], "details": {
+                        "delivery_kind": "webhook.dead", "priority": 0,
+                        "webhook_id": str(rule.id), "url": rule.url,
+                        "delivery_id": str(delivery.id), "attempts": delivery.attempts,
+                        "event_id": delivery.event_id,
+                        "last_status": result.status_code, "last_error": delivery.last_error}})
             else:
-                # One minute, doubling, at most six hours (AG-EV-05 point 3).
-                delay = min(60 * (2 ** (delivery.attempts - 1)), 6 * 3_600)
-                delivery.next_attempt_at = now + timedelta(seconds=delay)
+                delivery.next_attempt_at = now + timedelta(
+                    seconds=delays[delivery.attempts - 1])
             rule.consecutive_failures += 1
             rule.failing_since = rule.failing_since or now
             if now - rule.failing_since >= timedelta(hours=24) and rule.active:

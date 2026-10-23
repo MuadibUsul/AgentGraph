@@ -101,6 +101,8 @@ EVENT_TYPES: dict[str, str] = {
     "escalation.reminder": "An escalation is still open (targets: the routed human).",
     "task.children_done": "Every subtask of a task is done (targets: the lead).",
     "task.continuation_written": "A continuation pack was written for a task.",
+    "webhook.dead": "A webhook delivery failed every retry and will not be sent again "
+                    "(targets: people).",
     "quality.circuit_opened": "A domain's quality circuit opened; its tier is lowered by one.",
     "quality.tier_demoted": "A domain's autonomy tier was lowered after escapes.",
     "quality.claim_refuted": "A change claim was refuted by an auditor or a person.",
@@ -387,10 +389,12 @@ async def poll_events(
     conditions: list[Any] = [WorkspaceEvent.workspace_id == workspace_id,
                              WorkspaceEvent.type.is_not(None)]
     readable = _readable(principal)
-    if readable is not None:
-        conditions.append(WorkspaceEvent.shard_key.in_(readable))
     async with async_session_factory() as session:
         mine = await _directory_identities(session, principal)
+        if readable is not None:
+            # Addressed events reach their target whatever the namespace (P-01).
+            conditions.append(or_(WorkspaceEvent.shard_key.in_(readable),
+                                  _targets_me(principal, mine)))
         if subscription_id:
             subscription = await _subscription(session, principal, subscription_id)
             scope = []

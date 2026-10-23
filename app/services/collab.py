@@ -88,6 +88,22 @@ async def my_refs(session: AsyncSession, principal: Principal) -> list[str]:
     return refs
 
 
+async def suggest_principal(session: AsyncSession, workspace_id: Any, ref: str) -> list[str]:
+    """R-05 did-you-mean: labels are case-sensitive; offer the closest known ones."""
+    import difflib
+
+    kind, _, ident = ref.partition(":")
+    if kind != "agent" or not ident:
+        return []
+    known = [row[0] for row in await session.execute(text(
+        "SELECT agent_signature FROM agent_tokens WHERE workspace_id = :ws "
+        "AND revoked_at IS NULL UNION SELECT agent_id FROM agent_directory "
+        "WHERE workspace_id = :ws"), {"ws": workspace_id}) if row[0]]
+    exact = [name for name in known if name.lower() == ident.lower()]
+    close = difflib.get_close_matches(ident, known, n=3, cutoff=0.6)
+    return [f"agent:{name}" for name in dict.fromkeys(exact + close)]
+
+
 async def principal_exists(session: AsyncSession, workspace_id: Any, ref: str) -> bool:
     kind, _, ident = ref.partition(":")
     if kind == "agent":
@@ -107,29 +123,54 @@ async def principal_exists(session: AsyncSession, workspace_id: Any, ref: str) -
 # --------------------------------------------------------------- creation
 
 
+async def resolve_ref(session: AsyncSession, workspace_id: Any,
+                      ref: dict[str, Any]) -> SharedDocument | None:
+    """B-01: a {namespace, doc_key} pointer to its document however the key was
+    split (doc keys are unique per workspace and usually carry the namespace as
+    a prefix), then by id, alias or redirect."""
+    from app.services import addresses as address_service
+
+    namespace = ref.get("namespace") or "default"
+    key = str(ref["doc_key"])
+    candidates = [key]
+    if namespace != "default" and not key.startswith(f"{namespace}/"):
+        candidates.insert(0, f"{namespace}/{key}")
+    for candidate in candidates:
+        document = await session.scalar(select(SharedDocument).where(
+            SharedDocument.workspace_id == workspace_id, SharedDocument.doc_key == candidate))
+        if document is not None:
+            return document
+    try:
+        return await address_service.find_document(session, workspace_id, key)
+    except ApiError:
+        return None
+
+
 async def validate_new_task(session: AsyncSession, principal: Principal, request: Any) -> None:
-    """AG-CO-02 points 1-2: context exists, the assignee is a known principal."""
+    """AG-CO-02 points 1-2: context exists, the assignee is a known principal.
+    Context pointers are stored in their canonical form (B-01)."""
     if request.assignee and not await principal_exists(
             session, principal.workspace.id, request.assignee):
-        raise ApiError(422, "unknown_principal", "the assignee is not in the directory",
-                       details={"assignee": request.assignee})
-    if request.context_docs and not request.allow_missing_context:
-        missing = []
-        for ref in request.context_docs:
+        raise ApiError(422, "unknown_principal",
+                       "the assignee is not in the directory (labels are case-sensitive)",
+                       details={"assignee": request.assignee,
+                                "did_you_mean": await suggest_principal(
+                                    session, principal.workspace.id, request.assignee)})
+    missing = []
+    for ref in request.context_docs or []:
+        document = await resolve_ref(session, principal.workspace.id, ref.model_dump())
+        if document is not None:
+            ref.namespace, ref.doc_key = document.namespace, document.doc_key
+            ensure_namespace(principal, document.namespace)
+            if ref.version is None or ref.version <= document.version:
+                continue
+        else:
             ensure_namespace(principal, ref.namespace)
-            found = await session.scalar(
-                select(SharedDocument.version).where(
-                    SharedDocument.workspace_id == principal.workspace.id,
-                    SharedDocument.doc_key == ref.doc_key,
-                    SharedDocument.namespace == ref.namespace,
-                )
-            )
-            if found is None or (ref.version is not None and ref.version > found):
-                missing.append(f"{ref.namespace}/{ref.doc_key}")
-        if missing:
-            raise ApiError(422, "context_doc_not_found", "context documents do not exist",
-                           details={"missing": missing,
-                                    "hint": "pass allow_missing_context=true to create anyway"})
+        missing.append(f"{ref.namespace}/{ref.doc_key}")
+    if missing and not request.allow_missing_context:
+        raise ApiError(422, "context_doc_not_found", "context documents do not exist",
+                       details={"missing": missing,
+                                "hint": "pass allow_missing_context=true to create anyway"})
 
 
 def apply_new_fields(task: CollabTask, request: Any) -> None:
@@ -189,13 +230,7 @@ async def load_context(session: AsyncSession, principal: Principal, task: Collab
         pointers.append((dict(task.continuation), True))
     pointers += [(ref, False) for ref in refs]
     for ref, is_continuation in pointers:
-        document = await session.scalar(
-            select(SharedDocument).where(
-                SharedDocument.workspace_id == task.workspace_id,
-                SharedDocument.doc_key == ref["doc_key"],
-                SharedDocument.namespace == (ref.get("namespace") or "default"),
-            )
-        )
+        document = await resolve_ref(session, task.workspace_id, ref)
         key = _ref_key(ref)
         if document is None:
             items.append({"doc_ref": ref, "missing": True, "is_continuation": is_continuation})
@@ -392,8 +427,11 @@ async def deliver_mentions(session: AsyncSession, principal: Principal, mentions
     for ref in mentions:
         kind, _, ident = ref.partition(":")
         if not await principal_exists(session, principal.workspace.id, ref):
-            add_warning("unknown_mention", "the mentioned principal is not in the directory",
-                        ref=ref)
+            add_warning("unknown_mention",
+                        "the mentioned principal is not in the directory (labels are "
+                        "case-sensitive)", ref=ref,
+                        did_you_mean=await suggest_principal(session, principal.workspace.id,
+                                                             ref) or None)
             targets.append(ref)
             continue
         targets.append(ref)
@@ -744,3 +782,31 @@ async def escalation_upkeep(session: AsyncSession) -> int:
                                         "targets": [row["route_to"]] if row["route_to"] else []})
             await session.commit()
     return done
+
+
+async def context_grants(session: AsyncSession, principal: Principal) -> frozenset[str]:
+    """B-02: being assigned a task (or holding it) grants reading its context
+    documents whatever their review state; the canonical keys of those."""
+    if principal.is_commander or principal.is_human:
+        return frozenset()
+    names = [f"agent:{principal.agent_signature}"]
+    entry = await _my_entry(session, principal)
+    if entry is not None:
+        names += [f"agent:{entry['agent_id']}", f"agent:{entry['principal_id']}"]
+    rows = (await session.execute(text(
+        "SELECT context_docs FROM collab_tasks WHERE workspace_id = :ws "
+        "AND status NOT IN ('DONE', 'FAILED', 'CANCELLED') "
+        "AND jsonb_array_length(context_docs) > 0 "
+        "AND (claimed_by = :me OR assignee = ANY(CAST(:names AS text[]))) LIMIT 200"),
+        {"ws": principal.workspace.id, "me": principal.agent_signature,
+         "names": names})).scalars().all()
+    keys: set[str] = set()
+    for refs in rows:
+        for ref in refs or []:
+            if not isinstance(ref, dict) or not ref.get("doc_key"):
+                continue
+            key, namespace = str(ref["doc_key"]), ref.get("namespace") or "default"
+            keys.add(key)
+            if namespace != "default" and not key.startswith(f"{namespace}/"):
+                keys.add(f"{namespace}/{key}")
+    return frozenset(keys)

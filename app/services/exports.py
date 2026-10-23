@@ -625,6 +625,13 @@ async def run_export(export_id: str) -> None:
 
 
 async def _run_export(export_id: str) -> None:
+    # Buffered access counts belong in the archive: write them out first.
+    from app.services import access_log
+
+    try:
+        await access_log.flush()
+    except Exception:  # noqa: BLE001 - a failed flush must not stop the export
+        logger.exception("could not flush the access log before an export")
     async with async_session_factory() as session:
         # One snapshot for the whole archive.
         await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})

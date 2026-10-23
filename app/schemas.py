@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
@@ -128,6 +129,17 @@ class OutputTo(StrictModel):
     doc_key_pattern: str | None = Field(default=None, max_length=256)
 
 
+def _check_mentions(values: list[str]) -> list[str]:
+    """Explicit mentions name a principal: agent:<label> or human:<id> (P-02).
+    A bare label used to be dropped without a word; now it is refused."""
+    values = [(item or "").strip().removeprefix("@") for item in values]
+    invalid = [item for item in values
+               if not re.fullmatch(r"(agent|human):[A-Za-z0-9_.:@-]{1,150}", item)]
+    if invalid:
+        raise ValueError(f"mentions must look like agent:<label> or human:<id>: {invalid}")
+    return values
+
+
 class AcceptanceItem(StrictModel):
     """One acceptance item (quality control 1.0 §3.1)."""
 
@@ -181,6 +193,11 @@ class TaskCreateRequest(StrictModel):
     @classmethod
     def _acceptance(cls, value: list[AcceptanceItem]) -> list[AcceptanceItem]:
         return _unique_acceptance(value)
+
+    @field_validator("mentions")
+    @classmethod
+    def _mentions(cls, value: list[str]) -> list[str]:
+        return _check_mentions(value)
 
     @field_validator("agent")
     @classmethod
@@ -496,6 +513,12 @@ class DocumentUpsertRequest(StrictModel):
         default_factory=list, max_length=20,
         description="agent:<id> / human:<id> to notify (AG-EV-03); @agent:<id> in content too",
     )
+
+    @field_validator("mentions")
+    @classmethod
+    def _mentions(cls, value: list[str]) -> list[str]:
+        return _check_mentions(value)
+
     derived_from: list[DocRef] = Field(
         default_factory=list, max_length=50,
         description="Documents this version was derived from (AG-TC-01); recorded for recall",
@@ -1203,11 +1226,17 @@ class TokenRenewRequest(StrictModel):
 
 
 class AgentRegisterRequest(StrictModel):
-    agent_id: str = Field(min_length=3, max_length=40)
-    display_name: str | None = Field(default=None, max_length=64)
-    role: str | None = Field(default=None, max_length=32)
+    agent_id: str | None = Field(
+        default=None, min_length=3, max_length=40,
+        description="Default: derived from the token label (lower case)")
+    display_name: str | None = Field(default=None, max_length=64,
+                                     description="Default: the token label, case kept")
+    role: str | None = Field(default=None, max_length=32, description="Default: the token role")
     capabilities: list[str] = Field(default_factory=list, max_length=20)
     description: str | None = Field(default=None, max_length=500)
+    reach: dict[str, Any] | None = Field(
+        default=None, description="How to poke you: {webhook: bool, note}; the default "
+                                  "subscription id is filled in")
 
 
 class AgentUpdateRequest(BaseModel):

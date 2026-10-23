@@ -1,4 +1,4 @@
-"""Agent onboarding over MCP and REST: four steps, role paths, idempotence."""
+"""Agent onboarding over MCP and REST: five steps, role paths, idempotence."""
 
 from __future__ import annotations
 
@@ -57,7 +57,13 @@ async def _steps_to_first_action(client, agent):
     read = await client.post("/v1/dereference", headers=agent, json=readme["args"])
     assert read.status_code == 200, read.text
     hint = read.json()["onboarding"]
-    assert hint["state"] == "needs_first_action" and hint["completed_steps"] == [1, 2, 3]
+    assert hint["state"] == "needs_registration" and hint["completed_steps"] == [1, 2, 3]
+    assert hint["next_call"]["tool"] == "register_agent"
+    registered = await client.post("/v1/agents/register", headers=agent,
+                                   json={"capabilities": ["testing"]})
+    assert registered.status_code == 201, registered.text
+    hint = registered.json()["onboarding"]
+    assert hint["state"] == "needs_first_action" and hint["completed_steps"] == [1, 2, 3, 4]
     return hint
 
 
@@ -66,7 +72,7 @@ async def test_executor_path_and_idempotence(client, admin_headers, workspace):
     first = await client.get("/v1/orientation", headers=agent)
     pack = first.json()
     block = pack["onboarding"]
-    assert block["state"] == "new" and block["step"] == 1 and block["total_steps"] == 4
+    assert block["state"] == "new" and block["step"] == 1 and block["total_steps"] == 5
     assert block["next_call"]["tool"] == "ack_constitution"
     assert block["next_call"]["args"]["version"] == pack["constitution"]["version"]
     assert 1 <= len(block["required_reading"]) <= 3
@@ -89,7 +95,11 @@ async def test_executor_path_and_idempotence(client, admin_headers, workspace):
 
     read = await client.post("/v1/dereference", headers=agent,
                              json=acked["onboarding"]["next_call"]["args"])
-    hint = read.json()["onboarding"]
+    assert read.json()["onboarding"]["state"] == "needs_registration"
+    registered = await client.post("/v1/agents/register", headers=agent,
+                                   json={"capabilities": ["claims tasks"]})
+    assert registered.status_code == 201, registered.text
+    hint = registered.json()["onboarding"]
     assert hint["next_call"] == {"tool": "workspace_sync",
                                  "args": {"task_statuses": ["READY", "HANDOFF"]},
                                  "why": "Find tasks you can claim."}
@@ -102,7 +112,7 @@ async def test_executor_path_and_idempotence(client, admin_headers, workspace):
                                 json={})
     assert claimed.status_code == 200, claimed.text
     done = claimed.json()["onboarding"]
-    assert done["state"] == "active" and done["completed_steps"] == [1, 2, 3, 4]
+    assert done["state"] == "active" and done["completed_steps"] == [1, 2, 3, 4, 5]
     assert done["next_call"] is None
     after = await client.get("/v1/documents", headers=agent)
     assert "onboarding" not in after.json()  # no more prompting
@@ -111,7 +121,7 @@ async def test_executor_path_and_idempotence(client, admin_headers, workspace):
 
     actions = await _audits(workspace["workspace"]["id"], signature)
     for action in ("agent.oriented", "agent.acknowledged", "agent.namespace_read",
-                   "agent.first_action", "agent.onboarded"):
+                   "agent.registered", "agent.first_action", "agent.onboarded"):
         assert actions.count(action) == 1, (action, actions)
 
 

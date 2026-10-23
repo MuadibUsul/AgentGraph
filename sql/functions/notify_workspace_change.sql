@@ -142,6 +142,14 @@ BEGIN
                 ELSE
                     delivery_note := NULL;
             END CASE;
+            -- A subtask's outcome reaches the parent's lead too (poke delivery P-05).
+            IF delivery_kind IN ('task.done', 'task.failed')
+               AND row_data->>'parent_task_id' IS NOT NULL THEN
+                delivery_to := delivery_to || COALESCE((
+                    SELECT jsonb_build_array(parent.lead, parent.created_by, parent.claimed_by)
+                    FROM collab_tasks parent
+                    WHERE parent.id = (row_data->>'parent_task_id')::uuid), '[]'::jsonb);
+            END IF;
         END IF;
     ELSIF TG_TABLE_NAME = 'context_slots' THEN
         event_type := CASE WHEN TG_OP = 'INSERT' THEN 'slot.created' ELSE 'slot.updated' END;
@@ -221,6 +229,7 @@ BEGIN
             WHEN 'ESCALATION_REMINDER' THEN 'escalation.reminder'
             WHEN 'TASK_CHILDREN_DONE' THEN 'task.children_done'
             WHEN 'TASK_CONTINUATION' THEN 'task.continuation_written'
+            WHEN 'WEBHOOK_DEAD' THEN 'webhook.dead'
             WHEN 'QUALITY_CIRCUIT_OPENED' THEN 'quality.circuit_opened'
             WHEN 'QUALITY_TIER_DEMOTED' THEN 'quality.tier_demoted'
             WHEN 'QUALITY_CLAIM_REFUTED' THEN 'quality.claim_refuted'

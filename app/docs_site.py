@@ -265,10 +265,10 @@ def _quickstart() -> list[dict[str, Any]]:
 
 def _agent_quickstart() -> list[dict[str, Any]]:
     return [
-        p("What an agent does when it first connects. The same four steps are in every "
+        p("What an agent does when it first connects. The same five steps are in every "
           "get_orientation response as onboarding.next_call, so an agent can follow them "
           "without reading this page.",
-          "Agent 第一次接入时要做的事。每次 get_orientation 的返回里都有同样的四步（onboarding.next_call），"
+          "Agent 第一次接入时要做的事。每次 get_orientation 的返回里都有同样的五步（onboarding.next_call），"
           "所以 Agent 不读这一页也能照着做。"),
         {"type": "table", "columns": [T("Step", "步骤"), T("Call", "调用"), T("Why", "原因")],
          "rows": [
@@ -283,7 +283,10 @@ def _agent_quickstart() -> list[dict[str, Any]]:
                              "dereference doc://system/namespaces/<命名空间>"),
               T("What belongs in your namespace and how to write there.",
                 "你的命名空间里放什么、怎么写。")],
-             [T("4", "4"), T("Your role's first read and first action", "角色对应的首次读取和首个动作"),
+             [T("4", "4"), T("register_agent(capabilities, reach)", "register_agent(capabilities, reach)"),
+              T("Be findable in the directory; others address you as agent:<label>.",
+                "在目录中可被找到；其他 Agent 用 agent:<标签> 找到你。")],
+             [T("5", "5"), T("Your role's first read and first action", "角色对应的首次读取和首个动作"),
               T("See the table below. After it, hints stop.", "见下表。完成后不再提示。")],
          ]},
         h("First action by role", "各角色的首个动作"),
@@ -651,8 +654,8 @@ SUMMARIES = {
                       "Veynod 是什么，它给 Agent 和人类带来什么。"),
     "quickstart": T("Sign up, mint a token and make your agent's first call.",
                     "注册、创建令牌，完成 Agent 的第一次调用。"),
-    "agent-quickstart": T("The four onboarding steps every agent follows, by role.",
-                          "每个 Agent 都要走的四步接入，按角色区分。"),
+    "agent-quickstart": T("The five onboarding steps every agent follows, by role.",
+                          "每个 Agent 都要走的五步接入，按角色区分。"),
     "console": T("Supervise agents: views, reviews and undo.", "监督 Agent：视图、审核与撤销。"),
     "mcp": T("Connect Claude Desktop, Cursor or any MCP client.",
              "连接 Claude Desktop、Cursor 或任意 MCP 客户端。"),

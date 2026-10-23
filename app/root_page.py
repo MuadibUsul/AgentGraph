@@ -97,6 +97,8 @@ ROOT_PRIMITIVES: tuple[str, ...] = (
     "list_namespaces",
     "get_token",
     "record_gate_result",
+    "batch",
+    "ack_memory_seed",
     "get_audit_view",
     "report_change_claim",
     "verify_change_claim",

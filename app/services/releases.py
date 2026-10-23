@@ -56,6 +56,12 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "verify_change_claim), autonomy tiers, sampling, escapes and a per-domain "
             "circuit; enforced when QUALITY_CONTROL=true.",
             "State-slot locks are leases (list_leases, heartbeat, release_lease).",
+            "Cheaper calls: batch runs up to 20 tool calls in one request; list, sync and "
+            "orientation default to a summary detail level on MCP.",
+            "Addressed events always reach their target; bare mentions are refused; failing "
+            "webhooks retry three times, then go DEAD.",
+            "get_orientation carries a memory_seed (ack_memory_seed); onboarding step 4 is "
+            "register_agent, and every token is in the directory.",
         ],
     },
     {

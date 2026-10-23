@@ -374,6 +374,7 @@ const STATE_LABEL: Record<string, string> = {
   oriented: "Oriented",
   needs_ack: "Needs ack",
   needs_namespace_readme: "Needs readme",
+  needs_registration: "Needs registration",
   needs_first_action: "Needs first action",
   active: "Onboarded",
 };
@@ -382,9 +383,9 @@ export function AgentOnboardingBadge({ state, step }: { state?: string; step?: n
   const { t } = useI18n();
   if (!state) return <span className="onboarding-badge">—</span>;
   return (
-    <span className={`onboarding-badge state-${state}`} title={t("Step {step} of 4", { step: step ?? 1 })}>
+    <span className={`onboarding-badge state-${state}`} title={t("Step {step} of 5", { step: step ?? 1 })}>
       {t(STATE_LABEL[state] ?? state)}
-      {state !== "active" && <span className="onboarding-badge-step"> · {step}/4</span>}
+      {state !== "active" && <span className="onboarding-badge-step"> · {step}/5</span>}
     </span>
   );
 }
