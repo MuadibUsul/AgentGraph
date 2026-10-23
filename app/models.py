@@ -109,6 +109,11 @@ class Workspace(Base):
     max_token_depth: Mapped[int] = mapped_column(
         Integer, nullable=False, default=2, server_default=text("2")
     )
+    # v3.35: True only for workspaces the operator created; every other one
+    # is private to its members (see services/operator_privacy.py).
+    operator_managed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
     branch_token_quota: Mapped[int] = mapped_column(
         Integer, nullable=False, default=20, server_default=text("20")
     )

@@ -1134,3 +1134,44 @@ async def record_product_event(
         plan=body.plan,
     )
     return Response(status_code=204)
+
+
+# ------------------------------------------------- support access (v3.35)
+
+
+@router.get("/support-access",
+            summary="Privacy state, the open support-access window and the operator's requests")
+async def support_access_status(
+    principal: Principal = Depends(get_human_principal),
+) -> dict:
+    from app.services import operator_privacy
+
+    return await operator_privacy.status(principal.workspace.id)
+
+
+@router.post("/support-access",
+             summary="Let the Veynod operator read (or change) this workspace for a while")
+async def open_support_access(
+    body: q_schemas.SupportAccessRequest,
+    principal: Principal = Depends(get_human_account),
+) -> dict:
+    from app.services import operator_privacy
+
+    return await operator_privacy.open_grant(
+        principal, hours=body.hours, note=body.note, allow_write=body.allow_write)
+
+
+@router.delete("/support-access", summary="Close support access now")
+async def close_support_access(principal: Principal = Depends(get_human_account)) -> dict:
+    from app.services import operator_privacy
+
+    return await operator_privacy.close_grant(principal)
+
+
+@router.post("/support-access/make-private",
+             summary="Make an operator-created workspace private (one way)")
+async def make_workspace_private(principal: Principal = Depends(get_human_account)) -> dict:
+    from app.services import operator_privacy
+
+    return await operator_privacy.make_private(principal)
+

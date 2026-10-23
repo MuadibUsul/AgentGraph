@@ -10,6 +10,7 @@ import { DocumentsView } from "./components/documents";
 import { GovernanceView } from "./components/governance";
 import { AnimatedNumber, spotlight, useSlidingIndicator } from "./components/motion";
 import { AgentConnect, GettingStarted, type OnboardingStepId } from "./components/onboarding";
+import { SupportAccessCard } from "./components/support-access";
 import { UpgradeCard } from "./components/upgrade";
 import { LanguageToggle, useI18n } from "./i18n";
 import {
@@ -208,6 +209,10 @@ export default function ConsolePage() {
     () => workspaces.find((workspace) => workspace.id === selectedId) ?? null,
     [workspaces, selectedId],
   );
+  // Operator privacy: an admin session sees a private workspace's counts,
+  // never its content, unless the owner opened support access.
+  const operatorLocked =
+    !sessionMode && !!selectedWorkspace?.private && !selectedWorkspace?.support_access_until;
   const approvals = tasks.filter((task) =>
     ["AWAITING_HUMAN", "ESCALATED_TO_HUMAN"].includes(task.status),
   );
@@ -289,7 +294,7 @@ export default function ConsolePage() {
   }, [connected, selectedId]);
 
   useEffect(() => {
-    if (!connected || !selectedId || !adminToken || sessionMode) {
+    if (!connected || !selectedId || !adminToken || sessionMode || operatorLocked) {
       setLive(false);
       return;
     }
@@ -368,7 +373,7 @@ export default function ConsolePage() {
       setLive(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, selectedId, adminToken, apiBase, sessionMode]);
+  }, [connected, selectedId, adminToken, apiBase, sessionMode, operatorLocked]);
 
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const headers = new Headers(init?.headers);
@@ -599,11 +604,22 @@ export default function ConsolePage() {
     const emergency = window.setTimeout(() => setLoading(false), 8000);
     const failures: string[] = [];
 
+    const target = workspaces.find((item) => item.id === id);
+    const locked = !sessionMode && !!target?.private && !target?.support_access_until;
+    // A locked workspace only answers its counts: skip every content request.
+    const call: ApiRequest = locked
+      ? (<T,>(path: string, init?: RequestInit) =>
+          /\/(stats|budget|usage)(\?|$)/.test(path)
+            ? api<T>(path, init)
+            : Promise.resolve(undefined as T)) as ApiRequest
+      : api;
+
     async function loadOne<T>(
       label: string,
       promise: Promise<T>,
       apply: (value: T) => void,
     ) {
+      if (locked && !["stats", "budget", "usage"].includes(label)) return;
       try {
         apply(await promise);
       } catch (caught) {
@@ -617,7 +633,7 @@ export default function ConsolePage() {
     await Promise.all([
       loadOne(
         "stats",
-        api<Stats>(`/v1/admin/workspaces/${id}/stats`),
+        call<Stats>(`/v1/admin/workspaces/${id}/stats`),
         (nextStats) => {
           setStats(nextStats);
           setLoading(false);
@@ -639,19 +655,19 @@ export default function ConsolePage() {
       ),
       loadOne(
         "tasks",
-        api<{ items: TaskSummary[] }>(
+        call<{ items: TaskSummary[] }>(
           `/v1/admin/workspaces/${id}/tasks?limit=500`,
         ),
         (value) => setTasks(value.items),
       ),
       loadOne(
         "slots",
-        api<{ items: Slot[] }>(`/v1/admin/workspaces/${id}/slots?limit=200`),
+        call<{ items: Slot[] }>(`/v1/admin/workspaces/${id}/slots?limit=200`),
         (value) => setSlots(value.items),
       ),
       loadOne(
         "documents",
-        api<DocumentPage>(
+        call<DocumentPage>(
           `/v1/admin/workspaces/${id}/documents?${documentQuery(100, null)}`,
         ),
         (value) => {
@@ -662,64 +678,64 @@ export default function ConsolePage() {
       ),
       loadOne(
         "agent-tokens",
-        api<{ items: AgentToken[] }>(
+        call<{ items: AgentToken[] }>(
           `/v1/admin/workspaces/${id}/agent-tokens`,
         ),
         (value) => setAgents(value.items),
       ),
       loadOne(
         "audit",
-        api<AuditPayload>(`/v1/admin/workspaces/${id}/audit?limit=20`),
+        call<AuditPayload>(`/v1/admin/workspaces/${id}/audit?limit=20`),
         (value) => setAudit(value),
       ),
       loadOne(
         "timeline",
-        api<{ items: TimelineItem[] }>(
+        call<{ items: TimelineItem[] }>(
           `/v1/admin/workspaces/${id}/timeline?limit=100&hours=168`,
         ),
         (value) => setTimeline(value.items),
       ),
       loadOne(
         "proposals",
-        api<{ items: Proposal[] }>(
+        call<{ items: Proposal[] }>(
           `/v1/admin/workspaces/${id}/proposals?limit=100`,
         ),
         (value) => setProposals(value.items),
       ),
       loadOne(
         "policies",
-        api<{ items: PathPolicy[] }>(
+        call<{ items: PathPolicy[] }>(
           `/v1/admin/workspaces/${id}/policies`,
         ),
         (value) => setPolicies(value.items),
       ),
       loadOne(
         "budget",
-        api<Budget>(`/v1/admin/workspaces/${id}/budget`),
+        call<Budget>(`/v1/admin/workspaces/${id}/budget`),
         (value) => setBudget(value),
       ),
       loadOne(
         "usage",
-        api<Usage>(`/v1/admin/workspaces/${id}/usage`),
+        call<Usage>(`/v1/admin/workspaces/${id}/usage`),
         (value) => setUsage(value),
       ),
       loadOne(
         "webhooks",
-        api<{ items: WebhookRule[] }>(
+        call<{ items: WebhookRule[] }>(
           `/v1/admin/workspaces/${id}/webhooks`,
         ),
         (value) => setWebhooks(value.items),
       ),
       loadOne(
         "actions",
-        api<{ items: ExternalAction[] }>(
+        call<{ items: ExternalAction[] }>(
           `/v1/admin/workspaces/${id}/external-actions`,
         ),
         (value) => setActions(value.items),
       ),
       loadOne(
         "human-users",
-        api<{ items: HumanUser[] }>(
+        call<{ items: HumanUser[] }>(
           `/v1/admin/workspaces/${id}/human-users`,
         ),
         (value) => setHumanUsers(value.items),
@@ -1218,7 +1234,19 @@ export default function ConsolePage() {
             >
               <span className="workspace-avatar">{workspace.name.slice(0, 1).toUpperCase()}</span>
               <span className="workspace-meta">
-                <span className="workspace-name">{workspace.name}</span>
+                <span className="workspace-name">
+                  {!sessionMode && workspace.private && (
+                    <span
+                      className="workspace-lock"
+                      title={workspace.support_access_until
+                        ? t("Private · support access open")
+                        : t("Private: counts only")}
+                    >
+                      <IconLock size={11} />
+                    </span>
+                  )}
+                  {workspace.name}
+                </span>
                 <span className="workspace-stats">
                   {t("{docs} docs · {tasks} tasks", {
                     docs: formatNumber(workspace.documents),
@@ -1467,6 +1495,16 @@ export default function ConsolePage() {
                 />
               )}
 
+              {operatorLocked ? (
+                <div className="card private-card">
+                  <span className="privacy-pill private">{t("Private")}</span>
+                  <h2>{t("This workspace's content is private")}</h2>
+                  <p>
+                    {t("As the operator you see its counts and changes above. Documents, tasks, agents and audit stay with its members. If the owner asks for help, they can open support access from their console; every request you make then appears in their log.")}
+                  </p>
+                </div>
+              ) : (
+              <>
               <div
                 ref={tabBarRef}
                 className={`tab-bar ${tabIndicator.ready ? "has-indicator" : ""}`}
@@ -1588,6 +1626,9 @@ export default function ConsolePage() {
                       openCreateSignal={mintSignal}
                     />
                   )}
+                  {tab === "governance" && sessionMode && sessionToken && (
+                    <SupportAccessCard apiBase={apiBase} sessionToken={sessionToken} />
+                  )}
                   {tab === "governance" && (
                     <GovernanceView
                       workspaceId={selectedWorkspace.id}
@@ -1626,6 +1667,8 @@ export default function ConsolePage() {
                 </>
               )}
               </div>
+              </>
+              )}
             </section>
           )}
         </div>

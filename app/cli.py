@@ -23,7 +23,7 @@ async def _run(args: argparse.Namespace) -> int:
     if args.command == "create-workspace":
         async with async_session_factory() as session:
             created = await services.create_workspace(
-                session, name=args.name, tier=args.tier
+                session, name=args.name, tier=args.tier, operator_managed=True
             )
         print(json.dumps(created.model_dump(mode="json"), indent=2))
         print("\nStore this API key now; it cannot be recovered.", file=sys.stderr)
@@ -38,6 +38,16 @@ async def _run(args: argparse.Namespace) -> int:
             )
         )
         return 0
+
+    if args.command in ("rotate-key", "create-agent-token"):
+        # Keys and tokens read a workspace: the operator mints them only for
+        # its own workspaces (operator privacy, v3.35).
+        from app.services.operator_privacy import is_operator_managed
+
+        if not await is_operator_managed(uuid.UUID(args.workspace_id)):
+            print("this workspace is private: the operator cannot mint keys or tokens for it; "
+                  "its owner does that in the console", file=sys.stderr)
+            return 1
 
     if args.command == "rotate-key":
         async with async_session_factory() as session:

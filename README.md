@@ -1220,3 +1220,27 @@ ineligible state returns `task_not_reviewable` with the actual decision.
 - **Upgrade fake door:** non-Pro workspaces see "Upgrade to Pro" in the sidebar;
   the dialog says plainly that Pro is not on sale and records the interest.
 
+## Operator privacy (v3.35)
+
+The operator (the `ADMIN_TOKEN`) runs the platform; it does not read customers'
+content.
+
+- **Private by default.** Every workspace the operator did not create itself
+  (self-serve signups, organisation children, and every workspace that existed
+  before v3.35) is private. For it the admin API answers counts, usage, quotas,
+  the index queue, tier changes and lifecycle (backup, restore, suspend,
+  delete), and refuses documents, versions, tasks, slots, proposals, audit,
+  timeline, events, agents, members, keys, token minting, exports, imports and
+  personal-data search with `403 operator_content_denied`. The CLI refuses
+  `rotate-key` and `create-agent-token` for private workspaces too.
+- **Support access is the owner's choice.** An owner opens a 1-hour to 7-day
+  window under Governance → Privacy and support access (read-only unless they
+  allow changes) and can close it at any time. Every operator request in the
+  window is written to the workspace's access audit and listed in that card.
+  There is no operator-side override.
+- **Operator-created workspaces** stay reachable until an owner makes them
+  private (one way).
+- **Limit:** this is enforced by the application. Someone with shell or
+  database access to the server is outside it; keep that access to as few
+  people as possible and audited at the infrastructure level.
+

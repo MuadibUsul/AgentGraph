@@ -196,6 +196,8 @@ do not edit by hand. Every error body is
 | `quota_exceeded` | 402 | `escalate_human` | `stop_and_escalate_to_human` | Ask a human to raise the quota. |
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` | `stop_and_escalate_to_human` | A human locked this resource; ask a human to change it. |
 | `feature_disabled` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Switched off here; ask an operator (details.setting). |
+| `operator_content_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the workspace owner to open support access in the console. |
+| `operator_write_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner to reopen support access with changes allowed. |
 | `tenant_deleting` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop; only an owner can cancel deletion or fetch the export. |
 | `tenant_suspended` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop writing and notify a human; reads and export still work. |
 | `backup_chain_broken` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Restore from an older full backup or take a new one. |

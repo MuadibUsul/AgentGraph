@@ -555,7 +555,8 @@ SELECT
 
 
 async def create_workspace(
-    session: AsyncSession, *, name: str, tier: str, tenant_id: str | None = None
+    session: AsyncSession, *, name: str, tier: str, tenant_id: str | None = None,
+    operator_managed: bool = False,
 ) -> WorkspaceCreatedResponse:
     raw_key = generate_api_key()
     from app.services.token_tree import generate_root_key
@@ -566,6 +567,7 @@ async def create_workspace(
         api_key_hash=hash_api_key(raw_key),
         root_key_hash=hash_api_key(root_key),
         tier=tier,
+        operator_managed=operator_managed,
     )
     if tenant_id is not None:
         workspace.tenant_id = tenant_id
@@ -638,7 +640,11 @@ SELECT
     (SELECT count(*) FROM timeline_streams tl
         WHERE tl.workspace_id = w.id) AS timeline_events,
     (SELECT MAX(created_at) FROM timeline_streams tl
-        WHERE tl.workspace_id = w.id) AS last_activity_at
+        WHERE tl.workspace_id = w.id) AS last_activity_at,
+    w.operator_managed,
+    (SELECT MAX(g.expires_at) FROM support_access_grants g
+        WHERE g.workspace_id = w.id AND g.revoked_at IS NULL
+          AND g.expires_at > NOW()) AS support_access_until
 FROM workspaces w
 ORDER BY w.created_at DESC
 """
@@ -656,6 +662,8 @@ ORDER BY w.created_at DESC
             tasks=int(row["tasks"]),
             timeline_events=int(row["timeline_events"]),
             last_activity_at=row["last_activity_at"],
+            private=not row["operator_managed"],
+            support_access_until=row["support_access_until"],
         )
         for row in rows
     ]
