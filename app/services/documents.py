@@ -100,8 +100,10 @@ from app.services import (
     budget,
     contention,
     indexer,
+    lifecycle,
     onboarding,
     provenance,
+    reviews,
     sharing,
     situation,
 )
@@ -131,6 +133,7 @@ from app.services.taint import (
 )
 from app.services.usage import enforce_embedding_budget
 from app.versioning import LATEST_VERSION, at_least
+from app.warnings_context import add_warning
 
 settings = get_settings()
 
@@ -635,6 +638,7 @@ async def list_documents(
     order: str | None = None,
     fields: list[str] | None = None,
     written_by_subtree: str | None = None,
+    review_verdict: str | None = None,
 ) -> DocumentListResponse:
     """Complete enumeration (PRD AG-ST-01).
 
@@ -730,6 +734,9 @@ async def list_documents(
             )
             .exists()
         )
+    if review_verdict:
+        # Documents with at least one peer review of this verdict (AG-CO-06).
+        conditions.append(SharedDocument.reviews.contains([{"verdict": review_verdict}]))
     if census:
         return await _census_page(
             session, principal, conditions,
@@ -740,7 +747,8 @@ async def list_documents(
                      include_unverified, include_tainted, verification_status, tainted,
                      updated_after.isoformat() if updated_after else None,
                      updated_before.isoformat() if updated_before else None,
-                     written_by_subtree, order],
+                     written_by_subtree, order]
+                    + ([review_verdict] if review_verdict else []),
                     sort_keys=True, default=str,
                 ).encode()
             ).hexdigest()[:32],
@@ -1116,7 +1124,9 @@ async def get_document(
         include_tainted=include_tainted,
     )
     await indexer.annotate(session, [document])
+    await reviews.check_sealed(session, principal, document)
     await provenance.note_reads(principal, [document])
+    lifecycle.touch_read([document])
     return provenance.apply_taint_mode(
         await _with_entries(session, document, document_out(document)),
         await _taint_mode(principal, taint_mode))
@@ -1149,6 +1159,7 @@ async def upsert_document(
     await budget.check_write(
         principal, document_id=existing.id if existing else None, doc_key=doc_key
     )
+    lifecycle.validate_frontmatter(request.frontmatter or {})
     if doc_key == onboarding.CONSTITUTION_KEY:
         from app.services import tree
 
@@ -1712,6 +1723,13 @@ async def query_documents(
         conditions.append(SharedDocument.tainted.is_(False))
     if not request.include_archived:
         conditions.append(SharedDocument.archived_at.is_(None))
+    if at_least(LATEST_VERSION):
+        hidden = lifecycle.exclusion(list(request.include_lifecycle))
+        if hidden is not None:
+            conditions.append(hidden)
+    if request.review_verdict:
+        conditions.append(SharedDocument.reviews.contains(
+            [{"verdict": request.review_verdict}]))
     limit = min(request.limit, settings.max_search_top_k)
 
     if not request.query:
@@ -1813,6 +1831,8 @@ def _query_hit(
 def _excluded_reason(principal: Principal, document: SharedDocument) -> str | None:
     if document.archived_at is not None:
         return "archived"
+    if at_least(LATEST_VERSION) and (state := lifecycle.lifecycle_of(document)) != "active":
+        return state
     if document.recall_severity == "block":
         return "recalled"
     if document.tainted:
@@ -1861,7 +1881,7 @@ async def _excluded_ranked(
 
 def _tally(principal: Principal, rows: list[SharedDocument]) -> dict[str, int]:
     counts = {"unverified_by_others": 0, "own_unverified": 0, "archived": 0, "tainted": 0,
-              "recalled": 0}
+              "recalled": 0, "superseded": 0, "expired": 0, "cold": 0}
     for row in rows:
         reason = _excluded_reason(principal, row)
         if reason is not None:
@@ -1945,7 +1965,9 @@ async def dereference(
         include_tainted=include_tainted,
     )
     await indexer.annotate(session, [document])
+    await reviews.check_sealed(session, principal, document)
     await provenance.note_reads(principal, [document])
+    lifecycle.touch_read([document])
     if expand_parts:
         expanded, parts = await address_service.expand_parts(session, principal, document)
         return DereferenceResponse(
@@ -2874,8 +2896,27 @@ async def rename_document(
     await address_service.ensure_alias_available(
         session, principal.workspace.id, "document", new_alias
     )
+    # A key prefix that names another registered namespace moves the document
+    # there; otherwise the prefix would claim a namespace the document is not in.
+    old_namespace = document.namespace
+    prefix = new_alias.split("/", 1)[0] if "/" in new_alias else None
+    if prefix and prefix != document.namespace:
+        if prefix == "default" or await address_service._namespace(
+            session, principal.workspace.id, prefix
+        ) is not None:
+            ensure_namespace(principal, prefix, write=True)
+            onboarding.ensure_system_writable(principal, prefix, new_alias)
+            document.namespace = prefix
+        else:
+            add_warning(
+                "namespace_unchanged",
+                f"'{prefix}' is not a registered namespace; the document stays in "
+                f"'{document.namespace}'",
+                namespace=document.namespace, key_prefix=prefix,
+            )
     batch = request.session_batch_id or uuid.uuid4()
     before = document_snapshot(document)
+    before["namespace"] = old_namespace
     old_alias = document.doc_key
     document.doc_key = new_alias
     document.alias_legacy = is_legacy_alias(document.namespace, new_alias)
@@ -2923,6 +2964,8 @@ async def rename_document(
             "id": document.canonical_id,
             "doc_key": new_alias,
             "previous_alias": old_alias,
+            "details": {"namespace": document.namespace,
+                        "previous_namespace": old_namespace},
         },
         namespace=document.namespace,
     )
@@ -3049,3 +3092,49 @@ async def register_parts(
         "session_batch_id": str(batch),
     }
 
+
+
+PARTS_MAX = 100
+PARTS_BYTES_MAX = 2_000_000
+
+
+async def document_parts(session: AsyncSession, principal: Principal, part_of: str, *,
+                         namespace: str | None = None) -> dict[str, Any]:
+    """AG-TC-04 point 4: read hand-split documents as one. Parts carry
+    ``part_of`` (the whole's name) and ``part_index`` in their frontmatter."""
+    require_permission(principal, "doc:read")
+    conditions: list[Any] = [
+        SharedDocument.workspace_id == principal.workspace.id,
+        SharedDocument.archived_at.is_(None),
+        SharedDocument.frontmatter["part_of"].astext == part_of,
+    ]
+    if namespace:
+        ensure_namespace(principal, namespace)
+        conditions.append(SharedDocument.namespace == namespace)
+    else:
+        allowed = _allowed_namespaces(principal)
+        if allowed is not None:
+            conditions.append(SharedDocument.namespace.in_(allowed))
+    rows = (await session.execute(
+        select(SharedDocument).where(*conditions).limit(PARTS_MAX + 1))).scalars().all()
+
+    def order(doc: SharedDocument) -> tuple[int, Any, str]:
+        index = (doc.frontmatter or {}).get("part_index")
+        try:
+            return (0, float(index), doc.doc_key)
+        except (TypeError, ValueError):
+            return (1, 0, doc.doc_key)
+
+    parts, size, truncated = [], 0, len(rows) > PARTS_MAX
+    for doc in sorted(rows[:PARTS_MAX], key=order):
+        content = doc.content or ""
+        if size + len(content) > PARTS_BYTES_MAX:
+            truncated = True
+            break
+        size += len(content)
+        parts.append({"doc_key": doc.doc_key, "namespace": doc.namespace, "title": doc.title,
+                      "version": doc.version,
+                      "part_index": (doc.frontmatter or {}).get("part_index"),
+                      "verification_status": doc.verification_status,
+                      "tainted": bool(doc.tainted), "content": content})
+    return {"part_of": part_of, "count": len(parts), "truncated": truncated, "parts": parts}

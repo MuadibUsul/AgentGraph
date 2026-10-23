@@ -78,6 +78,23 @@ async def _export(client, headers, **body):
     return status, archive.content
 
 
+async def _settled(workspace_id: str) -> None:
+    """Wait until asynchronous bookkeeping (usage rows) stops arriving, so the
+    export and the comparison snapshot see the same rows."""
+    conn = await asyncpg.connect(_db())
+    try:
+        last = None
+        for _ in range(40):
+            count = await conn.fetchval(
+                "SELECT count(*) FROM usage_ledger WHERE workspace_id = $1::uuid", workspace_id)
+            if count == last:
+                return
+            last = count
+            await asyncio.sleep(0.5)
+    finally:
+        await conn.close()
+
+
 async def _snapshot(workspace_id: str) -> dict[str, list]:
     """Every exported row of the workspace and its tenant, secrets excluded."""
     conn = await asyncpg.connect(_db())
@@ -147,8 +164,9 @@ async def test_every_table_is_classified():
 async def test_full_round_trip_is_exact(client, admin_headers, workspace):
     owner = await _owner(client, admin_headers, workspace)
     keys = await _seed(client, workspace)
-    status, data = await _export(client, owner, scope="tenant")
     workspace_id = workspace["workspace"]["id"]
+    await _settled(workspace_id)
+    status, data = await _export(client, owner, scope="tenant")
     before = await _snapshot(workspace_id)
 
     archive = zipfile.ZipFile(io.BytesIO(data))

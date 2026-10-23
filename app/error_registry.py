@@ -260,6 +260,8 @@ REGISTRY: dict[str, ErrorSpec] = {
     # --- abandon
     "depth_limit_exceeded": _spec(403, ABANDON, "Give up this action."),
     "forbidden": _spec(403, ABANDON, "Give up this action."),
+    "feature_disabled": _spec(
+        403, ESCALATE_HUMAN, "Switched off here; ask an operator (details.setting)."),
     "issue_not_permitted": _spec(403, ABANDON, "Give up this action."),
     "not_assignee": _spec(403, ABANDON, "Give up this action."),
     "not_lease_holder": _spec(403, ABANDON, "Give up; do not preempt."),
@@ -283,6 +285,9 @@ REGISTRY: dict[str, ErrorSpec] = {
     "invalid_transition": _spec(409, ABANDON, "Give up this action."),
     "invalid_state_transition": _spec(409, ABANDON, "Re-read the task; give up this action."),
     "lease_lost": _spec(409, ABANDON, "Drop local state and claim again."),
+    "queue_ticket_expired": _spec(409, ABANDON, "Call acquire_resource again to re-queue."),
+    "lineage_unavailable": _spec(409, ABANDON, "This subject has no signed lineage; give up."),
+    "nothing_to_probe": _spec(409, ABANDON, "Write and index documents first."),
     "lease_conflict": _spec(409, ABANDON, "Another agent holds the lease; do not preempt."),
     "request_closed": _spec(409, ABANDON, "Give up this action."),
     "retention_not_met": _spec(409, ABANDON, "Give up this action."),
@@ -294,6 +299,30 @@ REGISTRY: dict[str, ErrorSpec] = {
     "external_action_error": _spec(409, ABANDON, "Re-read the action state."),
     "gone": _spec(410, ABANDON, "Give up; details carry the tombstone."),
     "reviewer_conflict": _spec(422, ABANDON, "Give up this action."),
+    "review_feedback_required": _spec(422, FIX_REQUEST, "Say why in feedback, then resend."),
+    "scope_unknown": _spec(422, FIX_REQUEST, "Use permissions listed in details.allowed."),
+    "review_note_required": _spec(422, FIX_REQUEST, "Say why in note, then resend."),
+    # Quality control 1.0.
+    "acceptance_self_report": _spec(403, ABANDON,
+                                    "The executor cannot report its own acceptance; "
+                                    "another agent or a person must."),
+    "acceptance_locked": _spec(403, ABANDON,
+                               "Acceptance is locked after the first claim; ask the task's "
+                               "creator or a person."),
+    "audit_view_required": _spec(422, FIX_REQUEST, "Call get_audit_view, then resend."),
+    "acceptance_items_incomplete": _spec(422, FIX_REQUEST,
+                                         "Give a PASS result for every acceptance item."),
+    "quality_gates_unmet": _spec(409, FIX_REQUEST,
+                                 "Report the gates in details.missing as PASS, then retry."),
+    "auto_release_cap_reached": _spec(409, FIX_REQUEST,
+                                      "Hand off to REVIEWING; an audit releases it today."),
+    "quality_circuit_open": _spec(409, FIX_REQUEST,
+                                  "The domain's circuit is open: hand off to REVIEWING."),
+    "claim_already_refuted": _spec(409, ABANDON, "The claim was refuted; report a new commit."),
+    "escape_closed": _spec(409, ABANDON, "The escape is already FIXED or WAIVED."),
+    "sample_unavailable": _spec(409, ABANDON,
+                                "Someone else took the sample or it was already judged."),
+    "circuit_not_open": _spec(409, ABANDON, "The domain's circuit is already closed."),
     "share_cross_root_not_allowed": _spec(
         422, ABANDON, "Use cross-tree collaboration instead."
     ),
@@ -341,12 +370,17 @@ REGISTRY: dict[str, ErrorSpec] = {
 
 # Soft-constraint warnings (PRD §6 warnings[]): never errors, never rejections.
 WARNING_CODES: dict[str, str] = {
+    "promotion_below_threshold": "The domain was promoted below the promotion threshold.",
+    "gate_source_downgraded": "Only a trusted runner reports RUNNER results; recorded as "
+                              "AGENT_CLAIM.",
     "secrets_not_imported": "Imported tokens must be rotated and users must reset passwords.",
     "keys_rotated": "A restored workspace has new keys; rotate them and re-issue agent tokens.",
     "alias_redirected": "Read through a renamed alias; use the current alias or id.",
     "legacy_alias": "Address predates the grammar; accepted, but 2026-11 rejects new ones.",
     "dangling_ref": "A $ref or part does not resolve; stored as written.",
     "namespace_auto_registered": "Namespace registered implicitly; 2026-11 requires it first.",
+    "namespace_unchanged": "The new key's prefix is not a registered namespace; the "
+    "document stayed where it was. Register the namespace and rename again to move it.",
     "namespace_undocumented": "The namespace readme is still a generated stub.",
     "frontmatter_missing": "Fields the namespace readme requires are missing.",
     "doc_key_pattern_mismatch": "doc_key does not match the namespace pattern.",

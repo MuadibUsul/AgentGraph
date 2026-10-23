@@ -19,7 +19,8 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------------ app
     app_name: str = "AgentGraph"
-    app_version: str = "3.2.1"
+    # Bump on every release and add notes in app/services/releases.py.
+    app_version: str = "3.5.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -96,6 +97,21 @@ class Settings(BaseSettings):
     # Token tree (AG-ID-02): issue_child_token stays off until an operator
     # enables it (PRD gate: root/branch split, lineage and revocation first).
     child_token_issuance: bool = False
+
+    # ------------------------------------- quality control 1.0 (v3.32)
+    # Gate results, audits, claims, samples and escapes are always recorded;
+    # QUALITY_CONTROL=true enforces the release matrix (tiers, gates, audit
+    # view, cited clauses, circuit) on reviews and hand-offs.
+    quality_control: bool = False
+    quality_tier1_sample_rate: float = Field(default=0.10, ge=0, le=1)  # Q-1
+    quality_tier2_sample_rate: float = Field(default=0.20, ge=0, le=1)  # Q-2
+    quality_auto_merge_daily_cap: int = Field(default=20, ge=0)  # Q-3
+    quality_circuit_failures: int = Field(default=3, ge=1)  # Q-4
+    quality_promotion_min_completed: int = Field(default=30, ge=1)  # Q-6
+    quality_promotion_max_escape_rate: float = Field(default=0.02, ge=0, le=1)  # Q-6
+    quality_demotion_escape_rate: float = Field(default=0.05, ge=0, le=1)  # Q-7
+    quality_risk_artifact_bytes: int = Field(default=200_000, ge=1)  # Q-9
+    quality_sample_overdue_days: int = Field(default=7, ge=1)  # Q-10
 
     # ------------------------------------------- backups (AG-ST-10, R1.3)
     # Archives go to BACKUP_DIR, which must live on other storage than the
@@ -183,7 +199,7 @@ class Settings(BaseSettings):
     outbound_allow_private_networks: bool = True
     outbound_allowed_hosts: list[str] = Field(default_factory=list)
     outbound_signing_secret: str | None = None
-    webhook_max_delivery_attempts: int = Field(default=6, ge=1, le=20)
+    webhook_max_delivery_attempts: int = Field(default=9, ge=1, le=20)
     webhook_batch_size: int = Field(default=100, ge=1, le=1000)
 
     # ---------------------------------------------------------------- quota
@@ -205,6 +221,12 @@ class Settings(BaseSettings):
     index_worker_enabled: bool = True
     index_worker_interval_seconds: float = Field(default=1.0, ge=0.1, le=60)
     index_worker_batch: int = Field(default=20, ge=1, le=500)
+    # Scheduled exports (AG-ST-02 point 6): a weekly full baseline and daily
+    # increments per root tenant, kept this many days. Off by default.
+    scheduled_exports: bool = False
+    scheduled_export_keep_days: int = Field(default=30, ge=1, le=365)
+    # The daily self_recall@50 probe (AG-ST-12).
+    retrieval_probe_enabled: bool = True
     index_max_attempts: int = Field(default=5, ge=1, le=50)
 
     # ------------------------------------------------ cost control (AG-ST-15)

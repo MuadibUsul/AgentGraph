@@ -128,6 +128,21 @@ class OutputTo(StrictModel):
     doc_key_pattern: str | None = Field(default=None, max_length=256)
 
 
+class AcceptanceItem(StrictModel):
+    """One acceptance item (quality control 1.0 §3.1)."""
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    text: str = Field(min_length=1, max_length=2_000)
+    kind: Literal["AUTO", "MANUAL"] = "MANUAL"
+
+
+def _unique_acceptance(items: list[AcceptanceItem]) -> list[AcceptanceItem]:
+    ids = [item.id for item in items]
+    if len(ids) != len(set(ids)):
+        raise ValueError("acceptance item ids must be unique")
+    return items
+
+
 class TaskCreateRequest(StrictModel):
     task_key: str | None = Field(
         default=None, pattern=_KEY_PATTERN + "$", max_length=128
@@ -156,8 +171,16 @@ class TaskCreateRequest(StrictModel):
     kind: Literal["work", "question", "escalation", "peer_review"] = "work"
     require_continuation: bool = False
     mentions: list[str] = Field(default_factory=list, max_length=20)
+    acceptance: list[AcceptanceItem] = Field(
+        default_factory=list, max_length=50,
+        description="Acceptance items the change is judged against; locked at the first claim")
     agent: str | None = None
     session_batch_id: uuid.UUID | None = None
+
+    @field_validator("acceptance")
+    @classmethod
+    def _acceptance(cls, value: list[AcceptanceItem]) -> list[AcceptanceItem]:
+        return _unique_acceptance(value)
 
     @field_validator("agent")
     @classmethod
@@ -285,9 +308,21 @@ REVIEW_APPROVE_STATUSES: tuple[str, ...] = ("DONE", "HANDOFF", "READY")
 REVIEW_REJECT_STATUSES: tuple[str, ...] = ("READY", "IN_PROGRESS")
 
 
+class AuditItemResult(StrictModel):
+    item_id: str = Field(min_length=1, max_length=64)
+    result: Literal["PASS", "FAIL"]
+
+
 class TaskReviewRequest(StrictModel):
     decision: Literal["approve", "reject"]
     feedback: str | None = Field(default=None, max_length=8_000)
+    items: list[AuditItemResult] = Field(
+        default_factory=list, max_length=50,
+        description="Per acceptance item results; an approval must cover every item with PASS")
+    cited_clauses: list[str] = Field(
+        default_factory=list, max_length=50,
+        description="Spec clauses the verdict rests on; required for a rejection when "
+                    "quality control is enforced")
     expected_version: int | None = Field(default=None, ge=1)
     next_status: str | None = Field(
         default=None,
@@ -356,7 +391,13 @@ class SlotPatchRequest(StrictModel):
         description="On 409 version_conflict include current_content (bodies <= 64 KiB)",
     )
     ops: list[dict[str, Any]] = Field(min_length=1, max_length=100)
-    expected_version: int = Field(ge=1)
+    expected_version: int = Field(
+        ge=0, description="0 creates the slot: the patch applies to an empty state"
+    )
+    namespace: Namespace | None = Field(
+        default=None, pattern=_NAMESPACE_PATTERN + "$",
+        description="Namespace of a slot created with expected_version=0",
+    )
     lease_epoch: int | None = Field(default=None, ge=0)
     lease_seconds: int | None = Field(
         default=None, ge=5, le=settings.max_task_lease_seconds
@@ -541,6 +582,10 @@ class DocumentQueryRequest(StrictModel):
     include_archived: bool = False
     include_shared: bool = Field(
         default=False, description="Also search resources other nodes shared with you")
+    include_lifecycle: list[Literal["superseded", "expired", "cold"]] = Field(
+        default_factory=list,
+        description="Under 2026-11 these are left out unless named here (AG-ST-11)")
+    review_verdict: Literal["pass", "pass_with_notes", "fail"] | None = None
     mode: Literal["auto", "semantic", "keyword", "hybrid"] = "hybrid"
 
     @model_validator(mode="after")
@@ -672,6 +717,14 @@ class AgentTokenUpdateRequest(StrictModel):
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)
     per_minute_limit: int | None = Field(default=None, ge=1, le=1_000_000)
     monthly_token_budget: int | None = Field(default=None, ge=0)
+    scope_add: list[str] | None = Field(
+        default=None, max_length=50,
+        description="Permissions added to the role package (e.g. doc:create); replaces the list",
+    )
+    scope_remove: list[str] | None = Field(
+        default=None, max_length=50,
+        description="Permissions removed from the role package (e.g. proposal:vote)",
+    )
 
     @field_validator("agent_signature")
     @classmethod
@@ -695,6 +748,8 @@ class AgentTokenUpdateRequest(StrictModel):
                 self.expires_in_days,
                 self.per_minute_limit,
                 self.monthly_token_budget,
+                self.scope_add,
+                self.scope_remove,
             )
         ):
             raise ValueError("at least one token field is required")
@@ -790,6 +845,10 @@ class WhoAmIResponse(BaseModel):
 
 
 class TaskSummary(BaseModel):
+    surfaced: bool = Field(
+        default=False,
+        description="Waiting on a person or a verdict for over 24 hours (computed)",
+    )
     id: uuid.UUID
     canonical_id: str | None = Field(
         default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
@@ -837,6 +896,8 @@ class TaskSummary(BaseModel):
 
 class TaskOut(TaskSummary):
     description: str | None = None
+    acceptance: list[dict[str, Any]] = Field(default_factory=list)
+    acceptance_locked: bool = False
     input_context: dict[str, Any] = Field(default_factory=dict)
     output_artifact: dict[str, Any] = Field(default_factory=dict)
     handoff_brief: dict[str, Any] | None = None
@@ -1471,6 +1532,11 @@ class DocumentSummary(BaseModel):
     last_human_edit: dict[str, Any] | None = None
     tenant_alias: str | None = Field(
         default=None, description="Owning node, on results that may come from shares")
+    lifecycle: str = Field(default="active",
+                           description="active | superseded | expired | cold (computed)")
+    superseded_by: dict[str, Any] | None = None
+    reviews: list[Any] = Field(default_factory=list,
+                               description="Peer reviews bound to versions (AG-CO-06)")
     score: float | None = None
     archived_at: datetime | None = None
     archived_by: str | None = None
@@ -1767,6 +1833,8 @@ class AgentTokenOut(BaseModel):
     last_seen_at: datetime | None
     expires_at: datetime | None = None
     revoked_at: datetime | None = None
+    scope_add: list[str] = Field(default_factory=list)
+    scope_remove: list[str] = Field(default_factory=list)
     per_minute_limit: int | None = None
     monthly_token_budget: int | None = None
 
@@ -2230,6 +2298,8 @@ class WebhookRuleOut(BaseModel):
     name: str
     url: str
     secret_set: bool
+    secret: str | None = Field(
+        default=None, description="Only in the create response, when the server generated it")
     event_types: list[str]
     tables: list[str]
     namespaces: list[str]
@@ -2349,3 +2419,183 @@ class DocumentTaintRequest(StrictModel):
     sources: list[Any] = Field(default_factory=list)
     note: str | None = Field(default=None, max_length=4_000)
     expected_version: int | None = Field(default=None, ge=1)
+
+
+# ------------------------------------------------------------- v3.27 Phase 3
+
+
+class DocumentSupersedeRequest(StrictModel):
+    old: DocRef
+    new: DocRef
+    reason: str = Field(default="", max_length=2_000)
+
+
+class WatermarkSetRequest(StrictModel):
+    cursor: str = Field(min_length=1, max_length=200)
+
+
+class PeerReviewRequest(StrictModel):
+    output: DocRef
+    reviewer: str = Field(min_length=3, max_length=160)
+    kind: Literal["review", "red_team", "second_opinion"] = "review"
+    rubric: str = Field(default="", max_length=4_000)
+    independent: bool = True
+    due_at: datetime | None = None
+
+
+class PeerReviewFinding(StrictModel):
+    severity: Literal["info", "minor", "major", "critical"]
+    location: str = Field(default="", max_length=500)
+    note: str = Field(min_length=1, max_length=4_000)
+
+
+class PeerReviewSubmitRequest(StrictModel):
+    verdict: Literal["pass", "pass_with_notes", "fail"]
+    findings: list[PeerReviewFinding] = Field(default_factory=list, max_length=100)
+    summary: str = Field(default="", max_length=2_000)
+
+
+class ResourceDefineRequest(StrictModel):
+    resource_key: str = Field(min_length=1, max_length=128)
+    capacity: int = Field(default=1, ge=1, le=100)
+    description: str | None = Field(default=None, max_length=2_000)
+    max_hold_seconds: int = Field(default=900, ge=1, le=3600)
+
+
+class ResourceAcquireRequest(StrictModel):
+    resource_key: str = Field(min_length=1, max_length=128)
+    ttl_seconds: int = Field(default=300, ge=1, le=3600)
+    wait_seconds: int = Field(default=0, ge=0, le=25)
+    queue: bool = True
+    queue_ticket: str | None = Field(default=None, max_length=40)
+    agent: str | None = None
+
+
+# ------------------------------------------------------------- v3.28 R3.2
+
+
+class RetrievalEvalRequest(StrictModel):
+    dataset: str = Field(default="v1", max_length=64)
+    k: list[int] = Field(default_factory=lambda: [10, 50], min_length=1, max_length=5)
+
+
+class RetrievalGateRequest(StrictModel):
+    baseline: dict[str, Any]
+    result: dict[str, Any]
+    metric: str = Field(default="recall@50", max_length=32)
+    max_drop: float = Field(default=0.03, ge=0, le=1)
+
+
+class AttestationSubject(StrictModel):
+    token_id: str | None = Field(default=None, max_length=40)
+    doc_id: str | None = Field(default=None, max_length=256)
+    version: int | None = Field(default=None, ge=1)
+
+
+class AttestationRequest(StrictModel):
+    subject: AttestationSubject
+    audience: str = Field(min_length=1, max_length=256)
+    ttl_seconds: int = Field(default=900, ge=1, le=900)
+
+
+class ReindexRequest(StrictModel):
+    mode: Literal["repair", "full"] = Field(
+        default="repair",
+        description="repair: only documents whose index is wrong; full: every document",
+    )
+    confirm: str | None = Field(
+        default=None, max_length=16, description="REBUILD, required for mode=full"
+    )
+
+
+class InboxAckRequest(StrictModel):
+    up_to_event_seq: int = Field(ge=0, description="Acknowledge everything up to this seq")
+
+
+# ----------------------------------------------------- quality control 1.0
+
+GateKind = Literal["CI", "TESTS", "ACCEPTANCE", "SPEC_LINT", "CUSTOM"]
+
+
+class AcceptanceUpdateRequest(StrictModel):
+    acceptance: list[AcceptanceItem] = Field(max_length=50)
+    expected_version: int | None = Field(default=None, ge=1)
+
+    @field_validator("acceptance")
+    @classmethod
+    def _acceptance(cls, value: list[AcceptanceItem]) -> list[AcceptanceItem]:
+        return _unique_acceptance(value)
+
+
+class GateResultRequest(StrictModel):
+    task_key: str | None = Field(default=None, max_length=128,
+                                 description="The task (key or canonical id)")
+    task_id: str | None = Field(default=None, max_length=64)
+    claim_id: uuid.UUID | None = None
+    gate_kind: GateKind
+    status: Literal["PASS", "FAIL", "ERROR", "SKIPPED"]
+    source: Literal["RUNNER", "AGENT_CLAIM"] = "AGENT_CLAIM"
+    evidence: dict[str, Any] = Field(
+        default_factory=dict,
+        description="{run_url, commit_sha, summary, counts:{passed,failed}}; ACCEPTANCE "
+                    "also carries items:[{item_id, result}]")
+
+    @model_validator(mode="after")
+    def _one_unit(self) -> GateResultRequest:
+        task = self.task_key or self.task_id
+        if bool(task) == bool(self.claim_id):
+            raise ValueError("name exactly one of task_key / task_id or claim_id")
+        if len(json.dumps(self.evidence, default=str)) > 16_000:
+            raise ValueError("evidence is limited to 16 KB")
+        return self
+
+
+class ChangeClaimRequest(StrictModel):
+    external_ref: str = Field(min_length=1, max_length=2_000)
+    commit_sha: str = Field(min_length=7, max_length=64, pattern=r"^[0-9a-fA-F]+$")
+    related_doc_key: str | None = Field(default=None, max_length=256)
+    related_task_key: str | None = Field(default=None, max_length=128)
+
+
+class ChangeClaimVerifyRequest(StrictModel):
+    verdict: Literal["VERIFIED", "REFUTED"]
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class SampleVerdictRequest(StrictModel):
+    verdict: Literal["OK", "DEFECT"]
+    root_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC", "NONE"] | None = None
+    severity: Literal["S1", "S2", "S3"] = "S3"
+    description: str | None = Field(default=None, max_length=8_000)
+
+
+class AutonomyTierRequest(StrictModel):
+    scope_type: Literal["NAMESPACE", "REPO_PATH"]
+    scope_key: str = Field(min_length=1, max_length=512)
+    tier: int = Field(ge=0, le=2)
+
+
+class CircuitCloseRequest(StrictModel):
+    note: str = Field(min_length=1, max_length=2_000)
+
+
+class EscapeCreateRequest(StrictModel):
+    task_key: str | None = Field(default=None, max_length=128)
+    claim_id: uuid.UUID | None = None
+    source: Literal["PROD_INCIDENT", "HUMAN_SAMPLE", "EXTERNAL_REPORT"] = "PROD_INCIDENT"
+    severity: Literal["S1", "S2", "S3"]
+    description: str = Field(min_length=1, max_length=8_000)
+    root_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC", "NONE"] | None = None
+
+
+class EscapeResolveRequest(StrictModel):
+    status: Literal["FIXED", "WAIVED"]
+    fix_ref: str | None = Field(default=None, max_length=2_000)
+    waive_reason: str | None = Field(default=None, max_length=2_000)
+    root_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC", "NONE"] | None = None
+
+
+class PoisonTaskRequest(StrictModel):
+    task: TaskCreateRequest
+    defect_description: str = Field(min_length=1, max_length=8_000)
+    expected_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC"]

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useI18n } from "../i18n";
 import type {
@@ -15,6 +15,8 @@ import type {
   WebhookRule,
 } from "../types";
 import { relativeTime } from "../types";
+import { BudgetCircuits } from "./circuits";
+import { ProposalDiff } from "./proposal-diff";
 import { Empty, IconCheck, IconClose, IconPulse, Modal, Spinner } from "./ui";
 
 type Section = "proposals" | "policies" | "operations" | "access";
@@ -96,7 +98,13 @@ export function GovernanceView({
       await action();
       await onRefresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t("Operation failed."));
+      if (caught instanceof DOMException && caught.name === "TimeoutError") {
+        // The server may still finish the action: say so and show the latest state.
+        setError(t("The request timed out; the action may still have completed. Showing the latest state."));
+        await onRefresh().catch(() => undefined);
+      } else {
+        setError(caught instanceof Error ? caught.message : t("Operation failed."));
+      }
     } finally {
       setBusy(null);
     }
@@ -286,15 +294,37 @@ export function GovernanceView({
     });
   }
 
-  async function reindex() {
-    await run("reindex", async () => {
-      const result = await request<{ chunks: number }>(
+  // Index repair (2026-10-22 retest): only broken indexes by default; a full
+  // rebuild re-embeds everything, so it is a separate, confirmed action.
+  const [indexHealth, setIndexHealth] = useState<IndexHealth | null>(null);
+  const loadIndexHealth = useCallback(async () => {
+    try {
+      setIndexHealth(await request<IndexHealth>(`/v1/admin/workspaces/${workspaceId}/index-status`));
+    } catch {
+      setIndexHealth(null);
+    }
+  }, [request, workspaceId]);
+  useEffect(() => {
+    void loadIndexHealth();
+  }, [loadIndexHealth]);
+
+  async function reindex(mode: "repair" | "full") {
+    if (
+      mode === "full" &&
+      !window.confirm(t("A full rebuild re-embeds every document and spends embedding quota. Continue?"))
+    ) {
+      return;
+    }
+    await run(`reindex:${mode}`, async () => {
+      const result = await request<{ queued: number }>(
         `/v1/admin/workspaces/${workspaceId}/reindex`,
-        { method: "POST" },
+        { method: "POST", body: JSON.stringify(mode === "full" ? { mode, confirm: "REBUILD" } : { mode }) },
       );
-      notify(t("Rebuilt {count} retrieval chunk(s).", { count: result.chunks }));
+      notify(t("Queued {count} document(s) for indexing; they are embedded in the background.", { count: result.queued }));
+      await loadIndexHealth();
     });
   }
+  const broken = indexHealth ? indexHealth.repairable + indexHealth.failed_jobs : 0;
 
   const sections: Array<{ id: Section; label: string; count?: number }> = [
     { id: "proposals", label: t("Proposals"), count: pending.length },
@@ -312,9 +342,26 @@ export function GovernanceView({
             {t("Review proposals, gate write paths, sign webhooks, approve outbound actions and keep budgets observable.")}
           </p>
         </div>
-        <button type="button" className="button ghost" onClick={() => void reindex()} disabled={busy === "reindex"}>
-          {busy === "reindex" ? <Spinner /> : <IconPulse />} {t("Reindex retrieval")}
-        </button>
+        <div className="index-actions">
+          <button
+            type="button"
+            className="button ghost"
+            onClick={() => void reindex("repair")}
+            disabled={busy !== null || broken === 0}
+            title={broken === 0 ? t("Every index is current; nothing to repair.") : undefined}
+          >
+            {busy === "reindex:repair" ? <Spinner /> : <IconPulse />} {t("Repair broken indexes")}
+            <span className={`tab-count ${broken ? "alert" : ""}`}>{broken}</span>
+          </button>
+          <button type="button" className="button ghost small" onClick={() => void reindex("full")} disabled={busy !== null}>
+            {t("Full rebuild…")}
+          </button>
+          {indexHealth && indexHealth.pending_jobs + indexHealth.deferred_jobs > 0 && (
+            <span className="muted small-note">
+              {t("{count} waiting to be indexed", { count: indexHealth.pending_jobs + indexHealth.deferred_jobs })}
+            </span>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -364,6 +411,13 @@ export function GovernanceView({
                     {proposal.tainted && <span className="pill rose">{t("tainted source")}</span>}
                   </div>
                   <pre className="proposal-body">{proposal.content.slice(0, 800)}</pre>
+                  {proposal.content.length > 800 && (
+                    <p className="proposal-truncated muted">
+                      {t("Preview: first 800 of {total} characters. Open Review for the changes and the full text.", {
+                        total: proposal.content.length.toLocaleString(),
+                      })}
+                    </p>
+                  )}
                   {proposal.conflict_details && (
                     <div className="inline-error">{t("Rebase conflict — review the latest document before applying.")}</div>
                   )}
@@ -591,6 +645,7 @@ export function GovernanceView({
             <button type="button" className="button primary" onClick={() => void saveBudget()}>
               {t("Save budget")}
             </button>
+            <BudgetCircuits request={request} />
 
             <div className="panel-toolbar spaced">
               <div>
@@ -639,7 +694,8 @@ export function GovernanceView({
                 type="button"
                 className="button danger"
                 onClick={() => void rejectProposal(selectedProposal)}
-                disabled={busy !== null}
+                disabled={busy !== null || !reviewNote.trim()}
+                title={reviewNote.trim() ? undefined : t("A rejection needs a reason: write a review note first.")}
               >
                 {t("Reject")}
               </button>
@@ -659,7 +715,7 @@ export function GovernanceView({
             <span>{t("{count} vote(s)", { count: selectedProposal.vote_count })}</span>
             <span>{t("score {score}", { score: selectedProposal.vote_score.toFixed(1) })}</span>
           </div>
-          <pre className="proposal-body tall">{selectedProposal.content}</pre>
+          <ProposalDiff proposal={selectedProposal} workspaceId={workspaceId} request={request} />
           <label className="field">
             <span>{t("Review note")}</span>
             <textarea rows={3} value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} />
@@ -798,4 +854,11 @@ export function GovernanceView({
       )}
     </section>
   );
+}
+
+interface IndexHealth {
+  pending_jobs: number;
+  deferred_jobs: number;
+  failed_jobs: number;
+  repairable: number;
 }

@@ -741,6 +741,24 @@ async def rotate_agent_token(
     return AgentTokenCreatedResponse(token=agent_token_out(token), api_key=raw_key)
 
 
+def _apply_delta(token: AgentToken, add: list[str] | None, remove: list[str] | None) -> None:
+    """Permission deltas on the role package (token delegation 1.0, stage A)."""
+    from app.auth import ALL_PERMISSIONS
+
+    # Agent tokens are never COMMANDER (AgentRole has no such member), so the
+    # spec's "no delta on a commander" holds by construction.
+    for field, values in (("scope_add", add), ("scope_remove", remove)):
+        unknown = sorted(set(values or []) - set(ALL_PERMISSIONS))
+        if unknown:
+            raise ApiError(422, "scope_unknown", "unknown permissions in the delta",
+                           details={"field": field, "unknown": unknown,
+                                    "allowed": list(ALL_PERMISSIONS)})
+    if add is not None:
+        token.scope_add = sorted(set(add))
+    if remove is not None:
+        token.scope_remove = sorted(set(remove))
+
+
 async def update_agent_token(
     session: AsyncSession,
     workspace: Workspace,
@@ -781,6 +799,8 @@ async def update_agent_token(
         token.per_minute_limit = request.per_minute_limit
     if request.monthly_token_budget is not None:
         token.monthly_token_budget = request.monthly_token_budget
+    if request.scope_add is not None or request.scope_remove is not None:
+        _apply_delta(token, request.scope_add, request.scope_remove)
     grant_changed = any(
         value is not None
         for value in (
@@ -790,6 +810,8 @@ async def update_agent_token(
             request.expires_in_days,
             request.per_minute_limit,
             request.monthly_token_budget,
+            request.scope_add,
+            request.scope_remove,
         )
     )
     if grant_changed:

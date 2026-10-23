@@ -20,7 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import Principal, effective_agent, require_permission
 from app.config import get_settings
 from app.errors import ApiError, Forbidden, LeaseConflict
-from app.models import AgentToken, CollabTask, Lease, SharedDocument, TaskStatus
+from app.models import (
+    AgentToken,
+    CollabTask,
+    ContextSlot,
+    Lease,
+    SharedDocument,
+    TaskStatus,
+)
 from app.schemas import (
     LeaseHeartbeatRequest,
     LeaseHeartbeatResponse,
@@ -226,12 +233,17 @@ async def touch(session: AsyncSession, task: CollabTask, now: datetime) -> None:
 async def heartbeat(
     session: AsyncSession, principal: Principal, lease_id: str, request: LeaseHeartbeatRequest
 ) -> LeaseHeartbeatResponse:
-    require_permission(principal, "task:claim")
     agent = effective_agent(principal, request.agent)
     lease = await _get_lease(session, principal.workspace.id, lease_id)
+    require_permission(principal, "state:write" if lease.resource_kind == "slot"
+                       else "task:claim")
     if lease.holder != agent:
         raise ApiError(403, "not_lease_holder", "only the lease holder may heartbeat",
                        details={"lease_id": lease_id, "holder": lease.holder})
+    if lease.resource_kind == "resource":
+        return await _heartbeat_resource(session, lease, request)
+    if lease.resource_kind == "slot":
+        return await _heartbeat_slot(session, lease, request)
     task = await session.get(CollabTask, lease.resource_id, with_for_update=True)
     now = await db_now(session)
     if (
@@ -266,6 +278,80 @@ async def heartbeat(
     )
 
 
+async def _heartbeat_resource(
+    session: AsyncSession, lease: Lease, request: LeaseHeartbeatRequest
+) -> LeaseHeartbeatResponse:
+    """Scarce-resource leases (AG-CO-07) heartbeat the same way, with no task row."""
+    now = await db_now(session)
+    if lease.state != "active" or lease.expires_at <= now:
+        raise ApiError(409, "lease_lost", "your lease on this resource ended; acquire it again",
+                       details={"lease_id": lease.lease_id, "ended": lease.state,
+                                "end_reason": lease.end_reason,
+                                "resource_key": lease.resource_ref})
+    lease.expires_at = now + timedelta(seconds=lease.ttl_seconds)
+    lease.last_heartbeat_at = now
+    lease.heartbeat_missed_at = None
+    if request.note is not None:
+        lease.heartbeat_note = request.note
+    if request.progress is not None:
+        lease.progress = request.progress
+    await session.commit()
+    return LeaseHeartbeatResponse(
+        lease_id=lease.lease_id, expires_at=lease.expires_at,
+        fencing_token=lease.fencing_token, heartbeat_interval_s=lease.heartbeat_interval_s,
+    )
+
+
+async def _slot_for(session: AsyncSession, lease: Lease) -> ContextSlot | None:
+    slot = await session.get(ContextSlot, lease.resource_id, with_for_update=True)
+    if (slot is None or slot.locked_by != lease.holder
+            or slot.lease_epoch != lease.fencing_token):
+        return None
+    return slot
+
+
+async def _heartbeat_slot(
+    session: AsyncSession, lease: Lease, request: LeaseHeartbeatRequest
+) -> LeaseHeartbeatResponse:
+    """State-slot locks (AG-CO-07 point 4) heartbeat like any other lease."""
+    now = await db_now(session)
+    slot = await _slot_for(session, lease)
+    if slot is None or lease.state != "active" or lease.expires_at <= now:
+        raise ApiError(409, "lease_lost", "your lock on this state slot ended; write with "
+                       "lease_seconds to take it again",
+                       details={"lease_id": lease.lease_id, "ended": lease.state,
+                                "end_reason": lease.end_reason,
+                                "slot_key": lease.resource_ref})
+    expires = now + timedelta(seconds=lease.ttl_seconds)
+    slot.lock_expires_at = expires
+    lease.expires_at = expires
+    lease.last_heartbeat_at = now
+    lease.heartbeat_missed_at = None
+    if request.note is not None:
+        lease.heartbeat_note = request.note
+    if request.progress is not None:
+        lease.progress = request.progress
+    await session.commit()
+    return LeaseHeartbeatResponse(
+        lease_id=lease.lease_id, expires_at=expires, fencing_token=lease.fencing_token,
+        heartbeat_interval_s=lease.heartbeat_interval_s,
+    )
+
+
+async def _end_slot_lease(session: AsyncSession, lease: Lease, *, state: str,
+                          reason: str) -> None:
+    now = await db_now(session)
+    slot = await _slot_for(session, lease)
+    lease.state = state
+    lease.ended_at = now
+    lease.end_reason = reason
+    if slot is not None:
+        slot.locked_by = None
+        slot.lock_expires_at = None
+        slot.lease_epoch += 1
+        slot.updated_at = now
+
+
 async def release(
     session: AsyncSession, principal: Principal, lease_id: str, *, reason: str | None,
     agent: str | None,
@@ -277,6 +363,16 @@ async def release(
         raise ApiError(403, "not_lease_holder", "only the lease holder may release it",
                        details={"lease_id": lease_id, "holder": lease.holder})
     if lease.state != "active":
+        return lease_out(lease)
+    if lease.resource_kind == "resource":
+        from app.services.resources import release_lease
+
+        await release_lease(session, lease)
+        await session.commit()
+        return lease_out(lease)
+    if lease.resource_kind == "slot":
+        await _end_slot_lease(session, lease, state="released", reason="released")
+        await session.commit()
         return lease_out(lease)
     now = await db_now(session)
     lease.state = "released"
@@ -504,6 +600,7 @@ async def flag_missed_heartbeats(session: AsyncSession, limit: int = 200) -> int
             select(Lease)
             .where(
                 Lease.state == "active",
+                Lease.resource_kind != "slot",  # slot locks renew by writing
                 Lease.heartbeat_missed_at.is_(None),
                 Lease.expires_at > now,
             )
@@ -545,11 +642,42 @@ async def revoke_holder(
     session: AsyncSession, workspace_id: uuid.UUID, token: AgentToken, *, reason: str
 ) -> list[str]:
     """Release every lease a revoked or retired token holds (AG-CO-03 6)."""
+    from app.services.resources import release_lease
+
+    held = (
+        await session.execute(
+            select(Lease).where(
+                Lease.workspace_id == workspace_id,
+                Lease.state == "active",
+                Lease.resource_kind == "resource",
+                or_(Lease.holder_token_id == token.id,
+                    and_(Lease.holder_token_id.is_(None),
+                         Lease.holder == token.agent_signature)),
+            )
+        )
+    ).scalars().all()
+    for lease in held:
+        await release_lease(session, lease, reason=reason)
+    slot_leases = (
+        await session.execute(
+            select(Lease).where(
+                Lease.workspace_id == workspace_id,
+                Lease.state == "active",
+                Lease.resource_kind == "slot",
+                or_(Lease.holder_token_id == token.id,
+                    and_(Lease.holder_token_id.is_(None),
+                         Lease.holder == token.agent_signature)),
+            )
+        )
+    ).scalars().all()
+    for lease in slot_leases:
+        await _end_slot_lease(session, lease, state="revoked", reason=reason)
     rows = (
         await session.execute(
             select(Lease.resource_id).where(
                 Lease.workspace_id == workspace_id,
                 Lease.state == "active",
+                Lease.resource_kind == "task",
                 or_(Lease.holder_token_id == token.id,
                     and_(Lease.holder_token_id.is_(None),
                          Lease.holder == token.agent_signature)),

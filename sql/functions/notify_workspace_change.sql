@@ -17,6 +17,16 @@ DECLARE
     event_refs JSONB := '{}'::jsonb;
     event_label TEXT;
     ws UUID;
+    -- Delivery (2026-10-22 "every change gets a response" protocol): the
+    -- catalog kind, its priority and the people who must hear about it.
+    delivery_kind TEXT;
+    delivery_priority INT;
+    delivery_to JSONB := '[]'::jsonb;
+    delivery_note TEXT;
+    event_details JSONB;
+    event_actor TEXT := NULLIF(current_setting('app.lineage_stamp', true), '')::jsonb
+                        ->> 'principal';
+    executor TEXT;
 BEGIN
     row_data := to_jsonb(NEW);
     IF TG_OP = 'UPDATE' THEN
@@ -56,6 +66,12 @@ BEGIN
             event_targets := event_targets || current_setting('app.extra_targets', true)::jsonb;
         END IF;
         event_label := row_data->>'doc_key';
+        IF row_data->>'verification_status' = 'VERIFIED'
+           AND old_data->>'verification_status' IS DISTINCT FROM 'VERIFIED' THEN
+            delivery_kind := 'document.verified';
+            delivery_priority := 1;
+            delivery_to := jsonb_build_array(row_data->>'updated_by', row_data->>'created_by');
+        END IF;
     ELSIF TG_TABLE_NAME = 'collab_tasks' THEN
         IF TG_OP = 'INSERT' THEN
             event_type := CASE WHEN row_data->>'assignee' IS NOT NULL
@@ -80,6 +96,53 @@ BEGIN
             'task_id', row_data->>'canonical_id', 'alias', row_data->>'task_key',
             'version', (row_data->>'version')::int, 'status', row_data->>'status');
         event_label := row_data->>'task_key';
+        -- Who did the work: the holder, or whoever handed it off for review.
+        executor := COALESCE(row_data->>'claimed_by', row_data->>'lease_owner',
+                             old_data->>'claimed_by', old_data->>'lease_owner',
+                             row_data->>'handed_off_by');
+        IF event_type = 'task.claimed' THEN
+            delivery_kind := 'task.claimed';
+            delivery_priority := 1;
+            delivery_to := jsonb_build_array(row_data->>'created_by');
+        ELSIF event_type = 'task.status_changed' THEN
+            delivery_note := row_data->>'review_feedback';
+            CASE
+                WHEN row_data->>'status' = 'REVIEWING' THEN
+                    delivery_kind := 'task.review_requested';
+                    delivery_priority := 1;
+                    delivery_to := jsonb_build_array(row_data->>'created_by', 'human');
+                    delivery_note := NULL;
+                WHEN row_data->>'status' = 'DONE' THEN
+                    delivery_kind := 'task.done';
+                    delivery_priority := 0;
+                    delivery_to := jsonb_build_array(row_data->>'created_by', executor);
+                WHEN row_data->>'status' = 'FAILED' THEN
+                    delivery_kind := 'task.failed';
+                    delivery_priority := 0;
+                    delivery_to := jsonb_build_array(row_data->>'created_by', executor);
+                WHEN row_data->>'status' IN ('AWAITING_HUMAN', 'WAITING_HUMAN') THEN
+                    delivery_kind := 'task.awaiting_human';
+                    delivery_priority := 0;
+                    delivery_to := jsonb_build_array(row_data->>'created_by', 'human');
+                WHEN row_data->>'status' = 'ESCALATED_TO_HUMAN' THEN
+                    delivery_kind := 'task.escalated';
+                    delivery_priority := 0;
+                    delivery_to := jsonb_build_array(row_data->>'created_by', executor, 'human');
+                WHEN row_data->>'status' = 'HANDOFF' THEN
+                    delivery_kind := 'task.handoff';
+                    delivery_priority := 1;
+                    delivery_to := jsonb_build_array(row_data->>'created_by', executor);
+                    delivery_note := NULL;
+                WHEN old_data->>'status' = 'REVIEWING'
+                     AND row_data->>'status' IN ('READY', 'IN_PROGRESS') THEN
+                    delivery_kind := 'task.review_rejected';
+                    delivery_priority := 0;
+                    delivery_to := jsonb_build_array(
+                        COALESCE(old_data->>'handed_off_by', executor), row_data->>'created_by');
+                ELSE
+                    delivery_note := NULL;
+            END CASE;
+        END IF;
     ELSIF TG_TABLE_NAME = 'context_slots' THEN
         event_type := CASE WHEN TG_OP = 'INSERT' THEN 'slot.created' ELSE 'slot.updated' END;
         event_refs := jsonb_build_object(
@@ -95,6 +158,19 @@ BEGIN
         event_refs := jsonb_build_object('proposal_id', row_data->>'id',
                                          'alias', row_data->>'doc_key');
         event_label := row_data->>'doc_key';
+        IF TG_OP = 'INSERT' THEN
+            delivery_kind := 'proposal.created';
+            delivery_priority := 1;
+            delivery_to := jsonb_build_array('human');
+        ELSIF old_data->>'status' IS DISTINCT FROM row_data->>'status' THEN
+            delivery_kind := CASE row_data->>'status'
+                WHEN 'APPLIED' THEN 'proposal.applied'
+                WHEN 'REJECTED' THEN 'proposal.rejected'
+                WHEN 'SUPERSEDED' THEN 'proposal.superseded' END;
+            delivery_priority := CASE WHEN row_data->>'status' = 'SUPERSEDED' THEN 1 ELSE 0 END;
+            delivery_to := jsonb_build_array(row_data->>'created_by');
+            delivery_note := row_data->>'review_note';
+        END IF;
     ELSIF TG_TABLE_NAME = 'external_actions' THEN
         event_type := CASE WHEN TG_OP = 'INSERT' THEN 'action.created' ELSE 'action.updated' END;
         event_refs := jsonb_build_object('action_id', row_data->>'id',
@@ -136,10 +212,18 @@ BEGIN
             WHEN 'TENANT_ATTACHED' THEN 'tenant.attached'
             WHEN 'TENANT_DETACHED' THEN 'tenant.detached'
             WHEN 'TENANT_ADMIN_ACCESS' THEN 'tenant.admin_access'
+            WHEN 'WEBHOOK_DISABLED' THEN 'webhook.disabled'
+            WHEN 'DOC_SUPERSEDED' THEN 'doc.superseded'
+            WHEN 'PEER_REVIEW_SUBMITTED' THEN 'review.submitted'
+            WHEN 'RESOURCE_GRANTED' THEN 'resource.granted'
+            WHEN 'PLATFORM_RELEASED' THEN 'platform.released'
             WHEN 'ESCALATION_RESOLVED' THEN 'escalation.resolved'
             WHEN 'ESCALATION_REMINDER' THEN 'escalation.reminder'
             WHEN 'TASK_CHILDREN_DONE' THEN 'task.children_done'
             WHEN 'TASK_CONTINUATION' THEN 'task.continuation_written'
+            WHEN 'QUALITY_CIRCUIT_OPENED' THEN 'quality.circuit_opened'
+            WHEN 'QUALITY_TIER_DEMOTED' THEN 'quality.tier_demoted'
+            WHEN 'QUALITY_CLAIM_REFUTED' THEN 'quality.claim_refuted'
             ELSE 'timeline.' || lower(COALESCE(NULLIF(row_data->>'event_type', ''), 'event'))
         END;
         IF jsonb_typeof(row_data->'payload'->'targets') = 'array' THEN
@@ -154,6 +238,21 @@ BEGIN
                                 row_data->'payload'->>'task_key', '');
     ELSE
         event_type := TG_TABLE_NAME || '.' || lower(TG_OP);
+    END IF;
+
+    IF delivery_kind IS NOT NULL THEN
+        -- Recipients: the catalog's, plus targets already set; never the actor.
+        SELECT COALESCE(jsonb_agg(DISTINCT recipient), '[]'::jsonb) INTO event_targets
+        FROM jsonb_array_elements_text(event_targets || delivery_to) AS recipient
+        WHERE recipient IS NOT NULL AND recipient <> ''
+          AND recipient IS DISTINCT FROM event_actor;
+        event_details := jsonb_strip_nulls(jsonb_build_object(
+            'delivery_kind', delivery_kind,
+            'priority', delivery_priority,
+            'from_status', old_data->>'status',
+            'to_status', row_data->>'status',
+            'note', delivery_note,
+            'applied_version', row_data->'applied_version'));
     END IF;
 
     event_payload := jsonb_build_object(
@@ -186,7 +285,7 @@ BEGIN
         'locked_by_human', COALESCE(row_data->>'locked_by_human', 'false')::boolean,
         'event_type', COALESCE(row_data->>'event_type', row_data->'payload'->>'event_type', ''),
         'details', CASE WHEN TG_TABLE_NAME = 'timeline_streams'
-                        THEN row_data->'payload'->'details' END,
+                        THEN row_data->'payload'->'details' ELSE event_details END,
         'timestamp', NOW()
     );
 

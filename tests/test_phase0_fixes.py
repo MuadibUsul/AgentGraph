@@ -136,7 +136,8 @@ async def test_review_targets_match_on_rest_and_mcp(
     rest = await client.post(
         f"/v1/tasks/{rest_key}/review",
         headers=auditor,
-        json={"decision": decision, "next_status": next_status, "expected_version": version},
+        json={"decision": decision, "next_status": next_status, "expected_version": version,
+              "feedback": "needs another pass"},
     )
     mcp_key, mcp_version = await _in_review(client, workspace, executor)
     result = await _mcp_call(
@@ -148,6 +149,7 @@ async def test_review_targets_match_on_rest_and_mcp(
             "decision": decision,
             "next_status": next_status,
             "expected_version": mcp_version,
+            "feedback": "needs another pass",
         },
     )
     assert (rest.status_code == 200) is accepted, rest.text

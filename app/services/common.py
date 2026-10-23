@@ -121,8 +121,12 @@ def slot_summary(slot: ContextSlot) -> SlotSummary:
 
 
 def task_summary(task: CollabTask) -> TaskSummary:
+    from app.services.inbox import surfaced
+
     brief = task.handoff_brief if isinstance(task.handoff_brief, dict) else {}
+    status = task.status.value if hasattr(task.status, "value") else str(task.status)
     return TaskSummary(
+        surfaced=surfaced(status, task.updated_at),
         id=task.id,
         canonical_id=task.canonical_id,
         alias=task.task_key,
@@ -170,6 +174,8 @@ def task_out(task: CollabTask) -> TaskOut:
     return TaskOut(
         **summary.model_dump(),
         description=task.description,
+        acceptance=task.acceptance or [],
+        acceptance_locked=bool(task.acceptance_locked),
         input_context=task.input_context or {},
         output_artifact=task.output_artifact or {},
         handoff_brief=task.handoff_brief,
@@ -198,6 +204,12 @@ def _compact_frontmatter(value: dict[str, Any], limit: int = 8_192) -> dict[str,
         "_bytes": len(json.dumps(value, ensure_ascii=False, default=str)),
         "_keys": list(value)[:50],
     }
+
+
+def lifecycle_of(document: SharedDocument) -> str:
+    from app.services.lifecycle import lifecycle_of as compute
+
+    return compute(document)
 
 
 def document_summary(
@@ -230,6 +242,9 @@ def document_summary(
         recall_severity=document.recall_severity,
         doc_type=document.doc_type or "collaborative",
         last_human_edit=document.last_human_edit,
+        lifecycle=lifecycle_of(document),
+        superseded_by=(document.frontmatter or {}).get("superseded_by"),
+        reviews=document.reviews or [],
         archived_at=document.archived_at,
         archived_by=document.archived_by,
         archive_reason=document.archive_reason,
@@ -307,6 +322,8 @@ def agent_token_out(token: AgentToken) -> AgentTokenOut:
         revoked_at=token.revoked_at,
         per_minute_limit=token.per_minute_limit,
         monthly_token_budget=token.monthly_token_budget,
+        scope_add=list(token.scope_add or []),
+        scope_remove=list(token.scope_remove or []),
     )
 
 

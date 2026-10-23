@@ -581,8 +581,14 @@ def _api_error(exc: ApiError) -> ToolError:
 async def get_orientation(
     sections: list[str] | None = None,
     max_bytes: Annotated[int, Field(ge=4_096, le=131_072)] = 32_768,
+    since: str | None = None,
 ) -> dict[str, Any]:
     """FIRST CALL. Call this before any other tool.
+
+    Coming back? Pass since=<the inbox.event_cursor you kept, or the release
+    version you last saw>: only what changed comes back (the constitution and
+    required reading only when they changed), plus platform_changes listing
+    any releases in between.
 
     onboarding.next_call is your next step: 1 get_orientation, 2 read
     system/constitution and ack_constitution, 3 read your namespace readme,
@@ -599,7 +605,7 @@ async def get_orientation(
         principal = await _principal_for_call(session)
         try:
             result = await orientation_service.build(
-                session, principal, sections=sections, max_bytes=max_bytes
+                session, principal, sections=sections, max_bytes=max_bytes, since=since
             )
         except ApiError as exc:
             raise _api_error(exc) from exc
@@ -766,10 +772,14 @@ async def create_task(
     kind: Literal["work", "question", "escalation", "peer_review"] = "work",
     require_continuation: bool = False,
     mentions: list[str] | None = None,
+    acceptance: list[dict[str, Any]] | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Create a task for an agent role (EXECUTOR/ANALYST/AUDITOR).
+
+    acceptance [{id, text, kind: AUTO|MANUAL}] lists what the change is judged
+    against; it locks at the first claim and an approval must PASS every item.
 
     Pass pointers, not copies: context_docs [{namespace, doc_key, version?}]
     are pinned at the first claim and returned with it; done_definition and
@@ -806,6 +816,7 @@ async def create_task(
                 kind=kind,
                 require_continuation=require_continuation,
                 mentions=mentions or [],
+                acceptance=acceptance or [],
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -827,6 +838,8 @@ async def review_task(
         str | None,
         Field(description=TaskReviewRequest.model_fields["next_status"].description),
     ] = None,
+    items: list[dict[str, Any]] | None = None,
+    cited_clauses: list[str] | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -834,7 +847,10 @@ async def review_task(
 
     AWAITING_HUMAN and ESCALATED_TO_HUMAN require an actual human account;
     workspace automation keys cannot resolve them. Rejections increment the
-    ping-pong counter and may escalate to human.
+    ping-pong counter and may escalate to human. items [{item_id, result:
+    PASS|FAIL}] judge each acceptance item (an approval passes them all);
+    cited_clauses name the spec clauses a rejection rests on. Read
+    get_audit_view first: under quality control an approval needs it.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -844,6 +860,8 @@ async def review_task(
                 feedback=feedback,
                 expected_version=expected_version,
                 next_status=next_status,
+                items=items or [],
+                cited_clauses=cited_clauses or [],
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
@@ -1040,12 +1058,15 @@ async def agent_patch_shared_state(
     return_current_on_conflict: bool = False,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
+    namespace: str | None = None,
 ) -> dict[str, Any]:
     """Apply an RFC 6902 JSON Patch to a shared state slot.
 
     Only EXECUTOR/COMMANDER roles may write. Human-locked slots return 403
-    HUMAN_SOVEREIGNTY_LOCKED. Use expected_version for optimistic concurrency.
-    Set lease_seconds to hold a short exclusive lease while working.
+    HUMAN_SOVEREIGNTY_LOCKED. Use expected_version for optimistic concurrency;
+    expected_version=0 creates the slot (the patch applies to an empty state,
+    in `namespace`, default "default"). Set lease_seconds to hold a short
+    exclusive lease while working.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -1058,6 +1079,7 @@ async def agent_patch_shared_state(
                 lease_seconds=lease_seconds,
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
+                namespace=namespace,
             )
             result = await services.patch_slot(session, principal, slot_key, body)
         except ValidationError as exc:
@@ -1524,6 +1546,351 @@ async def get_metrics(
         try:
             result = await situation.get_metrics(session, caller, principal_ref=principal,
                                                  doc_ref=None, task_ref=None, window=window)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="supersede_document")
+async def supersede_document(
+    old_doc_key: str,
+    new_doc_key: str,
+    reason: str = "",
+    old_namespace: str = "default",
+    new_namespace: str = "default",
+) -> dict[str, Any]:
+    """Mark old_doc_key superseded by new_doc_key: both get a new version, and
+    2026-11 queries hide the old one unless include_lifecycle names superseded."""
+    from app.services import lifecycle
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await lifecycle.supersede(
+                session, principal, old={"namespace": old_namespace, "doc_key": old_doc_key},
+                new={"namespace": new_namespace, "doc_key": new_doc_key}, reason=reason)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="set_watermark")
+async def set_watermark(name: str, cursor: str) -> dict[str, Any]:
+    """Save an event cursor under a name you own; it survives token rotation and
+    handover to a successor. 'last_seen' moves on every get_orientation."""
+    from app.services import digest
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await digest.set_watermark(session, principal, name, cursor)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_watermark")
+async def get_watermark(name: str) -> dict[str, Any]:
+    """Read a named event cursor you own (404 when it was never set)."""
+    from app.services import digest
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await digest.get_watermark(session, principal, name)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_digest")
+async def get_digest(
+    since: str | None = None,
+    until: str | None = None,
+    for_me_first: bool = True,
+    max_items: Annotated[int, Field(ge=1, le=200)] = 50,
+    advance_watermark: str | None = None,
+) -> dict[str, Any]:
+    """What happened since an event cursor or 'watermark:<name>': counts by type,
+    namespace and actor, what needs attention, what was addressed to you and which
+    documents changed. Bounded to 64 KB (truncated=true when cut)."""
+    from app.services import digest
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await digest.get_digest(
+                session, principal, since=since, until=until, for_me_first=for_me_first,
+                max_items=max_items, advance_watermark=advance_watermark)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="request_peer_review")
+async def request_peer_review(
+    doc_key: str,
+    version: int,
+    reviewer: str,
+    kind: Literal["review", "red_team", "second_opinion"] = "review",
+    rubric: str = "",
+    independent: bool = True,
+    namespace: str = "default",
+    due_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Open a peer_review task on one version of a document for agent:<id>,
+    human:<id> or role:<role>. The author and its token subtree cannot review
+    (422 reviewer_conflict)."""
+    from app.schemas import DocRef
+    from app.services import reviews
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await reviews.request_peer_review(
+                session, principal,
+                output=DocRef(namespace=namespace, doc_key=doc_key, version=version),
+                reviewer=reviewer, kind=kind, rubric=rubric[:4000], independent=independent,
+                due_at=due_at)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="submit_peer_review")
+async def submit_peer_review(
+    task_key: str,
+    verdict: Literal["pass", "pass_with_notes", "fail"],
+    findings: list[dict[str, Any]] | None = None,
+    summary: str = "",
+) -> dict[str, Any]:
+    """Submit your review for a peer_review task: findings are
+    [{severity: info|minor|major|critical, location, note}] (at most 100). Writes
+    reviews/<ns>.<doc_key>.v<version>.<you> and records it on the reviewed document."""
+    from app.schemas import PeerReviewSubmitRequest
+    from app.services import reviews
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = PeerReviewSubmitRequest(verdict=verdict, findings=findings or [],
+                                           summary=summary)
+            result = await reviews.submit_peer_review(
+                session, principal, task_key, verdict=body.verdict,
+                findings=[item.model_dump() for item in body.findings], summary=body.summary)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_resources")
+async def list_resources() -> dict[str, Any]:
+    """Scarce resources defined by people, with how many slots are held and queued."""
+    from app.services import resources
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await resources.list_resources(session, principal)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="acquire_resource")
+async def acquire_resource(
+    resource_key: str,
+    ttl_seconds: Annotated[int, Field(ge=1, le=3600)] = 300,
+    wait_seconds: Annotated[int, Field(ge=0, le=25)] = 0,
+    queue: bool = True,
+    queue_ticket: str | None = None,
+) -> dict[str, Any]:
+    """Take a slot of a scarce resource as a lease (heartbeat it like a task lease).
+    When full and queue=true you get queue_position and queue_ticket; on your turn
+    a resource.granted event arrives and you must call again with queue_ticket
+    within 60 s, or the slot goes to the next in line."""
+    from app.services import resources
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await resources.acquire_resource(
+                session, principal, resource_key=resource_key, ttl_seconds=ttl_seconds,
+                wait_seconds=wait_seconds, queue=queue, queue_ticket=queue_ticket)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="release_resource")
+async def release_resource(lease_id: str) -> dict[str, Any]:
+    """Give a resource slot back; the next in the queue is offered it."""
+    from app.services import resources
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await resources.release_resource(session, principal, lease_id)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_lineage_attestation")
+async def get_lineage_attestation(
+    audience: str,
+    token_id: str | None = None,
+    doc_id: str | None = None,
+    version: int | None = None,
+    ttl_seconds: Annotated[int, Field(ge=1, le=900)] = 900,
+) -> dict[str, Any]:
+    """A signed JWS proving who issued a token (or the token that wrote a document
+    version) and what each link was granted, for one audience: links are
+    pairwise pseudonyms, never real ids or names. Verify with the tenant's
+    /.well-known/agentgraph/tenants/<alias>/jwks.json; valid at most 15 minutes."""
+    from app.services import attestation
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await attestation.attest(
+                session, principal, audience=audience, token_id=token_id, doc_id=doc_id,
+                version=version, ttl_seconds=ttl_seconds)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_inbox")
+async def list_inbox(
+    status: Literal["unacked", "all"] = "unacked",
+    limit: Annotated[int, Field(ge=1, le=200)] = 50,
+) -> dict[str, Any]:
+    """Changes addressed to you: a task you created was claimed, reviewed, done,
+    failed or escalated; your proposal was applied, rejected or superseded;
+    your document was verified; mentions and other targeted events. Envelopes
+    carry keys, statuses and the verdict note, never content. Terminal items
+    (priority 0) first. Acknowledge with ack_inbox."""
+    from app.services import inbox
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await inbox.summary(session, principal, status=status, limit=limit)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="ack_inbox")
+async def ack_inbox(up_to_event_seq: Annotated[int, Field(ge=0)]) -> dict[str, Any]:
+    """Mark your inbox read up to an event seq. It only moves forward: a lower
+    value returns the current position without error."""
+    from app.services import inbox
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await inbox.ack(session, principal, up_to_event_seq)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="record_gate_result")
+async def record_gate_result(
+    gate_kind: Literal["CI", "TESTS", "ACCEPTANCE", "SPEC_LINT", "CUSTOM"],
+    status: Literal["PASS", "FAIL", "ERROR", "SKIPPED"],
+    task_key: str | None = None,
+    claim_id: uuid.UUID | None = None,
+    source: Literal["RUNNER", "AGENT_CLAIM"] = "AGENT_CLAIM",
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Report a machine gate result for a task (task_key) or a change claim
+    (claim_id). evidence: {run_url, commit_sha, summary, counts:{passed,
+    failed}}; ACCEPTANCE adds items:[{item_id, result}] covering every
+    acceptance item. The executor may not report its own ACCEPTANCE (403
+    acceptance_self_report). The latest result per gate kind counts."""
+    from app.schemas import GateResultRequest
+    from app.services import quality
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = GateResultRequest(task_key=task_key, claim_id=claim_id, gate_kind=gate_kind,
+                                     status=status, source=source, evidence=evidence or {})
+            result = await quality.record_gate_result(session, principal, body)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_audit_view")
+async def get_audit_view(task_key: str) -> dict[str, Any]:
+    """The audit view of a task: title, description, acceptance, the output and
+    the gate results, plus earlier verdicts. It leaves out the author's hand-off
+    brief and full input context on purpose: judge the output against the spec.
+    Under quality control an approval needs this view opened in the same round."""
+    from app.services import quality
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await quality.audit_view(session, principal, task_key)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="report_change_claim")
+async def report_change_claim(
+    external_ref: str,
+    commit_sha: str,
+    related_doc_key: str | None = None,
+    related_task_key: str | None = None,
+) -> dict[str, Any]:
+    """After a change outside AgentGraph (a push, a PR), report it: the PR or
+    commit URL, the commit sha, and the doc or task it belongs to. The claim is
+    unverified until an AUDITOR or a person verifies it. Reporting the same ref
+    and commit again returns the same claim."""
+    from app.schemas import ChangeClaimRequest
+    from app.services import quality
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = ChangeClaimRequest(external_ref=external_ref, commit_sha=commit_sha,
+                                      related_doc_key=related_doc_key,
+                                      related_task_key=related_task_key)
+            result = await quality.report_claim(session, principal, body)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="verify_change_claim")
+async def verify_change_claim(
+    claim_id: uuid.UUID,
+    verdict: Literal["VERIFIED", "REFUTED"],
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """AUDITOR tokens: check a change claim read-only at its external_ref (the
+    commit exists, the PR state) and record VERIFIED or REFUTED with how you
+    checked in evidence. The reporter cannot verify its own claim."""
+    from app.schemas import ChangeClaimVerifyRequest
+    from app.services import quality
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            body = ChangeClaimVerifyRequest(verdict=verdict, evidence=evidence or {})
+            result = await quality.verify_claim(session, principal, claim_id, body)
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)
@@ -2542,6 +2909,7 @@ async def list_documents(
     updated_after: datetime | None = None,
     updated_before: datetime | None = None,
     sort: Literal["updated_desc", "updated_asc"] | None = None,
+    review_verdict: Literal["pass", "pass_with_notes", "fail"] | None = None,
 ) -> dict[str, Any]:
     """Complete, cursor-paginated census of documents (not ranked, no vectors).
 
@@ -2572,6 +2940,7 @@ async def list_documents(
                 updated_before=updated_before,
                 sort=sort,
                 order=order,
+                review_verdict=review_verdict,
                 fields=fields,
             )
         except ApiError as exc:
@@ -2752,7 +3121,8 @@ async def restore_document(
 @mcp.tool(name="get_api_docs")
 async def get_api_docs(
     section: Literal[
-        "guide", "errors", "limits", "retry", "events", "tokens", "versions", "all", "overview"
+        "guide", "errors", "limits", "retry", "events", "tokens", "versions", "all",
+        "overview", "capabilities", "releases",
     ] = "overview",
 ) -> dict[str, Any]:
     """Return the REST/MCP connection guide and core request schemas.
@@ -2760,8 +3130,20 @@ async def get_api_docs(
     Agent-readable; no admin token required. The live OpenAPI document is also
     available at GET /v1/agent-docs. section="retry" returns the canonical
     backoff algorithm, "errors" the full error-code registry (code -> class ->
-    action), "versions" the supported API versions.
+    action), "versions" the supported API versions, "capabilities" the feature
+    flags (on/off here) and REST endpoints without a same-named tool,
+    "releases" this deployment's release history.
     """
+    if section == "capabilities":
+        from app import capabilities
+        from app.main import app as fastapi_app
+
+        return _compact(capabilities.full(fastapi_app))
+    if section == "releases":
+        from app.services import releases
+
+        return _compact({"current": await releases.current(),
+                         "history": await releases.changes_since(None)})
     guide = agent_guide.sections()
     if section == "all":
         return _compact({**guide, "versions": protocol_docs("versions")["versions"]})

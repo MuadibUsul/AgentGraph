@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import async_session_factory
-from app.errors import NotFound
+from app.errors import ApiError, NotFound
 from app.models import WebhookDelivery, WebhookRule, WorkspaceEvent
 from app.schemas import (
     WebhookDeliveryListResponse,
@@ -23,11 +23,21 @@ from app.schemas import (
     WebhookRuleOut,
     WebhookRuleUpdateRequest,
 )
-from app.services.common import db_now, domain_event_type, event_identity, utcnow
+from app.services.common import (
+    append_event,
+    db_now,
+    domain_event_type,
+    event_identity,
+    utcnow,
+)
+from app.services.events import event_out
 from app.services.outbound import new_secret, send_json, validate_target
 
 logger = logging.getLogger("agentgraph.webhooks")
 settings = get_settings()
+
+
+WEBHOOKS_PER_WORKSPACE = 10
 
 
 def _rule_out(rule: WebhookRule) -> WebhookRuleOut:
@@ -107,6 +117,12 @@ async def create_rule(
     request: WebhookRuleCreateRequest,
 ) -> WebhookRuleOut:
     await validate_target(request.url)
+    existing = await session.scalar(
+        select(func.count()).select_from(WebhookRule).where(
+            WebhookRule.workspace_id == workspace_id))
+    if (existing or 0) >= WEBHOOKS_PER_WORKSPACE:
+        raise ApiError(402, "quota_exceeded", "a workspace has at most 10 webhooks",
+                       details={"limit": WEBHOOKS_PER_WORKSPACE, "active": int(existing)})
     latest_event_id = await session.scalar(
         select(func.max(WorkspaceEvent.id)).where(
             WorkspaceEvent.workspace_id == workspace_id
@@ -125,7 +141,11 @@ async def create_rule(
     )
     session.add(rule)
     await session.commit()
-    return _rule_out(rule)
+    out = _rule_out(rule)
+    if request.secret is None:
+        # A server-generated secret is shown once (AG-EV-05 point 1).
+        out = out.model_copy(update={"secret": rule.secret})
+    return out
 
 
 async def update_rule(
@@ -305,12 +325,16 @@ async def process_deliveries(session: AsyncSession) -> int:
             delivery.status = "CANCELED"
             delivery.last_error = "rule is inactive"
             continue
+        body = _event_dict(event)
+        # AG-EV-05: the AG-EV-01 event shape travels with the legacy fields.
+        body["event"] = event_out(event)
         result = await send_json(
             rule.url,
-            _event_dict(event),
+            body,
             secret=rule.secret,
-            event_name=event_type(_event_dict(event)),
+            event_name=event_type(body),
             idempotency_key=f"ag-{delivery.id}",
+            headers={"X-AgentGraph-Event-Seq": str(event.seq or "")},
         )
         delivery.attempts += 1
         delivery.response_status = result.status_code
@@ -319,15 +343,26 @@ async def process_deliveries(session: AsyncSession) -> int:
             delivery.delivered_at = utcnow()
             delivery.last_error = None
             rule.consecutive_failures = 0
+            rule.failing_since = None
             delivered += 1
         else:
             delivery.last_error = result.error or "delivery failed"
             if delivery.attempts >= settings.webhook_max_delivery_attempts:
                 delivery.status = "FAILED"
             else:
-                delay = min(5 * (2 ** (delivery.attempts - 1)), 3_600)
+                # One minute, doubling, at most six hours (AG-EV-05 point 3).
+                delay = min(60 * (2 ** (delivery.attempts - 1)), 6 * 3_600)
                 delivery.next_attempt_at = now + timedelta(seconds=delay)
             rule.consecutive_failures += 1
+            rule.failing_since = rule.failing_since or now
+            if now - rule.failing_since >= timedelta(hours=24) and rule.active:
+                rule.active = False
+                rule.disabled_at = now
+                await append_event(
+                    session, workspace_id=rule.workspace_id, agent="webhooks",
+                    event_type="WEBHOOK_DISABLED",
+                    payload={"details": {"webhook_id": str(rule.id), "url": rule.url,
+                                         "failing_since": rule.failing_since.isoformat()}})
     await session.commit()
     return delivered
 

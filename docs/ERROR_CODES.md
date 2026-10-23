@@ -65,6 +65,7 @@ do not edit by hand. Every error body is
 | `alias_taken` | 409 | `fix_request` | `fix_request_then_resend` | Choose another alias. |
 | `alias_tombstoned` | 409 | `fix_request` | `fix_request_then_resend` | Choose another alias; tombstones never reuse. |
 | `artifact_archived` | 409 | `fix_request` | `fix_request_then_resend` | Restore the document or use another. |
+| `auto_release_cap_reached` | 409 | `fix_request` | `fix_request_then_resend` | Hand off to REVIEWING; an audit releases it today. |
 | `claim_required` | 409 | `fix_request` | `fix_request_then_resend` | Claim the task before this transition. |
 | `dependency_cycle` | 409 | `fix_request` | `fix_request_then_resend` | Remove the cyclic depends_on link. |
 | `google_email_mismatch` | 409 | `fix_request` | `fix_request_then_resend` | Use the Google account for this email. |
@@ -78,13 +79,17 @@ do not edit by hand. Every error body is
 | `not_a_log_document` | 409 | `fix_request` | `fix_request_then_resend` | Write with upsert_shared_doc instead. |
 | `policy_exists` | 409 | `fix_request` | `fix_request_then_resend` | Update the existing policy instead. |
 | `proposal_required` | 409 | `fix_request` | `propose_document_change` | Submit propose_document_change instead. |
+| `quality_circuit_open` | 409 | `fix_request` | `fix_request_then_resend` | The domain's circuit is open: hand off to REVIEWING. |
+| `quality_gates_unmet` | 409 | `fix_request` | `fix_request_then_resend` | Report the gates in details.missing as PASS, then retry. |
 | `task_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another task_key. |
 | `tenant_has_children` | 409 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `workspace_confirmation_mismatch` | 409 | `fix_request` | `fix_request_then_resend` | Confirm with the exact name. |
 | `batch_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Split the batch per details. |
 | `content_too_large` | 413 | `fix_request` | `split_into_parts` | Split into parts (details.action). |
 | `payload_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Send a smaller archive (details.limit_bytes). |
+| `acceptance_items_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Give a PASS result for every acceptance item. |
 | `ambiguous_artifact` | 422 | `fix_request` | `fix_request_then_resend` | Provide artifact_text or artifact_uri, not both. |
+| `audit_view_required` | 422 | `fix_request` | `fix_request_then_resend` | Call get_audit_view, then resend. |
 | `budget_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Lower the budget per details. |
 | `checksum_mismatch` | 422 | `fix_request` | `fix_request_then_resend` | Download the export again, then import. |
 | `context_doc_not_found` | 422 | `fix_request` | `fix_request_then_resend` | Fix the context pointers per details. |
@@ -114,7 +119,10 @@ do not edit by hand. Every error body is
 | `policy_schema_violation` | 422 | `fix_request` | `fix_request_then_resend` | Conform to the path JSON Schema. |
 | `policy_size_limit` | 422 | `fix_request` | `fix_request_then_resend` | Shrink the content below the policy limit. |
 | `quota_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Stay within the parent's limit. |
+| `review_feedback_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in feedback, then resend. |
+| `review_note_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in note, then resend. |
 | `rollup_summary_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a rollup summary. |
+| `scope_unknown` | 422 | `fix_request` | `fix_request_then_resend` | Use permissions listed in details.allowed. |
 | `subject_identifier_required` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `task_tree_too_deep` | 422 | `fix_request` | `fix_request_then_resend` | Split under a shallower task. |
 | `tenant_cycle` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
@@ -137,6 +145,8 @@ do not edit by hand. Every error body is
 | `unauthorized` | 401 | `reauth` | `stop_and_reauthenticate` | Send a valid bearer key. |
 | `renewal_requires_parent` | 403 | `reauth` | `stop_and_reauthenticate` | Ask the parent token holder to renew. |
 | `NAMESPACE_FORBIDDEN` | 403 | `abandon` | `abandon_and_release_local_state` | Stay within the token's namespaces. |
+| `acceptance_locked` | 403 | `abandon` | `abandon_and_release_local_state` | Acceptance is locked after the first claim; ask the task's creator or a person. |
+| `acceptance_self_report` | 403 | `abandon` | `abandon_and_release_local_state` | The executor cannot report its own acceptance; another agent or a person must. |
 | `depth_limit_exceeded` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `forbidden` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `issue_not_permitted` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
@@ -152,17 +162,24 @@ do not edit by hand. Every error body is
 | `lease_not_found` | 404 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `not_found` | 404 | `abandon` | `abandon_and_release_local_state` | Give up; cross-tenant access also returns 404. |
 | `already_registered` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
+| `circuit_not_open` | 409 | `abandon` | `abandon_and_release_local_state` | The domain's circuit is already closed. |
+| `claim_already_refuted` | 409 | `abandon` | `abandon_and_release_local_state` | The claim was refuted; report a new commit. |
 | `document_archived` | 409 | `abandon` | `abandon_and_release_local_state` | Give up, or ask for restore_document. |
+| `escape_closed` | 409 | `abandon` | `abandon_and_release_local_state` | The escape is already FIXED or WAIVED. |
 | `external_action_error` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the action state. |
 | `id_collision` | 409 | `abandon` | `abandon_and_release_local_state` | Abort the import or import into a new tenant. |
 | `invalid_state_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the task; give up this action. |
 | `invalid_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `lease_conflict` | 409 | `abandon` | `abandon_and_release_local_state` | Another agent holds the lease; do not preempt. |
 | `lease_lost` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
+| `lineage_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | This subject has no signed lineage; give up. |
 | `link_exists` | 409 | `abandon` | `abandon_and_release_local_state` | The link already exists. |
+| `nothing_to_probe` | 409 | `abandon` | `abandon_and_release_local_state` | Write and index documents first. |
 | `proposal_not_pending` | 409 | `abandon` | `abandon_and_release_local_state` | The proposal was already decided. |
+| `queue_ticket_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Call acquire_resource again to re-queue. |
 | `request_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `retention_not_met` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
+| `sample_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | Someone else took the sample or it was already judged. |
 | `stale_fencing_token` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
 | `task_not_reviewable` | 409 | `abandon` | `abandon_and_release_local_state` | The task is not awaiting review. |
 | `token_already_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Ask the issuer to issue again. |
@@ -172,6 +189,7 @@ do not edit by hand. Every error body is
 | `budget_exceeded` | 402 | `escalate_human` | `stop_and_escalate_to_human` | Ask a human to raise the budget. |
 | `quota_exceeded` | 402 | `escalate_human` | `stop_and_escalate_to_human` | Ask a human to raise the quota. |
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` | `stop_and_escalate_to_human` | A human locked this resource; ask a human to change it. |
+| `feature_disabled` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Switched off here; ask an operator (details.setting). |
 | `tenant_deleting` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop; only an owner can cancel deletion or fetch the export. |
 | `tenant_suspended` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop writing and notify a human; reads and export still work. |
 | `backup_chain_broken` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Restore from an older full backup or take a new one. |
@@ -194,12 +212,15 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 
 | code | meaning |
 |---|---|
+| `promotion_below_threshold` | The domain was promoted below the promotion threshold. |
+| `gate_source_downgraded` | Only a trusted runner reports RUNNER results; recorded as AGENT_CLAIM. |
 | `secrets_not_imported` | Imported tokens must be rotated and users must reset passwords. |
 | `keys_rotated` | A restored workspace has new keys; rotate them and re-issue agent tokens. |
 | `alias_redirected` | Read through a renamed alias; use the current alias or id. |
 | `legacy_alias` | Address predates the grammar; accepted, but 2026-11 rejects new ones. |
 | `dangling_ref` | A $ref or part does not resolve; stored as written. |
 | `namespace_auto_registered` | Namespace registered implicitly; 2026-11 requires it first. |
+| `namespace_unchanged` | The new key's prefix is not a registered namespace; the document stayed where it was. Register the namespace and rename again to move it. |
 | `namespace_undocumented` | The namespace readme is still a generated stub. |
 | `frontmatter_missing` | Fields the namespace readme requires are missing. |
 | `doc_key_pattern_mismatch` | doc_key does not match the namespace pattern. |

@@ -50,6 +50,17 @@ async def lease_reaper_loop() -> None:
                 from app.services.provenance import prune_reads
 
                 await prune_reads()
+                from app.services.resources import reap as reap_resources
+
+                async with async_session_factory() as resource_session:
+                    await reap_resources(resource_session)
+                from app.services.export_schedule import run_due as scheduled_exports
+
+                await scheduled_exports()
+                if settings.retrieval_probe_enabled:
+                    from app.services.retrieval_eval import probe_due
+
+                    await probe_due()
                 from app.services.logs import rebuild_due
 
                 await rebuild_due()

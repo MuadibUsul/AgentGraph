@@ -244,6 +244,13 @@ class AgentToken(Base):
         Integer, nullable=False, default=0, server_default=text("0")
     )
     lineage: Mapped[list[str] | None] = mapped_column(ARRAY(String(40)), nullable=True)
+    # Token delegation 1.0: permission deltas on top of the role package.
+    scope_add: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    scope_remove: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     issued_by_token_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     issued_by_human: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
@@ -404,6 +411,11 @@ class SharedDocument(Base):
     log_index_batches: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0"))
     last_human_edit: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Phase 3 (v3.27): cold detection, bound peer reviews, reserved room.
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviews: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    room_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     policy_flags: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -610,6 +622,11 @@ class CollabTask(Base):
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     context_versions_pinned: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     done_definition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Quality control 1.0: acceptance items, locked at the first claim (v3.32).
+    acceptance: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    acceptance_locked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"))
     output_to: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     required_role: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -641,6 +658,7 @@ class CollabTask(Base):
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     recall_flags: Mapped[list[Any]] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    room_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     tainted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE")
     )
@@ -939,7 +957,10 @@ class WorkspaceEvent(Base):
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
     summary: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    shard_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    # The partition key of the event log (v3.29): never null.
+    shard_key: Mapped[str] = mapped_column(
+        String(160), nullable=False, server_default=text("'default'")
+    )
     stamp: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, server_default=FetchedValue()
     )
@@ -1564,6 +1585,10 @@ class WebhookRule(Base):
     consecutive_failures: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )
+    failing_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow,
         server_default=func.now(),

@@ -1454,3 +1454,10 @@ a {
   }
 }
 
+
+/* Merged reading of hand-split documents (AG-TC-04 point 4). */
+.merged-part + .merged-part {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 16px;
+}

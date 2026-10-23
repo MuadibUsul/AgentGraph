@@ -83,6 +83,13 @@ EVENT_TYPES: dict[str, str] = {
     "tenant.detached": "A subtree became its own tree.",
     "tenant.admin_access": "An ancestor's admin opened content access to this node "
                            "(targets: the node's owners).",
+    "webhook.disabled": "A webhook failed for 24 hours and was switched off.",
+    "doc.superseded": "A document was superseded (details: superseded_by).",
+    "review.submitted": "A peer review was submitted for a document version.",
+    "platform.released": "The platform was upgraded (details: from, to, added and removed "
+                         "primitives, summary; read system/changelog).",
+    "resource.granted": "Your turn for a scarce resource: confirm within 60 s "
+                        "(targets: the queued agent).",
     "alert.raised": "A high-severity anomaly (targets: the workspace's owners; at most every "
                     "30 minutes per alert).",
     "doc.contended": "A document had 5+ version conflicts in 10 s; overwrites wait 60 s.",
@@ -94,6 +101,9 @@ EVENT_TYPES: dict[str, str] = {
     "escalation.reminder": "An escalation is still open (targets: the routed human).",
     "task.children_done": "Every subtask of a task is done (targets: the lead).",
     "task.continuation_written": "A continuation pack was written for a task.",
+    "quality.circuit_opened": "A domain's quality circuit opened; its tier is lowered by one.",
+    "quality.tier_demoted": "A domain's autonomy tier was lowered after escapes.",
+    "quality.claim_refuted": "A change claim was refuted by an auditor or a person.",
     "security.incident_notice": "A security incident notice for this organisation "
                                 "(targets: the notified owners).",
     "timeline.*": "Application event that repeats a row change (e.g. timeline.task_claimed).",

@@ -27,7 +27,7 @@ from app.errors import (
     RebaseConflict,
     VersionConflict,
 )
-from app.models import ContextSlot, StateAuditDiff, Workspace
+from app.models import ContextSlot, Lease, StateAuditDiff, Workspace
 from app.schemas import (
     HumanSlotUpdateRequest,
     SlotListResponse,
@@ -108,6 +108,52 @@ def _set_lease(
         slot.locked_by = agent
         slot.lock_expires_at = now + timedelta(seconds=seconds)
         slot.lease_epoch += 1
+
+
+async def _record_lease(
+    session: AsyncSession, principal: Principal | None, slot: ContextSlot, agent: str,
+    seconds: int | None, now: Any,
+) -> None:
+    """Slot locks live on the unified lease table too (AG-CO-07 point 4): the
+    slot row keeps its columns for the fast check, the lease row makes the lock
+    visible to list_leases, heartbeat, release and revocation."""
+    if seconds is None:
+        return
+    await session.flush()
+    active = await session.scalar(
+        select(Lease).where(Lease.resource_kind == "slot", Lease.resource_id == slot.id,
+                            Lease.state == "active").with_for_update())
+    if active is not None and active.holder == agent:
+        active.fencing_token = slot.lease_epoch
+        active.expires_at = slot.lock_expires_at
+        active.ttl_seconds = seconds
+        active.heartbeat_interval_s = max(1, seconds // 3)
+        active.last_heartbeat_at = now
+        return
+    if active is not None:
+        active.state = "expired"
+        active.ended_at = now
+        active.end_reason = "ttl_expired"
+        await session.flush()
+    session.add(Lease(
+        workspace_id=slot.workspace_id, resource_kind="slot", resource_id=slot.id,
+        resource_ref=slot.slot_key, fencing_token=slot.lease_epoch, holder=agent,
+        holder_token_id=principal.token_id if principal else None, acquired_at=now,
+        expires_at=slot.lock_expires_at, ttl_seconds=seconds,
+        heartbeat_interval_s=max(1, seconds // 3), last_heartbeat_at=now))
+    await session.flush()
+
+
+async def end_lease(session: AsyncSession, slot: ContextSlot, *, state: str, reason: str,
+                    now: Any) -> None:
+    """Close the slot's active lease row when its lock ends."""
+    active = await session.scalar(
+        select(Lease).where(Lease.resource_kind == "slot", Lease.resource_id == slot.id,
+                            Lease.state == "active").with_for_update())
+    if active is not None:
+        active.state = state
+        active.ended_at = now
+        active.end_reason = reason
 
 
 async def list_slots(
@@ -198,6 +244,7 @@ async def replace_slot(
         _set_lease(slot, agent, request.lease_seconds, now)
         session.add(slot)
         await session.flush()
+        await _record_lease(session, principal, slot, agent, request.lease_seconds, now)
         await refresh_slot_taint(session, slot)
         await record_audit(
             session,
@@ -269,6 +316,7 @@ async def replace_slot(
         ensure_namespace(principal, request.namespace, write=True)
         slot.namespace = request.namespace
     _set_lease(slot, agent, request.lease_seconds, now)
+    await _record_lease(session, principal, slot, agent, request.lease_seconds, now)
     slot.version += 1
     slot.updated_by = agent
     slot.updated_at = now
@@ -368,6 +416,17 @@ async def patch_slot(
     request: SlotPatchRequest,
 ) -> SlotMutationResponse:
     require_permission(principal, "state:write")
+    if request.expected_version == 0:
+        # Create on first patch (MCP agents cannot reach the REST PUT).
+        state, applied = apply_json_patch({}, request.ops)
+        created = await replace_slot(session, principal, slot_key, SlotReplaceRequest(
+            state=state, expected_version=0, namespace=request.namespace,
+            lease_seconds=request.lease_seconds, agent=request.agent,
+            session_batch_id=request.session_batch_id,
+            return_current_on_conflict=request.return_current_on_conflict,
+        ))
+        return SlotMutationResponse(slot=created.slot, applied_ops=applied,
+                                    session_batch_id=created.session_batch_id)
     agent = effective_agent(principal, request.agent)
     batch = request.session_batch_id or uuid.uuid4()
     slot = await _get_slot(
@@ -421,6 +480,7 @@ async def patch_slot(
     )
     slot.current_state = state
     _set_lease(slot, agent, request.lease_seconds, now)
+    await _record_lease(session, principal, slot, agent, request.lease_seconds, now)
     slot.version += 1
     slot.updated_by = agent
     slot.updated_at = now
@@ -496,6 +556,8 @@ async def human_update_slot(
     slot.locked_by_human = (
         False if request.unlock else (request.lock if request.lock is not None else True)
     )
+    if slot.locked_by:
+        await end_lease(session, slot, state="revoked", reason="human_override", now=now)
     slot.locked_by = None
     slot.lock_expires_at = None
     slot.lease_epoch += 1
@@ -550,6 +612,7 @@ async def reap_expired_slot_leases(
         )
     ).scalars().all()
     for slot in slots:
+        await end_lease(session, slot, state="expired", reason="ttl_expired", now=now)
         slot.locked_by = None
         slot.lock_expires_at = None
         slot.lease_epoch += 1

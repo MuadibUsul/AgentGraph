@@ -179,7 +179,8 @@ export function TaskDetailModal({
               <button
                 type="button"
                 className="button danger"
-                disabled={busy}
+                disabled={busy || !feedback.trim()}
+                title={feedback.trim() ? undefined : t("A rejection needs a reason: write feedback first.")}
                 onClick={() => void onReview("reject", feedback)}
               >
                 {busy ? <Spinner /> : <IconX />} {t("Reject")}

@@ -440,6 +440,9 @@ async def scaffold_new_workspace(session: AsyncSession, workspace_id: uuid.UUID)
     await ensure_namespace_readme(
         session, workspace_id, "default", registered_by="system", request_review=False
     )
+    from app.services.releases import write_changelog
+
+    await write_changelog(session, workspace_id)
 
 
 async def scaffold_workspace(session: AsyncSession, workspace_id: uuid.UUID) -> None:

@@ -3,6 +3,7 @@ import { I18nProvider } from "./i18n";
 import "./design-tokens.css";
 import "./globals.css";
 import "./v3.css";
+import "./cult.css";
 
 export const metadata: Metadata = {
   title: "AgentGraph Console",

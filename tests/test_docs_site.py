@@ -19,7 +19,8 @@ pytestmark = pytest.mark.integration
 ROOT = Path(__file__).resolve().parent.parent
 GENERATED = ROOT / "dashboard" / "app" / "docs" / "site.generated.json"
 ALLOWED_CONSTANTS = {"AGENTGRAPH_AUTH", "AGENTGRAPH_TOKEN", "AGENTGRAPH_URL",
-                     "HUMAN_SOVEREIGNTY_LOCKED", "IN_PROGRESS", "NAMESPACE_FORBIDDEN"}
+                     "HUMAN_SOVEREIGNTY_LOCKED", "IN_PROGRESS", "NAMESPACE_FORBIDDEN",
+                     "AGENT_CLAIM"}
 
 
 def test_generated_site_is_current_and_clean():

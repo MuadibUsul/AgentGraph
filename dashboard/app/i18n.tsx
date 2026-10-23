@@ -15,6 +15,70 @@ import { setFormatLanguage, type FormatLanguage } from "./types";
 export type Language = FormatLanguage;
 
 const ZH: Record<string, string> = {
+  // Merged reading of hand-split documents
+  "Unable to load the parts": "无法加载分篇",
+  "This document is one part of {name}": "本文档是 {name} 的一部分",
+  "Read all parts": "合并阅读全部分篇",
+  "{count} parts read as one, in part_index order.": "共 {count} 篇，按 part_index 顺序合并阅读。",
+  "Too long to show in full; later parts are left out.": "内容过长，后面的分篇未显示。",
+  // Token delegation
+  "{name} updated.": "{name} 已更新。",
+  "Edit {name}": "编辑 {name}",
+  "Role package plus a permission delta. Changes apply to the next request.":
+    "角色权限包加上权限增减，修改从下一次请求起生效。",
+  "Comma-separated; * allows every namespace.": "用逗号分隔；* 表示所有命名空间。",
+  "Add permissions": "增加权限",
+  "Remove permissions": "移除权限",
+  "Comma-separated. Removals are inherited by every token this one issues.":
+    "用逗号分隔。移除的权限会被它签发的所有令牌继承。",
+  "The request timed out; the action may still have completed. Showing the latest state.":
+    "请求超时，操作可能已经完成，已刷新为最新状态。",
+  "A rejection needs a reason: write feedback first.": "驳回需要理由：请先填写反馈。",
+  "A rejection needs a reason: write a review note first.": "驳回需要理由：请先填写审核备注。",
+  // Index repair
+  "A full rebuild re-embeds every document and spends embedding quota. Continue?":
+    "全量重建会重新嵌入每一篇文档并消耗 embedding 配额，确定继续吗？",
+  "Queued {count} document(s) for indexing; they are embedded in the background.":
+    "已将 {count} 篇文档加入索引队列，将在后台完成嵌入。",
+  "Every index is current; nothing to repair.": "所有索引都是最新的，无需修复。",
+  "Repair broken indexes": "修复异常索引",
+  "Full rebuild…": "全量重建…",
+  "{count} waiting to be indexed": "{count} 篇等待索引",
+  // Proposal review diff
+  "Comparing with base v{version}…": "正在与基线 v{version} 比对…",
+  "Could not load the base version: {error}": "无法加载基线版本：{error}",
+  "Changed sections: {sections}": "变更的章节：{sections}",
+  "No text changes against the base version.": "与基线版本相比正文没有变化。",
+  "Proposal view": "提案视图",
+  Changes: "变更",
+  "Full text": "全文",
+  "{count} unchanged line(s)": "{count} 行未变",
+  "Preview: first 800 of {total} characters. Open Review for the changes and the full text.":
+    "预览仅显示前 800 字（共 {total} 字）。打开审核可查看变更和全文。",
+  // Budget circuit breakers (AG-ST-15 console panel)
+  "Circuit breakers": "熔断器",
+  "Tokens paused for a runaway write loop. Release one when you have checked the agent.":
+    "因失控写入循环而暂停的令牌。确认 agent 状态后可一键解除。",
+  "Embedding tokens today": "今日 embedding token",
+  "Writes today": "今日写入",
+  "mode {value}": "模式 {value}",
+  "Would have tripped": "本应触发",
+  "in shadow mode": "影子模式下",
+  "No open circuit breakers.": "没有打开的熔断器。",
+  "Rewrote one document in a loop": "循环重写同一篇文档",
+  "Wrote far above its usual rate": "写入远超平时速率",
+  "Kept retrying before Retry-After": "未等 Retry-After 就反复重试",
+  "Opened {when}; reopens {until}": "{when}打开，{until}恢复",
+  Release: "解除",
+  // Library noise reduction (AG-TC-04)
+  "{count} need review": "{count} 篇待审核",
+  "Nothing awaits review": "没有待审核的文档",
+  "Review filter": "审核筛选",
+  "Needs review": "待审核",
+  All: "全部",
+  Verified: "已验证",
+  "A person verified this version.": "此版本已由人工验证。",
+  "Written by an agent and not yet verified by a person.": "由 agent 写入，尚未经人工验证。",
   // Situation (AG-TC-05)
   Situation: "态势",
   "Anomalies across agents, tasks and documents, checked every minute. High severity alerts also notify the owners.":

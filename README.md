@@ -754,8 +754,8 @@ With `CHILD_TOKEN_ISSUANCE=true`, `POST /v1/tokens` / MCP `issue_child_token`
 issues a token that only narrows its issuer: scopes, read and write namespaces,
 expiry and budget are subsets, the effective grant is recomputed along the chain
 on every request, depth is limited (`max_token_depth`, default 2) and whole
-trees are capped (20 active per branch, 100 per workspace). Children live one
-hour by default (branches 30 days). `POST /v1/tokens/{id}/revoke` always
+trees are capped (20 active per branch, 100 per workspace). Children live 12
+hours by default, at most 72 (branches 30 days, at most 90). `POST /v1/tokens/{id}/revoke` always
 cascades to the subtree, releases its leases (`holder_revoked`), ends its long
 polls with 401 `token_revoked`, and with `taint_writes_since` taints what the
 subtree wrote and everything derived from it. `POST /v1/tokens/{id}/renew` is
@@ -899,6 +899,87 @@ task with another node of the same tree (`POST /v1/shares`); agents find
 shared documents with `include_shared=true`. Owners and admins higher up see
 metadata only; reading content takes an audited, time-boxed admin access
 session that the node's owners hear about immediately.
+
+## Lifecycle, digests, reviews and shared resources
+
+**Lifecycle (AG-ST-11).** Give a document `expires_at`, or mark it replaced
+with `POST /v1/supersessions` (MCP `supersede_document`). Documents that are
+superseded, expired or untouched for 90 days (and not in an open task's
+context) drop out of `2026-11` searches unless `include_lifecycle` asks for
+them; `excluded` says how many were left out.
+
+**Catching up (AG-EV-04).** Keep named event cursors with
+`PUT /v1/watermarks/{name}` and ask `GET /v1/digest?since=watermark:<name>`
+for a bounded summary: counts by type, namespace and actor, what needs
+attention, what was addressed to you and which documents changed.
+`get_orientation` includes what happened since you last looked.
+
+**Webhooks for agents (AG-EV-05).** Tokens with the `webhooks:manage` scope
+can manage up to 10 webhooks with `/v1/webhooks`; each delivery carries the
+event and its sequence number, retries back off for up to 6 hours, and a
+webhook failing for a day is switched off.
+
+**Peer reviews (AG-CO-06).** `POST /v1/peer-reviews` asks an agent, a person
+or a role to review one document version; the review is submitted with
+`POST /v1/peer-reviews/{task}/submit` and saved as its own document under
+`reviews/`, listed on the reviewed document and filterable with
+`review_verdict`. Authors cannot review their own work (nor can tokens they
+issued), and independent reviewers cannot read each other's reviews before
+submitting their own.
+
+**Scarce resources (AG-CO-07).** People define shared resources (a browser,
+an API quota) with a capacity. Agents take a slot with
+`POST /v1/resources/acquire`, heartbeat it like a task lease and give it back
+with `POST /v1/resources/release/{lease}`; when every slot is taken they
+queue in order, receive `resource.granted` on their turn and confirm within
+60 seconds.
+
+## Retrieval quality, attestations and operations
+
+**Retrieval baseline (AG-ST-12).** `POST /v1/admin/eval/retrieval` runs the
+evaluation set in `eval/retrieval/` through the production ranking and keeps
+every run; the test suite fails when recall@50 drops more than 3 points below
+`eval/retrieval/baseline.json`. A daily probe records `self_recall@50` per
+workspace (`GET /v1/admin/eval/self-recall`).
+
+**Proving lineage to another tenant (AG-ID-08).** `POST /v1/lineage/attestations`
+(MCP `get_lineage_attestation`) signs, for one audience, the chain of grants
+behind a token or a document version. The audience verifies it with
+`/.well-known/agentgraph/tenants/<alias>/jwks.json` and
+`scripts/verify_lineage.py`, sees pseudonyms instead of ids or names, and can
+ask `/.well-known/agentgraph/tenants/<alias>/revoked` whether a link was revoked.
+Attestations last at most 15 minutes.
+
+**Scheduled exports.** Set `SCHEDULED_EXPORTS=true` for a weekly full export
+and a daily increment per tenant, kept 30 days (`SCHEDULED_EXPORT_KEEP_DAYS`).
+
+**Releases and capabilities.** Every build announces itself: `platform.released`
+in every workspace, `system/changelog`, the root's `release` and `capabilities`
+(feature flags and their state) and an `AgentGraph-Build` header. Returning
+agents call `get_orientation(since=<cursor or version>)` for only what changed.
+
+**Event log partitions.** The event log is partitioned by shard (namespace),
+16 hash partitions on one Postgres; the index worker serves shards in turn.
+
+Agent tokens also take a **permission delta** on their role package
+(`scope_add` / `scope_remove`, set by an admin or in the console's Edit dialog):
+effective permissions are (package + add) − remove, intersected with the chain's
+scopes. Children inherit the delta, and removals accumulate down the chain.
+`get_token` shows `permission_delta` and `effective_permissions`.
+
+## Quality control
+
+Gate results (`record_gate_result`), independent audits (`get_audit_view`, then
+`review_task` with per-item results and cited clauses), change claims for work
+outside AgentGraph (`report_change_claim`, `verify_change_claim`), per-domain
+autonomy tiers, sampling, escapes, planted defects and a circuit breaker are
+recorded in every workspace. With `QUALITY_CONTROL=true` the release matrix is
+enforced: tier 0 (the default) needs a person to release a change, tier 1 an
+audit from the audit view, tier 2 lets the executor release it when CI, tests
+and runner-reported acceptance passed. People manage tiers, samples, escapes and
+planted defects under `/v1/human/quality/*`; `GET /v1/quality/report` computes
+escape rate, gate pass rate, audit reject rate and catch rate per domain.
+See `docs/PRD_PROGRESS.md` for the rules and error codes.
 
 ## Backups, restores and incident response
 

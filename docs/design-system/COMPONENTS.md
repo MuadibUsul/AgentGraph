@@ -44,8 +44,17 @@
 Variants: primary, ghost, subtle, danger, small, icon. Minimum interactive size
 is 36px for standard buttons, 32px for icon buttons, 40px for tabs and 44px for
 document rows; WCAG 2.2 target-size minimum is 24px. Primary buttons are solid
-indigo with no gradient or glow. Loading buttons disable repeated submission and
-show a spinner. Focus-visible uses the global indigo outline.
+indigo "texture" buttons (v3.4): a light-edged shell around a graded fill with
+an inset highlight and a pressed state; ghost and subtle buttons use the same
+construction in neutral glass. Loading buttons disable repeated submission and
+show a spinner. Focus-visible draws a 2px indigo ring offset from the surface.
+
+## Motion helpers (v3.4)
+
+`components/motion.tsx`: `AnimatedNumber` (count-up, ~600 ms ease-out),
+`useSlidingIndicator` (one indicator that slides to the active tab) and
+`spotlight` (a cursor-following glow for `.stat-card`). All render the final
+state without motion under `prefers-reduced-motion`.
 
 ## Inputs and forms
 

@@ -163,6 +163,8 @@ export interface AgentToken {
   is_active: boolean;
   created_at: string;
   last_seen_at: string | null;
+  scope_add?: string[];
+  scope_remove?: string[];
 }
 
 export interface DocumentVersionSummary {
@@ -543,4 +545,20 @@ export function safeJson(value: string): Record<string, unknown> {
 
 export function pretty(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2);
+}
+
+export interface DocumentParts {
+  part_of: string;
+  count: number;
+  truncated: boolean;
+  parts: {
+    doc_key: string;
+    namespace: string;
+    title: string | null;
+    version: number;
+    part_index: number | string | null;
+    verification_status: string;
+    tainted: boolean;
+    content: string;
+  }[];
 }
