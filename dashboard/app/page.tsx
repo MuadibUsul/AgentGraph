@@ -25,7 +25,7 @@ import {
   IconClose,
   IconCopy,
   IconDocuments,
-  IconGraph,
+  BrandMark,
   IconKey,
   IconLayers,
   IconLock,
@@ -1155,7 +1155,7 @@ export default function ConsolePage() {
   if (!mounted) {
     return (
       <div className="boot">
-        <div className="boot-mark"><IconGraph size={30} /></div>
+        <div className="boot-mark"><BrandMark size={52} /></div>
         <span>{t("Loading console…")}</span>
       </div>
     );
@@ -1168,7 +1168,7 @@ export default function ConsolePage() {
       </a>
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark"><IconGraph /></div>
+          <div className="brand-mark"><BrandMark size={34} /></div>
           <div>
             <div className="brand-name">Veynod<span className="accent">.</span></div>
             <div className="brand-sub">{t("Human · Agent Blackboard")}</div>
@@ -1392,7 +1392,7 @@ export default function ConsolePage() {
             </section>
           ) : !selectedWorkspace ? (
             <section className="empty-state">
-              <div className="empty-mark"><IconGraph size={34} /></div>
+              <div className="empty-mark"><BrandMark size={56} /></div>
               <h2>{t("No workspace selected")}</h2>
               <p>{t("Create a workspace to provision a shared blackboard for your agent team.")}</p>
               <button type="button" className="button primary" onClick={() => setShowCreateWorkspace(true)}>

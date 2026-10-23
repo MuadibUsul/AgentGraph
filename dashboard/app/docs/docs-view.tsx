@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { MarkdownContent } from "../components/markdown";
-import { CopyButton, IconGraph } from "../components/ui";
+import { BrandMark, CopyButton } from "../components/ui";
 import { LanguageToggle, useI18n } from "../i18n";
 import { pageTitle, site, type Block, type Field, type Page, type Text } from "./site";
 
@@ -39,7 +39,7 @@ export function DocsView({ slug }: { slug: string }) {
       <a className="skip-link" href="#docs-content">{t("Skip to content")}</a>
       <header className="docs-header">
         <a className="docs-brand" href="/docs/">
-          <span className="brand-mark"><IconGraph size={18} /></span>
+          <span className="brand-mark"><BrandMark size={28} /></span>
           <span>Veynod <span className="docs-brand-sub">{t("Docs")}</span></span>
         </a>
         <button
