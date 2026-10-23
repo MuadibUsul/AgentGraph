@@ -16,6 +16,32 @@ export function IconGraph({ size = 22 }: { size?: number }) {
   );
 }
 
+export function IconMail({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="3" y="5" width="18" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="m3.8 7.2 8.2 5.8 8.2-5.8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function IconEye({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M2.7 12s3.4-5.8 9.3-5.8 9.3 5.8 9.3 5.8-3.4 5.8-9.3 5.8S2.7 12 2.7 12Z" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="12" cy="12" r="2.7" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+export function IconEyeOff({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M4 4.5 20 19.5M9.9 6.4A10.8 10.8 0 0 1 12 6.2c5.9 0 9.3 5.8 9.3 5.8a15.6 15.6 0 0 1-3.4 3.9M6.4 8.2A15.9 15.9 0 0 0 2.7 12s3.4 5.8 9.3 5.8c1 0 2-.2 2.8-.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function IconBoard({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
