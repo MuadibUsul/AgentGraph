@@ -4206,8 +4206,14 @@ body::before {
 
 .google-button {
   display: flex;
+  align-items: center;
   justify-content: center;
-  min-height: 40px;
+  width: 100%;
+  min-height: 44px;
+}
+
+.google-button iframe {
+  max-width: 100%;
 }
 
 .auth-card-foot {

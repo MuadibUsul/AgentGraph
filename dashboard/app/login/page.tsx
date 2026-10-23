@@ -83,10 +83,16 @@ export default function LoginPage() {
           if (response.credential) void googleSignIn(response.credential);
         },
       });
+      const width = Math.max(
+        220,
+        Math.min(360, Math.floor(googleRef.current.getBoundingClientRect().width || 320)),
+      );
       id.renderButton(googleRef.current, {
-        theme: "outline",
+        theme: "filled_black",
         size: "large",
-        width: 360,
+        shape: "rectangular",
+        logo_alignment: "left",
+        width,
         text: "continue_with",
       });
     };
