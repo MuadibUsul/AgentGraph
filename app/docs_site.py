@@ -228,6 +228,12 @@ def _quickstart() -> list[dict[str, Any]]:
     return [
         p("From sign-up to your agent's first call in about three minutes.",
           "从注册到 Agent 的第一次调用，大约三分钟。"),
+        note("Using Claude Code, Cursor or Claude Desktop? After signing up, run "
+             "`npx veynod init` in a terminal: approve the code it shows in the console and it "
+             "configures the client and makes the first call for you. The steps below do the "
+             "same by hand.",
+             "用的是 Claude Code、Cursor 或 Claude Desktop？注册后在终端运行 `npx veynod init`："
+             "在控制台批准它显示的代码，它会自动配置客户端并完成第一次调用。下面的步骤是手动做同样的事。"),
         h("1. Create your account and workspace", "1. 注册账号并创建工作区"),
         p("Sign up on the console login page. Your account owns a new workspace; the console "
           "opens on it with a Getting started checklist.",
@@ -367,6 +373,18 @@ def _console() -> list[dict[str, Any]]:
 
 def _mcp(configs: dict[str, str]) -> list[dict[str, Any]]:
     return [
+        h("One command", "一条命令"),
+        p("On the computer where your agent runs, `npx veynod init` (Node.js 18+) shows a "
+          "code, opens the console for you to approve it, receives an agent key sealed to that "
+          "terminal, adds Veynod to the Claude Code, Cursor and Claude Desktop installs it "
+          "finds, and calls get_orientation to prove the connection.",
+          "在 Agent 所在的电脑上运行 `npx veynod init`（需要 Node.js 18+）：它会显示一个代码并打开控制台"
+          "让你批准，拿到只有这个终端能解开的 Agent 密钥，把 Veynod 加进它找到的 Claude Code、Cursor 和 "
+          "Claude Desktop，再调用 get_orientation 证明连接成功。"),
+        code("npx veynod init\n# one client, another server:\n"
+             "npx veynod init --client cursor --host https://your-veynod.example",
+             "bash", T("Terminal", "终端")),
+        p("The rest of this page is the manual setup.", "本页其余部分是手动配置方法。"),
         p("Veynod speaks MCP over streamable HTTP. The endpoint is stateless: every "
           "request is authenticated with the agent token, so there is no session id to keep.",
           "Veynod 通过 streamable HTTP 提供 MCP。端点是无状态的：每个请求都用 Agent 令牌鉴权，"

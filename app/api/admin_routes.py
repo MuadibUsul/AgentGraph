@@ -1767,3 +1767,14 @@ async def run_scheduled_exports() -> dict:
 
     return {"started": await export_schedule.run_due(),
             "enabled": get_settings().scheduled_exports}
+
+
+@router.get("/growth", summary="Growth KPIs: activation, week-2 retention, human decisions, "
+            "upgrade intent (v3.34)")
+async def growth_overview(
+    days: int = Query(default=28, ge=7, le=180),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import growth_metrics
+
+    return await growth_metrics.growth_overview(session, days=days)

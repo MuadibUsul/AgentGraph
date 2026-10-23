@@ -77,6 +77,7 @@ from app.services import exports as export_service
 from app.services import human_onboarding as onboarding_service
 from app.services import incidents as incident_service
 from app.services import leases as lease_service
+from app.services import product_events
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
 
@@ -179,7 +180,9 @@ async def review_task(
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> TaskActionResponse:
-    return await services.review_task(session, principal, task_key, body)
+    result = await services.review_task(session, principal, task_key, body)
+    await product_events.human_decision(principal, "task_review", body.decision)
+    return result
 
 
 @router.post(
@@ -259,7 +262,9 @@ async def verify_document(
     principal: Principal = Depends(get_human_principal),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentMutationResponse:
-    return await services.verify_document(session, principal, doc_key, body)
+    result = await services.verify_document(session, principal, doc_key, body)
+    await product_events.human_decision(principal, "document_verify", "verify")
+    return result
 
 
 @router.post(
@@ -321,13 +326,15 @@ async def undo_batch(
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> BatchUndoResponse:
-    return await services.undo_batch(
+    result = await services.undo_batch(
         session,
         principal.workspace,
         batch_id,
         actor=principal.agent_signature,
         force=force,
     )
+    await product_events.human_decision(principal, "batch_undo", "undo")
+    return result
 
 
 @router.get(
@@ -391,9 +398,11 @@ async def apply_proposal(
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> ProposalApplyResponse:
-    return await services.apply_proposal(
+    result = await services.apply_proposal(
         session, principal, proposal_id, body
     )
+    await product_events.human_decision(principal, "proposal", "apply")
+    return result
 
 
 @router.post(
@@ -407,9 +416,11 @@ async def reject_proposal(
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> ProposalOut:
-    return await services.reject_proposal(
+    result = await services.reject_proposal(
         session, principal, proposal_id, body
     )
+    await product_events.human_decision(principal, "proposal", "reject")
+    return result
 
 
 @router.get(
@@ -440,12 +451,14 @@ async def approve_external_action(
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> ExternalActionOut:
-    return await services.approve_action(
+    result = await services.approve_action(
         session,
         workspace_id=principal.workspace.id,
         action_id=action_id,
         actor=principal.agent_signature,
     )
+    await product_events.human_decision(principal, "external_action", "approve")
+    return result
 
 
 @router.post(
@@ -459,13 +472,15 @@ async def reject_external_action(
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> ExternalActionOut:
-    return await services.reject_action(
+    result = await services.reject_action(
         session,
         workspace_id=principal.workspace.id,
         action_id=action_id,
         actor=principal.agent_signature,
         request=body,
     )
+    await product_events.human_decision(principal, "external_action", "reject")
+    return result
 
 
 @router.post(
@@ -1012,7 +1027,9 @@ async def human_sample_verdict(
 ) -> dict:
     from app.services import quality
 
-    return await quality.sample_verdict(session, principal, sample_id, body)
+    result = await quality.sample_verdict(session, principal, sample_id, body)
+    await product_events.human_decision(principal, "quality_sample", body.verdict)
+    return result
 
 
 @router.post("/quality/escapes", status_code=201, summary="Record a defect that escaped")
@@ -1083,3 +1100,19 @@ async def human_document_parts(
     from app.services.documents import document_parts
 
     return await document_parts(session, principal, part_of, namespace=namespace)
+
+
+@router.post("/product-events", status_code=204,
+             summary="Record a console product moment (the upgrade dialog)")
+async def record_product_event(
+    body: q_schemas.ProductEventRequest,
+    principal: Principal = Depends(get_human_principal),
+) -> Response:
+    await product_events.record(
+        body.name,
+        workspace_id=principal.workspace.id,
+        user_id=principal.user_id,
+        source=body.source,
+        plan=body.plan,
+    )
+    return Response(status_code=204)

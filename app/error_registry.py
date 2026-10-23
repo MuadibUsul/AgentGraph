@@ -207,6 +207,12 @@ REGISTRY: dict[str, ErrorSpec] = {
         409, FIX_REQUEST, "Sign in with the password, then link Google."
     ),
     "agent_token_exists": _spec(409, FIX_REQUEST, "Use another agent signature."),
+    "cli_session_decided": _spec(409, ABANDON, "Run `npx veynod init` again for a new code."),
+    "cli_session_expired": _spec(410, ABANDON, "Run `npx veynod init` again for a new code."),
+    "cli_session_consumed": _spec(410, ABANDON, "The key was collected once; start a new setup."),
+    "cli_code_unavailable": _spec(503, RETRY_BACKOFF, "Back off and retry."),
+    "invalid_device_code": _spec(404, ABANDON, "Start a new setup with `npx veynod init`."),
+    "invalid_public_key": _spec(422, FIX_REQUEST, "Send a base64 X25519 public key (32 bytes)."),
     "ambiguous_artifact": _spec(
         422, FIX_REQUEST, "Provide artifact_text or artifact_uri, not both."
     ),

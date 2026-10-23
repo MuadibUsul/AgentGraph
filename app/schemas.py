@@ -2630,3 +2630,38 @@ class PoisonTaskRequest(StrictModel):
     task: TaskCreateRequest
     defect_description: str = Field(min_length=1, max_length=8_000)
     expected_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC"]
+
+
+# ---------------------------------------------------------- v3.34 growth
+
+
+class ProductEventRequest(StrictModel):
+    """Console-side product moments (the upgrade fake door)."""
+
+    name: Literal["upgrade_viewed", "upgrade_intent"]
+    source: str | None = Field(default=None, max_length=32)
+    plan: str | None = Field(default=None, max_length=32)
+
+
+class CliSessionCreateRequest(StrictModel):
+    public_key: str = Field(min_length=40, max_length=64,
+                            description="The CLI's X25519 public key, base64 (32 bytes)")
+    client_label: str | None = Field(default=None, max_length=64)
+    clients: list[Literal["claude-code", "cursor", "claude-desktop", "other"]] = Field(
+        default_factory=list, max_length=4)
+
+
+class CliSessionPollRequest(StrictModel):
+    device_code: str = Field(min_length=20, max_length=128)
+
+
+class CliSessionApproveRequest(StrictModel):
+    agent_signature: str = Field(default="claude-code", min_length=1, max_length=100)
+    role_scope: RoleName = "EXECUTOR"
+    allowed_namespaces: list[str] = Field(default_factory=lambda: ["*"])
+
+    @field_validator("allowed_namespaces")
+    @classmethod
+    def _namespaces(cls, value: list[str]) -> list[str]:
+        return _clean_namespaces(value)
+

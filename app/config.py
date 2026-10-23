@@ -178,6 +178,14 @@ class Settings(BaseSettings):
     signup_default_tier: str = "free"
     google_client_id: str | None = None
 
+    # ------------------------------------------------------ growth (v3.34)
+    # `npx veynod init` device flow: how long a user code waits for approval.
+    cli_session_ttl_seconds: int = Field(default=600, ge=60, le=3_600)
+    cli_sessions_per_ip_per_minute: int = Field(default=10, ge=1, le=1_000)
+    # Accounts left out of the operator KPIs (the team's own): comma-separated
+    # e-mails or @domains, e.g. "me@example.com,@veynod.com".
+    metrics_internal_emails: str = ""
+
     # ---------------------------------------------------------- row security
     rls_enabled: bool = True
     rls_role: str = "agentgraph_app"

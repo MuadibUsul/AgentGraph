@@ -10,6 +10,7 @@ import { DocumentsView } from "./components/documents";
 import { GovernanceView } from "./components/governance";
 import { AnimatedNumber, spotlight, useSlidingIndicator } from "./components/motion";
 import { AgentConnect, GettingStarted, type OnboardingStepId } from "./components/onboarding";
+import { UpgradeCard } from "./components/upgrade";
 import { LanguageToggle, useI18n } from "./i18n";
 import {
   CreateTaskModal,
@@ -1236,6 +1237,10 @@ export default function ConsolePage() {
           ))}
         </nav>
 
+        {sessionMode && sessionToken && selectedWorkspace && selectedWorkspace.tier !== "pro" && (
+          <UpgradeCard apiBase={apiBase} sessionToken={sessionToken} />
+        )}
+
         <nav className="sidebar-help" aria-label={t("Help")}>
           <span>{t("Help")}</span>
           <a href="/docs/quickstart/" target="_blank" rel="noreferrer">{t("Quickstart")}</a>
@@ -1267,6 +1272,9 @@ export default function ConsolePage() {
                 <small>{t("Admin token")}</small>
               </span>
             </div>
+            <a className="button subtle full" href="/dashboard/growth/">
+              {t("Growth metrics")}
+            </a>
             <a className="button subtle full" href="/dashboard/connect/">
               {t("Connection settings")}
             </a>

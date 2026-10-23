@@ -35,6 +35,7 @@ do not edit by hand. Every error body is
 | `overloaded` | 503 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After; never resend earlier. |
 | `internal_error` | 500 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry at most 5 times, then escalate_human. |
 | `embedding_failed` | 502 | `retry_backoff` | `backoff_then_retry_same_request` | Embedding provider failed; back off. |
+| `cli_code_unavailable` | 503 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry. |
 | `database_unavailable` | 503 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry. |
 | `google_unavailable` | 503 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry sign-in. |
 | `tenant_context_unavailable` | 503 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry. |
@@ -105,6 +106,7 @@ do not edit by hand. Every error body is
 | `invalid_handoff_brief` | 422 | `fix_request` | `fix_request_then_resend` | Fix the L1 brief per details. |
 | `invalid_json_patch` | 422 | `fix_request` | `fix_request_then_resend` | Fix the JSON Patch operations. |
 | `invalid_last_event_id` | 422 | `fix_request` | `fix_request_then_resend` | Send a non-negative integer. |
+| `invalid_public_key` | 422 | `fix_request` | `fix_request_then_resend` | Send a base64 X25519 public key (32 bytes). |
 | `invalid_section` | 422 | `fix_request` | `fix_request_then_resend` | Use an existing section heading. |
 | `invalid_sort` | 422 | `fix_request` | `fix_request_then_resend` | Use a supported sort. |
 | `invalid_stream_filter` | 422 | `fix_request` | `fix_request_then_resend` | Use a supported table filter. |
@@ -159,11 +161,13 @@ do not edit by hand. Every error body is
 | `scope_escalation` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `self_vote_forbidden` | 403 | `abandon` | `abandon_and_release_local_state` | Agents cannot vote on their own proposals. |
 | `signup_disabled` | 403 | `abandon` | `abandon_and_release_local_state` | Ask an owner for an invitation. |
+| `invalid_device_code` | 404 | `abandon` | `abandon_and_release_local_state` | Start a new setup with `npx veynod init`. |
 | `lease_not_found` | 404 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `not_found` | 404 | `abandon` | `abandon_and_release_local_state` | Give up; cross-tenant access also returns 404. |
 | `already_registered` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `circuit_not_open` | 409 | `abandon` | `abandon_and_release_local_state` | The domain's circuit is already closed. |
 | `claim_already_refuted` | 409 | `abandon` | `abandon_and_release_local_state` | The claim was refuted; report a new commit. |
+| `cli_session_decided` | 409 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod init` again for a new code. |
 | `document_archived` | 409 | `abandon` | `abandon_and_release_local_state` | Give up, or ask for restore_document. |
 | `escape_closed` | 409 | `abandon` | `abandon_and_release_local_state` | The escape is already FIXED or WAIVED. |
 | `external_action_error` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the action state. |
@@ -183,6 +187,8 @@ do not edit by hand. Every error body is
 | `stale_fencing_token` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
 | `task_not_reviewable` | 409 | `abandon` | `abandon_and_release_local_state` | The task is not awaiting review. |
 | `token_already_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Ask the issuer to issue again. |
+| `cli_session_consumed` | 410 | `abandon` | `abandon_and_release_local_state` | The key was collected once; start a new setup. |
+| `cli_session_expired` | 410 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod init` again for a new code. |
 | `gone` | 410 | `abandon` | `abandon_and_release_local_state` | Give up; details carry the tombstone. |
 | `reviewer_conflict` | 422 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `share_cross_root_not_allowed` | 422 | `abandon` | `abandon_and_release_local_state` | Use cross-tree collaboration instead. |

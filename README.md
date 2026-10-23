@@ -655,6 +655,8 @@ Copy [`.env.example`](.env.example) to `.env`. Important settings:
 | `DEVELOPER_MAX_DOCUMENTS` / `_SLOTS` | `50000` / `100` | $5 tier caps |
 | `PRO_MAX_DOCUMENTS` / `_SLOTS` | `500000` / `1000` | Pro caps |
 | `MCP_ALLOWED_HOSTS` | localhost | JSON list for custom domains |
+| `METRICS_INTERNAL_EMAILS` | — | Comma-separated e-mails or `@domains` left out of the growth KPIs |
+| `CLI_SESSION_TTL_SECONDS` | `600` | How long an `npx veynod init` code waits for approval |
 
 Use one embedding model consistently per workspace. Vectors smaller than
 `EMBEDDING_DIMENSIONS` are zero-padded (cosine-invariant); changing the
@@ -1198,3 +1200,23 @@ events carry `platform=mcp` and the document's namespace; `session_batch_id` is
 a UUID in tool schemas; section patches strip a repeated leading heading.
 Self-vote errors include the proposal/voter details, and reviewing a task in an
 ineligible state returns `task_not_reviewable` with the actual decision.
+
+## Growth: one-command setup and KPIs (v3.34)
+
+- **`npx veynod init`** ([`cli/`](cli/README.md), no dependencies): shows a code,
+  opens `/dashboard/cli/?code=…` for an owner to approve, receives an agent key
+  sealed to the terminal (X25519 + HKDF-SHA256 + AES-256-GCM; the server stores
+  only the device-code hash and never the raw key), configures Claude Code,
+  Cursor and Claude Desktop, and calls `get_orientation` over MCP. Endpoints:
+  `POST /v1/auth/cli/sessions`, `POST /v1/auth/cli/poll`,
+  `GET|POST /v1/auth/cli/sessions/{code}[/approve|/deny]`.
+- **Growth page** (`/dashboard/growth/`, admin token; API `GET /v1/admin/growth`):
+  activation (agent `get_orientation` within 24 h of signup, target 40%),
+  week-2 retention (agents back 7–14 days later, target 25%), human decisions
+  per active workspace per week (target 3) and upgrade intent (target 5), plus
+  the funnel, weekly cohorts and recent signups. Signups, activation and agent
+  activity come from existing tables; `product_events` only records CLI setups,
+  console decisions (approve/reject/verify/undo/apply) and the Upgrade dialog.
+- **Upgrade fake door:** non-Pro workspaces see "Upgrade to Pro" in the sidebar;
+  the dialog says plainly that Pro is not on sale and records the interest.
+

@@ -41,12 +41,12 @@ const COPY: Record<OnboardingStepId, { title: string; detail: string; action: st
   },
   create_token: {
     title: "Mint your first agent token",
-    detail: "Agents → Mint token. Pick EXECUTOR and copy the key: it is shown once.",
+    detail: "Fastest: run npx veynod init in a terminal and approve its code. Or Agents → Mint token.",
     action: "Open Agents",
   },
   connect_mcp: {
     title: "Connect MCP and call get_orientation",
-    detail: "Paste the MCP config into Claude Desktop or Cursor, or press Test connection after minting.",
+    detail: "npx veynod init does this for you. Or paste the MCP config into Claude Desktop or Cursor.",
     action: "MCP setup",
   },
   first_content: {

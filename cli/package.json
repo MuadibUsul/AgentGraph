@@ -1,0 +1,22 @@
+{
+  "name": "veynod",
+  "version": "0.1.0",
+  "description": "One command to put your coding agents on a Veynod board: npx veynod init",
+  "type": "module",
+  "bin": {
+    "veynod": "bin/veynod.mjs"
+  },
+  "files": [
+    "bin/veynod.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": ["mcp", "agents", "claude-code", "cursor", "veynod"],
+  "homepage": "https://veynod.com",
+  "license": "UNLICENSED"
+}

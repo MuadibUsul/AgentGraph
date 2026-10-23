@@ -165,6 +165,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `overloaded` | 503 | `retry_after` |
 | `internal_error` | 500 | `retry_backoff` |
 | `embedding_failed` | 502 | `retry_backoff` |
+| `cli_code_unavailable` | 503 | `retry_backoff` |
 | `database_unavailable` | 503 | `retry_backoff` |
 | `google_unavailable` | 503 | `retry_backoff` |
 | `tenant_context_unavailable` | 503 | `retry_backoff` |
@@ -235,6 +236,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `invalid_handoff_brief` | 422 | `fix_request` |
 | `invalid_json_patch` | 422 | `fix_request` |
 | `invalid_last_event_id` | 422 | `fix_request` |
+| `invalid_public_key` | 422 | `fix_request` |
 | `invalid_section` | 422 | `fix_request` |
 | `invalid_sort` | 422 | `fix_request` |
 | `invalid_stream_filter` | 422 | `fix_request` |
@@ -289,11 +291,13 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `scope_escalation` | 403 | `abandon` |
 | `self_vote_forbidden` | 403 | `abandon` |
 | `signup_disabled` | 403 | `abandon` |
+| `invalid_device_code` | 404 | `abandon` |
 | `lease_not_found` | 404 | `abandon` |
 | `not_found` | 404 | `abandon` |
 | `already_registered` | 409 | `abandon` |
 | `circuit_not_open` | 409 | `abandon` |
 | `claim_already_refuted` | 409 | `abandon` |
+| `cli_session_decided` | 409 | `abandon` |
 | `document_archived` | 409 | `abandon` |
 | `escape_closed` | 409 | `abandon` |
 | `external_action_error` | 409 | `abandon` |
@@ -313,6 +317,8 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `stale_fencing_token` | 409 | `abandon` |
 | `task_not_reviewable` | 409 | `abandon` |
 | `token_already_expired` | 409 | `abandon` |
+| `cli_session_consumed` | 410 | `abandon` |
+| `cli_session_expired` | 410 | `abandon` |
 | `gone` | 410 | `abandon` |
 | `reviewer_conflict` | 422 | `abandon` |
 | `share_cross_root_not_allowed` | 422 | `abandon` |
