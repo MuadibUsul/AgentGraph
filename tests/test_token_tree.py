@@ -494,7 +494,8 @@ async def test_agents_narrow_roles_and_take_delegations_back(tree):
 
     scout = await _issued(client, lead["headers"], role_scope="SCOUT", scopes=["docs:read"])
     assert scout["role_scope"] == "SCOUT"
-    lives = datetime.fromisoformat(scout["expires_at"]) - datetime.now(timezone.utc)
+    lives = (datetime.fromisoformat(scout["expires_at"].replace("Z", "+00:00"))
+             - datetime.now(timezone.utc))
     assert 0.95 * 3_600 < lives.total_seconds() <= 3_600  # default: one hour
     auditor = await _issue(client, lead["headers"], role_scope="AUDITOR", scopes=["docs:read"])
     assert auditor.status_code == 403

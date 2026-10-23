@@ -123,7 +123,8 @@ async def test_children_inherit_removals_and_live_shorter(tree):  # noqa: F811
     assert view["permission_delta"]["remove"] == ["proposal:vote"]
     assert "proposal:vote" not in view["effective_permissions"]
     assert "doc:propose" in view["effective_permissions"]
-    lives = (datetime.fromisoformat(child["expires_at"]) - datetime.now(timezone.utc))
+    lives = (datetime.fromisoformat(child["expires_at"].replace("Z", "+00:00"))
+             - datetime.now(timezone.utc))
     assert 0.95 * 3_600 < lives.total_seconds() <= 3_600
 
     too_long = await _issue(client, branch["headers"], scopes=["docs:read"],
