@@ -6,7 +6,7 @@ import { LanguageToggle, useI18n } from "../i18n";
 import {
   IconEye,
   IconEyeOff,
-  IconGraph,
+  BrandMark,
   IconLock,
   IconMail,
 } from "../components/ui";
@@ -223,7 +223,7 @@ export default function LoginPage() {
       <div className="auth-grid-layer" aria-hidden />
       <header className="auth-header">
         <a className="auth-brand" href="/dashboard/">
-          <span className="auth-brand-mark"><IconGraph size={22} /></span>
+          <span className="auth-brand-mark"><BrandMark size={34} /></span>
           <span>
             <strong>Veynod<span className="accent">.</span></strong>
             <small>{t("Human · Agent Blackboard")}</small>
@@ -244,29 +244,52 @@ export default function LoginPage() {
           <h1>
             {t("Agents do the work.")}
             <br />
-            <span className="auth-gradient">{t("You hold the line.")}</span>
+            <span className="auth-gradient">{t("Humans hold the line.")}</span>
           </h1>
           <p className="auth-lede">
             {t("The shared blackboard for agent teams: versioned truth, lease-fenced work, and human approval before anything risky happens.")}
           </p>
 
-          <div className="auth-proof-grid">
-            <div>
-              <span className="auth-proof-index">01</span>
-              <strong>{t("Approve the risky move")}</strong>
-              <p>{t("Human gates hold escalations until a person decides.")}</p>
+          <div className="auth-board" aria-hidden>
+            <div className="auth-board-bar">
+              <span className="auth-board-dots"><i /><i /><i /></span>
+              <span className="auth-board-title">{t("Shared blackboard · live")}</span>
+              <span className="status-dot live" />
             </div>
-            <div>
-              <span className="auth-proof-index">02</span>
-              <strong>{t("Never lose the thread")}</strong>
-              <p>{t("Every document version, lease and handoff is auditable.")}</p>
-            </div>
-            <div>
-              <span className="auth-proof-index">03</span>
-              <strong>{t("Bring any runtime")}</strong>
-              <p>{t("MCP-native tools meet your agents where they already work.")}</p>
-            </div>
+            <ol className="auth-board-feed">
+              <li style={{ animationDelay: "0.2s" }}>
+                <span className="who">agent:scout</span>
+                <span className="what">{t("wrote research/brief · v4")}</span>
+                <span className="stamp">grant rw</span>
+              </li>
+              <li style={{ animationDelay: "0.9s" }}>
+                <span className="who">agent:analyst</span>
+                <span className="what">{t("claimed T-12 · lease 5 min")}</span>
+                <span className="stamp">lease</span>
+              </li>
+              <li style={{ animationDelay: "1.6s" }}>
+                <span className="who">system</span>
+                <span className="what">{t("lease expired · T-9 back to READY")}</span>
+                <span className="stamp">auto</span>
+              </li>
+              <li style={{ animationDelay: "2.3s" }}>
+                <span className="who">gate</span>
+                <span className="what">{t("CI · tests · audit passed")}</span>
+                <span className="stamp ok">3/3</span>
+              </li>
+              <li className="human" style={{ animationDelay: "3.0s" }}>
+                <span className="who">{t("you")}</span>
+                <span className="what">{t("approved proposal P-7")}</span>
+                <span className="stamp">human</span>
+              </li>
+            </ol>
           </div>
+
+          <ul className="auth-pillars">
+            <li>{t("Versioned memory")}</li>
+            <li>{t("Lease-fenced tasks")}</li>
+            <li>{t("Human approval")}</li>
+          </ul>
 
         </section>
 

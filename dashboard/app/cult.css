@@ -40,15 +40,15 @@
 }
 
 .button.primary {
-  border: 1px solid rgba(165, 180, 252, 0.38);
+  border: 1px solid rgba(169, 158, 255, 0.38);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 55%),
-    linear-gradient(180deg, #6366f1, #4f46e5 60%, #4338ca);
+    linear-gradient(180deg, #7462f7, #6550f0 60%, #5440dc);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.24),
     inset 0 -1px 0 rgba(0, 0, 0, 0.22),
     0 1px 2px rgba(0, 0, 0, 0.4),
-    0 6px 18px -4px rgba(79, 70, 229, 0.45);
+    0 6px 18px -4px rgba(101, 80, 240, 0.45);
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
 }
 
@@ -60,11 +60,11 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.28),
     inset 0 -1px 0 rgba(0, 0, 0, 0.22),
     0 2px 4px rgba(0, 0, 0, 0.4),
-    0 10px 26px -6px rgba(99, 102, 241, 0.55);
+    0 10px 26px -6px rgba(139, 124, 255, 0.55);
 }
 
 .button.primary:active:not(:disabled) {
-  background: linear-gradient(180deg, #4f46e5, #4338ca);
+  background: linear-gradient(180deg, #6550f0, #5440dc);
   box-shadow:
     inset 0 2px 4px rgba(0, 0, 0, 0.35),
     0 1px 1px rgba(0, 0, 0, 0.3);
@@ -158,7 +158,7 @@
   opacity: 0;
   background: radial-gradient(
     240px circle at var(--spot-x, 50%) var(--spot-y, 0%),
-    rgba(129, 140, 248, 0.14),
+    rgba(139, 124, 255, 0.14),
     transparent 62%
   );
   transition: opacity var(--ds-motion-slow) ease;
@@ -189,10 +189,10 @@
   border: 1px solid var(--ds-accent-border);
   border-radius: var(--ds-radius-pill);
   background:
-    linear-gradient(180deg, rgba(129, 140, 248, 0.16), rgba(129, 140, 248, 0.05));
+    linear-gradient(180deg, rgba(139, 124, 255, 0.16), rgba(139, 124, 255, 0.05));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 0 18px -4px rgba(129, 140, 248, 0.45);
+    0 0 18px -4px rgba(139, 124, 255, 0.45);
 }
 
 .eyebrow::before {
@@ -262,7 +262,7 @@
   height: 2px;
   border-radius: 2px 2px 0 0;
   background: var(--ds-accent);
-  box-shadow: 0 0 12px rgba(129, 140, 248, 0.7);
+  box-shadow: 0 0 12px rgba(139, 124, 255, 0.7);
   pointer-events: none;
   transition:
     transform var(--ds-motion-slow) var(--cult-ease),
@@ -287,7 +287,7 @@ select:focus-visible,
 textarea:focus-visible {
   box-shadow:
     inset 0 1px 2px rgba(0, 0, 0, 0.35),
-    0 0 0 3px rgba(129, 140, 248, 0.16);
+    0 0 0 3px rgba(139, 124, 255, 0.16);
 }
 
 .pill,
@@ -301,7 +301,7 @@ textarea:focus-visible {
 .modal {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 30%),
-    radial-gradient(140% 120% at 0% 0%, rgba(99, 102, 241, 0.06), transparent 42%),
+    radial-gradient(140% 120% at 0% 0%, rgba(139, 124, 255, 0.06), transparent 42%),
     linear-gradient(180deg, #121a27, #0c121b);
   box-shadow: var(--cult-shadow-lift), var(--cult-highlight);
   animation: cult-pop 220ms var(--cult-ease);

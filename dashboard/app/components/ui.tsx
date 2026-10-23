@@ -16,6 +16,19 @@ export function IconGraph({ size = 22 }: { size?: number }) {
   );
 }
 
+/** Veynod mark: a V whose right stroke is the agent's violet cursor. */
+export function BrandMark({ size = 32, tile = true }: { size?: number; tile?: boolean }) {
+  return (
+    <svg className="veynod-mark" width={size} height={size} viewBox="0 0 64 64" fill="none" aria-hidden>
+      {tile && <rect x="1" y="1" width="62" height="62" rx="18" fill="var(--mark-tile, #141824)" />}
+      {tile && <rect x="1.5" y="1.5" width="61" height="61" rx="17.5" stroke="var(--mark-edge, rgba(255,255,255,.12))" />}
+      <path d="M32 45 45 19" stroke="#8B7CFF" strokeOpacity=".28" strokeWidth="13" strokeLinecap="round" />
+      <path d="M19 19 32 45" stroke="var(--mark-ink, #E8EAF0)" strokeWidth="7" strokeLinecap="round" />
+      <path d="M32 45 45 19" stroke="#8B7CFF" strokeWidth="7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function IconMail({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>

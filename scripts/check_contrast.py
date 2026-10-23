@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 PAIRS = [
-    ("text-primary/page", "#eef2f8", "#080a0e", 4.5),
-    ("text-secondary/page", "#a7b3c5", "#080a0e", 4.5),
-    ("text-muted/page", "#8a97a9", "#080a0e", 4.5),
-    ("text-muted/panel", "#8a97a9", "#12161e", 4.5),
-    ("text-secondary/panel", "#a7b3c5", "#12161e", 4.5),
-    ("primary-button", "#ffffff", "#4f46e5", 4.5),
-    ("accent/page", "#a5b4fc", "#080a0e", 4.5),
-    ("accent-strong/page", "#c7d2fe", "#080a0e", 4.5),
-    ("success/page", "#34d399", "#080a0e", 4.5),
-    ("danger/page", "#fda4af", "#080a0e", 4.5),
-    ("warning/page", "#fcd34d", "#080a0e", 4.5),
-    ("info/page", "#93c5fd", "#080a0e", 4.5),
-    ("proposal/page", "#c4b5fd", "#080a0e", 4.5),
-    ("control-border/panel", "#52657d", "#12161e", 3.0),
-    ("focus-ring/panel", "#a5b4fc", "#12161e", 3.0),
+    ("text-primary/page", "#e8eaf0", "#0a0b0f", 4.5),
+    ("text-secondary/page", "#adb2c0", "#0a0b0f", 4.5),
+    ("text-muted/page", "#8a90a0", "#0a0b0f", 4.5),
+    ("text-muted/panel", "#8a90a0", "#12151c", 4.5),
+    ("text-secondary/panel", "#adb2c0", "#12151c", 4.5),
+    ("primary-button", "#ffffff", "#6550f0", 4.5),
+    ("accent/page", "#a99eff", "#0a0b0f", 4.5),
+    ("accent-strong/page", "#d2ccff", "#0a0b0f", 4.5),
+    ("success/page", "#34d399", "#0a0b0f", 4.5),
+    ("danger/page", "#fda4af", "#0a0b0f", 4.5),
+    ("warning/page", "#fcd34d", "#0a0b0f", 4.5),
+    ("info/page", "#93c5fd", "#0a0b0f", 4.5),
+    ("proposal/page", "#c4b5fd", "#0a0b0f", 4.5),
+    ("control-border/panel", "#5c6479", "#12151c", 3.0),
+    ("focus-ring/panel", "#a99eff", "#12151c", 3.0),
 ]
 
 

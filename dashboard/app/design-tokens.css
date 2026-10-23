@@ -2,8 +2,9 @@
  * Veynod design tokens — v3.3 console refresh.
  *
  * Visual proposition: a quiet operations console for long human-in-the-loop
- * sessions. Flat graphite surfaces, one indigo action color, precise 13–14px
- * data type, compact density, and one clear hierarchy: workspace → work → detail.
+ * sessions. Near-black stage surfaces (shared with the landing page and the
+ * launch film), one electric-violet accent (#8B7CFF), precise 13–14px data
+ * type, compact density, and one clear hierarchy: workspace → work → detail.
  *
  * Token architecture:
  *   primitive → semantic → component aliases (legacy --bg/--surface map below).
@@ -15,21 +16,23 @@
 
   /* ---------------------------------------------------------- primitives */
   /* Cool graphite ramp; steps follow Radix's 1–12 role convention. */
-  --ds-primitive-slate-1: #080a0e;
-  --ds-primitive-slate-2: #0d1016;
-  --ds-primitive-slate-3: #12161e;
-  --ds-primitive-slate-4: #171d27;
-  --ds-primitive-slate-5: #1c2430;
-  --ds-primitive-slate-6: #232d3b;
-  --ds-primitive-slate-7: #2c3848;
-  --ds-primitive-slate-8: #3a495d;
-  --ds-primitive-slate-11: #a7b3c5;
-  --ds-primitive-slate-12: #eef2f8;
+  --ds-primitive-slate-1: #0a0b0f;
+  --ds-primitive-slate-2: #0e1015;
+  --ds-primitive-slate-3: #12151c;
+  --ds-primitive-slate-4: #181b24;
+  --ds-primitive-slate-5: #1d212b;
+  --ds-primitive-slate-6: #242833;
+  --ds-primitive-slate-7: #2d323e;
+  --ds-primitive-slate-8: #3b4150;
+  --ds-primitive-slate-11: #adb2c0;
+  --ds-primitive-slate-12: #e8eaf0;
 
-  --ds-primitive-indigo-9: #4f46e5;
-  --ds-primitive-indigo-10: #5b5bf0;
-  --ds-primitive-indigo-11: #a5b4fc;
-  --ds-primitive-indigo-12: #e0e7ff;
+  /* Brand violet (the "indigo" slot keeps its name for existing consumers). */
+  --ds-primitive-indigo-8: #8b7cff; /* the mark, glows, charts */
+  --ds-primitive-indigo-9: #6550f0; /* filled actions, white text 5.3:1 */
+  --ds-primitive-indigo-10: #7462f7;
+  --ds-primitive-indigo-11: #a99eff;
+  --ds-primitive-indigo-12: #e4e0ff;
   --ds-primitive-violet-9: #a78bfa;
   --ds-primitive-violet-11: #c4b5fd;
   --ds-primitive-blue-9: #60a5fa;
@@ -44,35 +47,35 @@
   /* ------------------------------------------------------------ semantic */
   /* Surfaces: page < subtle < panel < raised < overlay */
   --ds-surface-page: var(--ds-primitive-slate-1);
-  --ds-surface-page-deep: #06080b;
+  --ds-surface-page-deep: #07080b;
   --ds-surface-subtle: var(--ds-primitive-slate-2);
   --ds-surface-panel: var(--ds-primitive-slate-3);
   --ds-surface-raised: var(--ds-primitive-slate-4);
-  --ds-surface-inset: #0a0d12;
-  --ds-surface-overlay: rgba(4, 6, 9, 0.78);
+  --ds-surface-inset: #0b0d12;
+  --ds-surface-overlay: rgba(5, 6, 9, 0.78);
 
   /* Borders: subtle dividers, control borders, emphasis/focus candidates. */
   --ds-border-subtle: var(--ds-primitive-slate-6);
   --ds-border-default: var(--ds-primitive-slate-7);
-  --ds-border-control: #52657d; /* 3.03:1 against panel */
+  --ds-border-control: #5c6479; /* 3.09:1 against panel */
   --ds-border-strong: var(--ds-primitive-slate-8);
   --ds-focus-ring: var(--ds-primitive-indigo-11);
 
   /* Text: verified against page and panel backgrounds in check_contrast.py. */
   --ds-text-primary: var(--ds-primitive-slate-12);
   --ds-text-secondary: var(--ds-primitive-slate-11);
-  --ds-text-muted: #8a97a9;
+  --ds-text-muted: #8a90a0;
   --ds-text-inverse: #ffffff;
 
   /* Action: one primary accent; status colors are independent semantics. */
   --ds-action-primary: var(--ds-primitive-indigo-9);
   --ds-action-primary-hover: var(--ds-primitive-indigo-10);
-  --ds-action-primary-active: #4338ca;
+  --ds-action-primary-active: #5440dc;
   --ds-action-primary-fg: var(--ds-text-inverse);
   --ds-accent: var(--ds-primitive-indigo-11);
-  --ds-accent-strong: #c7d2fe;
-  --ds-accent-soft: rgba(129, 140, 248, 0.12);
-  --ds-accent-border: rgba(129, 140, 248, 0.35);
+  --ds-accent-strong: #d2ccff;
+  --ds-accent-soft: rgba(139, 124, 255, 0.12);
+  --ds-accent-border: rgba(139, 124, 255, 0.36);
 
   --ds-status-success: var(--ds-primitive-jade-9);
   --ds-status-success-soft: rgba(52, 211, 153, 0.1);
@@ -85,14 +88,14 @@
   --ds-status-proposal: var(--ds-primitive-violet-11);
   --ds-status-proposal-soft: rgba(167, 139, 250, 0.1);
 
-  --ds-selection: rgba(99, 102, 241, 0.3);
+  --ds-selection: rgba(139, 124, 255, 0.32);
   --ds-shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.025);
   --ds-shadow-float: 0 18px 48px rgba(0, 0, 0, 0.38);
 
   /* ---------------------------------------------------------- typography */
-  --ds-font-body: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+  --ds-font-body: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
     "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --ds-font-mono: "SFMono-Regular", ui-monospace, "Cascadia Code",
+  --ds-font-mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, "Cascadia Code",
     "Roboto Mono", Menlo, Consolas, monospace;
   --ds-text-caption: 11px;
   --ds-text-sm: 12px;
@@ -140,6 +143,7 @@
   --muted-2: var(--ds-text-muted);
   --accent: var(--ds-accent);
   --accent-soft: var(--ds-accent-soft);
+  --brand: var(--ds-primitive-indigo-8);
   --violet: var(--ds-status-proposal);
   --violet-soft: var(--ds-status-proposal-soft);
   --sky: var(--ds-status-info);

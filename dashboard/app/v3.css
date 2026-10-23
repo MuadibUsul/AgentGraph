@@ -32,7 +32,7 @@
 
 .live-pill.on {
   color: var(--accent);
-  border-color: rgba(99, 102, 241, 0.24);
+  border-color: rgba(139, 124, 255, 0.24);
   background: var(--accent-soft);
 }
 
@@ -376,7 +376,7 @@
 
 .status-pill.tone-mint,
 .role-pill.tone-mint {
-  border-color: rgba(99, 102, 241, 0.2);
+  border-color: rgba(139, 124, 255, 0.2);
   background: var(--accent-soft);
 }
 
@@ -659,9 +659,9 @@
 
 .brief-box {
   padding: 12px;
-  border: 1px solid rgba(99, 102, 241, 0.16);
+  border: 1px solid rgba(139, 124, 255, 0.16);
   border-radius: 10px;
-  background: rgba(99, 102, 241, 0.035);
+  background: rgba(139, 124, 255, 0.035);
 }
 
 .brief-summary {
@@ -755,7 +755,7 @@
 }
 
 .field textarea:focus {
-  border-color: rgba(99, 102, 241, 0.4);
+  border-color: rgba(139, 124, 255, 0.4);
 }
 
 .mono-input {
@@ -1046,8 +1046,8 @@
 }
 
 .doc-item.active {
-  border-color: rgba(99, 102, 241, 0.18);
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.09), rgba(99, 102, 241, 0.015));
+  border-color: rgba(139, 124, 255, 0.18);
+  background: linear-gradient(90deg, rgba(139, 124, 255, 0.09), rgba(139, 124, 255, 0.015));
   color: var(--text);
 }
 
@@ -1375,7 +1375,7 @@
 
 .verification-pill.tone-mint {
   color: var(--accent);
-  border-color: rgba(99, 102, 241, 0.24);
+  border-color: rgba(139, 124, 255, 0.24);
   background: var(--accent-soft);
 }
 .verification-pill.tone-amber {
@@ -1394,8 +1394,8 @@
 
 .trust-pill.trusted {
   color: var(--accent);
-  border-color: rgba(99, 102, 241, 0.2);
-  background: rgba(99, 102, 241, 0.05);
+  border-color: rgba(139, 124, 255, 0.2);
+  background: rgba(139, 124, 255, 0.05);
 }
 .trust-pill.untrusted {
   color: var(--amber);
@@ -1437,7 +1437,7 @@
 }
 
 .version-row.active {
-  border-color: rgba(99, 102, 241, 0.22);
+  border-color: rgba(139, 124, 255, 0.22);
   background: var(--accent-soft);
   color: var(--text);
 }
@@ -1886,7 +1886,7 @@
 .governance .field textarea:focus-visible,
 .governance-tab:focus-visible {
   border-color: var(--accent);
-  outline: 2px solid rgba(99, 102, 241, 0.5);
+  outline: 2px solid rgba(139, 124, 255, 0.5);
   outline-offset: 2px;
 }
 
@@ -3855,7 +3855,7 @@ body::before {
   height: 120%;
   pointer-events: none;
   background:
-    radial-gradient(42% 45% at 18% 28%, rgba(79, 70, 229, 0.19), transparent 70%),
+    radial-gradient(42% 45% at 18% 28%, rgba(101, 80, 240, 0.19), transparent 70%),
     radial-gradient(35% 42% at 82% 18%, rgba(167, 139, 250, 0.14), transparent 72%),
     radial-gradient(30% 34% at 62% 78%, rgba(96, 165, 250, 0.09), transparent 72%);
   filter: blur(28px);
@@ -3979,7 +3979,7 @@ body::before {
 }
 
 .auth-gradient {
-  background: linear-gradient(105deg, #eef2ff 8%, #818cf8 52%, #a78bfa 96%);
+  background: linear-gradient(105deg, #eef2ff 8%, #8b7cff 52%, #a78bfa 96%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -4055,7 +4055,7 @@ body::before {
   position: absolute;
   inset: 0 18% auto;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.7), transparent);
+  background: linear-gradient(90deg, transparent, rgba(139, 124, 255, 0.7), transparent);
 }
 
 .auth-card-head {
@@ -4116,8 +4116,8 @@ body::before {
 }
 
 .auth-tab.active {
-  border-color: rgba(99, 102, 241, 0.28);
-  background: rgba(99, 102, 241, 0.13);
+  border-color: rgba(139, 124, 255, 0.28);
+  background: rgba(139, 124, 255, 0.13);
   color: var(--ds-text-primary);
 }
 
@@ -4141,7 +4141,7 @@ body::before {
 
 .auth-form .field input:focus {
   border-color: var(--ds-focus-ring);
-  outline: 2px solid rgba(99, 102, 241, 0.16);
+  outline: 2px solid rgba(139, 124, 255, 0.16);
   outline-offset: 1px;
 }
 
@@ -4199,20 +4199,20 @@ body::before {
   min-height: 46px;
   margin-top: 4px;
   padding: 0 14px;
-  border: 1px solid rgba(99, 102, 241, 0.65);
+  border: 1px solid rgba(139, 124, 255, 0.65);
   border-radius: 8px;
-  background: linear-gradient(180deg, #5b5bf0, #4f46e5);
+  background: linear-gradient(180deg, #7462f7, #6550f0);
   color: #ffffff;
   font-size: 12.5px;
   font-weight: 650;
-  box-shadow: 0 10px 30px rgba(79, 70, 229, 0.16);
+  box-shadow: 0 10px 30px rgba(101, 80, 240, 0.16);
   transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
 .auth-submit:hover:not(:disabled) {
   transform: translateY(-1px);
-  background: #5b5bf0;
-  box-shadow: 0 14px 36px rgba(79, 70, 229, 0.22);
+  background: #7462f7;
+  box-shadow: 0 14px 36px rgba(101, 80, 240, 0.22);
 }
 
 .auth-submit:disabled {
@@ -4770,7 +4770,7 @@ body::before {
 
 .namespace-selected:focus-within {
   border-color: var(--ds-focus-ring);
-  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.12);
+  box-shadow: 0 0 0 3px rgba(139, 124, 255, 0.12);
 }
 
 .namespace-selected input {

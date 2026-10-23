@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { LanguageToggle, useI18n } from "../i18n";
-import { IconGraph, IconKey } from "../components/ui";
+import { BrandMark, IconKey } from "../components/ui";
 import { normalizeBase } from "../types";
 
 const SESSION_KEY = "agentgraph.session_token";
@@ -64,7 +64,7 @@ export default function ConnectPage() {
       <div className="auth-grid-layer" aria-hidden />
       <header className="auth-header">
         <a className="auth-brand" href="/dashboard/login/">
-          <span className="auth-brand-mark"><IconGraph size={22} /></span>
+          <span className="auth-brand-mark"><BrandMark size={34} /></span>
           <span>
             <strong>Veynod<span className="accent">.</span></strong>
             <small>{t("Human · Agent Blackboard")}</small>
