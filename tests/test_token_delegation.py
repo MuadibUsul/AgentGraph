@@ -35,6 +35,21 @@ async def _row_id(client, ws: dict, canonical_id: str) -> str:
                 if item["canonical_id"] == canonical_id)
 
 
+async def test_admin_enables_child_issuance(tree):  # noqa: F811
+    """An operator can turn a branch token into an issuer without re-minting it."""
+    client = tree
+    ws = await _workspace(client)
+    issuer = await _mint(client, ws, "EXECUTOR")
+    patched = await _patch(client, ws, issuer["id"], can_issue=True, max_descendants=2)
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["can_issue"] is True
+    assert patched.json()["max_descendants"] == 2
+
+    child = await _issue(client, issuer["headers"], scopes=["docs:read"])
+    assert child.status_code == 201, child.text
+    assert child.json()["can_issue"] is False
+
+
 async def test_delta_adds_and_removes_permissions(tree):  # noqa: F811
     """D-01: an AUDITOR gains doc:create and loses proposal:vote, nothing else changes."""
     client = tree

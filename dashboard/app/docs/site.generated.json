@@ -3183,6 +3183,18 @@
          "name": "scope_remove",
          "required": false,
          "type": "string[] | null"
+        },
+        {
+         "description": "Allow this token to issue child tokens (requires CHILD_TOKEN_ISSUANCE)",
+         "name": "can_issue",
+         "required": false,
+         "type": "boolean | null"
+        },
+        {
+         "description": "How many live descendants this token may create",
+         "name": "max_descendants",
+         "required": false,
+         "type": "integer | null"
         }
        ],
        "description": "",
