@@ -325,12 +325,13 @@ def _visibility_conditions(
     *,
     include_unverified: bool,
     include_tainted: bool,
+    granted: frozenset[str] = frozenset(),
 ) -> list[Any]:
     if principal.is_commander:
         return []
     conditions: list[Any] = []
     if not include_unverified and not can(principal, "doc:verify"):
-        conditions.append(
+        visible = (
             (SharedDocument.verification_status == "VERIFIED")
             | (SharedDocument.created_by == principal.agent_signature)
             | (
@@ -338,6 +339,9 @@ def _visibility_conditions(
                 & (SharedDocument.created_by == "system")
             )
         )
+        if granted:  # B-02: the context documents of my tasks
+            visible = visible | SharedDocument.doc_key.in_(sorted(granted))
+        conditions.append(visible)
     if not include_tainted:
         conditions.append(
             SharedDocument.tainted.is_(False)
@@ -374,6 +378,29 @@ def _ensure_document_visible(
         raise NotFound("shared_document")
     if not include_tainted and not own and document.tainted:
         raise NotFound("shared_document")
+
+
+async def _ensure_visible(
+    session: AsyncSession,
+    principal: Principal,
+    document: SharedDocument,
+    *,
+    include_unverified: bool,
+    include_tainted: bool,
+) -> None:
+    """The visibility check, plus B-02: a task's assignee or holder reads its
+    context documents without include_unverified."""
+    try:
+        _ensure_document_visible(principal, document, include_unverified=include_unverified,
+                                 include_tainted=include_tainted)
+    except NotFound:
+        from app.services.collab import context_grants
+
+        if include_unverified or document.doc_key not in await context_grants(session,
+                                                                               principal):
+            raise
+        _ensure_document_visible(principal, document, include_unverified=True,
+                                 include_tainted=include_tainted)
 
 
 async def _get_document(
@@ -697,11 +724,17 @@ async def list_documents(
         conditions.extend(_frontmatter_conditions(filters))
     if not include_archived:
         conditions.append(SharedDocument.archived_at.is_(None))
+    granted: frozenset[str] = frozenset()
+    if not (include_unverified or principal.is_commander or can(principal, "doc:verify")):
+        from app.services.collab import context_grants
+
+        granted = await context_grants(session, principal)
     conditions.extend(
         _visibility_conditions(
             principal,
             include_unverified=include_unverified,
             include_tainted=include_tainted,
+            granted=granted,
         )
     )
     if verification_status:
@@ -1117,7 +1150,8 @@ async def get_document(
             raise
         return provenance.apply_taint_mode(shared, await _taint_mode(principal, taint_mode))
     ensure_namespace(principal, document.namespace)
-    _ensure_document_visible(
+    await _ensure_visible(
+        session,
         principal,
         document,
         include_unverified=include_unverified,
@@ -1958,7 +1992,8 @@ async def dereference(
                 shared, await _taint_mode(principal, taint_mode)),
             content_total_bytes=len((shared.content or "").encode("utf-8")))
     ensure_namespace(principal, document.namespace)
-    _ensure_document_visible(
+    await _ensure_visible(
+        session,
         principal,
         document,
         include_unverified=include_unverified,
@@ -2530,7 +2565,8 @@ async def list_document_versions(
     require_permission(principal, "doc:read")
     document = await _get_document(session, principal.workspace.id, doc_key)
     ensure_namespace(principal, document.namespace)
-    _ensure_document_visible(
+    await _ensure_visible(
+        session,
         principal,
         document,
         include_unverified=include_unverified,
@@ -2562,7 +2598,8 @@ async def get_document_version(
     await sharing.require_content_access(principal, "document_version")
     document = await _get_document(session, principal.workspace.id, doc_key)
     ensure_namespace(principal, document.namespace)
-    _ensure_document_visible(
+    await _ensure_visible(
+        session,
         principal,
         document,
         include_unverified=include_unverified,

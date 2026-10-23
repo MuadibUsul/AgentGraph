@@ -88,6 +88,15 @@ async def lifespan(app: FastAPI):
         await record_release(list(ROOT_PRIMITIVES))
     except Exception:  # noqa: BLE001 - announcing must not stop the service
         logger.exception("could not record the release")
+    # Every active agent token is in the directory (memory seed spec, R-03).
+    from app.services.directory import backfill_auto
+
+    try:
+        filled = await backfill_auto()
+        if filled:
+            logger.info("added %s token(s) to the agent directory (source=auto)", filled)
+    except Exception:  # noqa: BLE001 - the directory backfill must not stop the service
+        logger.exception("could not backfill the agent directory")
     await event_bus.start()
     reaper_task = asyncio.create_task(
         lease_reaper_loop(), name="agentgraph-lease-reaper"

@@ -18,7 +18,12 @@ import {
 } from "./ui";
 
 interface AgentOnboardingOverview {
-  items: Array<{ agent_signature: string; state: string; step: number }>;
+  items: Array<{
+    agent_signature: string;
+    state: string;
+    step: number;
+    memory_seed_version?: number | null;
+  }>;
   summary: {
     tokens: number;
     by_state: Record<string, number>;
@@ -432,6 +437,14 @@ export function AgentsView({
                         state={byAgent.get(token.agent_signature)?.state}
                         step={byAgent.get(token.agent_signature)?.step}
                       />
+                      <small className="field-hint">
+                        {" "}
+                        {byAgent.get(token.agent_signature)?.memory_seed_version != null
+                          ? t("Memory seed: stored v{version}", {
+                              version: byAgent.get(token.agent_signature)?.memory_seed_version ?? 0,
+                            })
+                          : t("Memory seed: not reported")}
+                      </small>
                     </td>
                     <td>{relativeTime(token.created_at)}</td>
                     <td>

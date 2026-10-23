@@ -1,9 +1,11 @@
-"""Agent onboarding over MCP: four protocol steps, role-aware, never a gate.
+"""Agent onboarding over MCP: five protocol steps, role-aware, never a gate.
 
 1. get_orientation
 2. read system/constitution and ack_constitution
 3. read the namespace readme (system/namespaces/<ns>)
-4. the role's first read and first action:
+4. register_agent: be findable in the directory (2026-10-23 memory seed
+   spec, R-01); an entry the platform filled in (source=auto) does not count
+5. the role's first read and first action:
    SCOUT    read raw_inbox (or its namespace), then write a draft or a proposal
    ANALYST  read its namespace, then create or claim a task
    AUDITOR  read the REVIEWING queue, then review a task
@@ -34,11 +36,11 @@ from app.warnings_context import set_onboarding
 
 logger = logging.getLogger("agentgraph.agent_onboarding")
 
-TOTAL_STEPS = 4
-STATES = ("new", "oriented", "needs_ack", "needs_namespace_readme", "needs_first_action",
-          "active")
+TOTAL_STEPS = 5
+STATES = ("new", "oriented", "needs_ack", "needs_namespace_readme", "needs_registration",
+          "needs_first_action", "active")
 _STEP_OF = {"new": 1, "oriented": 2, "needs_ack": 2, "needs_namespace_readme": 3,
-            "needs_first_action": 4, "active": TOTAL_STEPS}
+            "needs_registration": 4, "needs_first_action": 5, "active": TOTAL_STEPS}
 # What counts as the role's first action.
 FIRST_ACTIONS: dict[str, frozenset[str]] = {
     "SCOUT": frozenset({"document", "proposal"}),
@@ -105,12 +107,14 @@ def state_of(row: dict[str, Any] | None, constitution_version: int | None) -> st
         return "needs_ack" if row.get("constitution_read_at") else "oriented"
     if row.get("namespace_readme_read_at") is None:
         return "needs_namespace_readme"
+    if row.get("registered_at") is None:
+        return "needs_registration"
     return "needs_first_action"
 
 
 def completed_steps(row: dict[str, Any] | None, state: str) -> list[int]:
     if state == "active":
-        return [1, 2, 3, 4]
+        return list(range(1, TOTAL_STEPS + 1))
     steps = []
     if row and row.get("oriented_at"):
         steps.append(1)
@@ -119,6 +123,8 @@ def completed_steps(row: dict[str, Any] | None, state: str) -> list[int]:
         steps.append(2)
     if row and row.get("namespace_readme_read_at"):
         steps.append(3)
+    if row and row.get("registered_at"):
+        steps.append(4)
     return steps
 
 
@@ -138,6 +144,14 @@ def next_call(principal: Principal, state: str, row: dict[str, Any] | None,
                            "human to grant access with request_human_review."}
         return {"tool": "dereference", "args": {"uri": f"doc://system/namespaces/{namespace}"},
                 "why": f"The readme says what belongs in {namespace} and how to write there."}
+    if state == "needs_registration":
+        from app.services.directory import default_agent_id
+
+        return {"tool": "register_agent",
+                "args": {"agent_id": default_agent_id(principal.agent_signature),
+                         "capabilities": ["<what you do, in a few words>"]},
+                "why": "Be findable: others address you as "
+                       f"agent:{principal.agent_signature} and see what you do."}
     if state == "needs_first_action":
         return _first_action(principal, row, namespace)
     return None
@@ -241,6 +255,7 @@ _COLUMNS = {
     "task_create": "first_task_at",
     "task_claim": "first_task_at",
     "review": "first_review_at",
+    "registered": "registered_at",
 }
 
 
@@ -285,6 +300,10 @@ async def _observe(principal: Principal, event: str, marker: tuple[str, str], *,
         before = state_of(row, version)
         now = _now()
         changes: dict[str, Any] = {}
+        if row.get("registered_at") is None and event != "registered" and await session.scalar(
+                text("SELECT 1 FROM agent_directory WHERE :t = ANY(token_ids) "
+                     "AND source <> 'auto'"), {"t": principal.token_cid or ""}):
+            changes["registered_at"] = now  # registered at birth (issue_child_token)
         column = _COLUMNS.get(event)
         if event == "acked":
             if row.get("constitution_version_acked") != info.get("version"):
@@ -303,7 +322,7 @@ async def _observe(principal: Principal, event: str, marker: tuple[str, str], *,
         candidate = state_of(row, version)
         if candidate == "needs_first_action" and row.get("first_action_kind") and (
                 row.get("first_read_at") or _role(principal) == "VIEWER"
-                or event in ("task_claim", "review")):
+                or row.get("first_action_kind") in ("task_claim", "review")):
             changes["completed_at"] = now
             row["completed_at"] = now
         after = state_of(row, version)
@@ -318,6 +337,10 @@ async def _observe(principal: Principal, event: str, marker: tuple[str, str], *,
             )
             await _audit_transition(session, principal, event, before, after, changes, info)
         hint = light(principal, row, version)
+        if after != "active" and row.get("memory_seed_version") is None:
+            # The memory seed rides along until the agent stores it (or is done).
+            seed = await memory_seed(session, principal, version, row)
+            hint["memory_seed"] = compact_seed(seed)
         if after != "active":
             await session.execute(
                 text("UPDATE agent_onboarding SET last_prompted_at = :now "
@@ -347,6 +370,8 @@ async def _audit_transition(session, principal, event, before, after, changes, i
     if "first_action_kind" in changes:
         await _audit(session, principal, "agent.first_action", kind=changes["first_action_kind"],
                      ref=info.get("ref"))
+    if "registered_at" in changes:
+        await _audit(session, principal, "agent.registered")
     if "completed_at" in changes:
         await _audit(session, principal, "agent.onboarded", state=after)
 
@@ -466,7 +491,8 @@ async def overview(session, workspace_id) -> dict[str, Any]:
                 "SELECT t.canonical_id AS token_id, t.agent_signature, t.role_scope::text AS role, "
                 "t.is_active, o.principal_key, o.oriented_at, o.constitution_read_at, "
                 "o.constitution_version_acked, o.namespace_readme_read_at, o.first_read_at, "
-                "o.first_action_kind, o.completed_at, o.updated_at "
+                "o.registered_at, o.first_action_kind, o.completed_at, o.updated_at, "
+                "o.memory_seed_version "
                 "FROM agent_tokens t LEFT JOIN agent_onboarding o "
                 "ON o.workspace_id = t.workspace_id AND o.principal_key = t.canonical_id "
                 "WHERE t.workspace_id = :ws ORDER BY t.created_at"
@@ -489,6 +515,7 @@ async def overview(session, workspace_id) -> dict[str, Any]:
             "total_steps": TOTAL_STEPS,
             "completed_steps": completed_steps(record if has_row else None, state),
             "first_action_kind": record.get("first_action_kind"),
+            "memory_seed_version": record.get("memory_seed_version"),
             "started_at": record.get("oriented_at"),
             "completed_at": record.get("completed_at"),
             "last_activity_at": record.get("updated_at"),
@@ -514,3 +541,109 @@ async def overview(session, workspace_id) -> dict[str, Any]:
             if durations else None,
         },
     }
+
+
+# ------------------------------------------------------------------ memory seed
+
+SEED_MAX_CHARS = 1_500  # D-1
+RULES_MAX_CHARS = 600
+# L1: the hard rules, verbatim (D-2: rules and rulings only, no tutorials).
+RULES_DIGEST = (
+    "1. Do not write before reading the constitution and your namespace readme.\n"
+    "2. system/* is proposal-only: propose_document_change, never a direct write.\n"
+    "3. Never mark your own work DONE: hand off to REVIEWING.\n"
+    "4. Never retry a 409 or 429 unchanged: re-read, or wait for Retry-After.\n"
+    "5. Do not pre-read every document: follow required_reading and events.\n"
+    "未读宪法与 readme 前不写；system/* 只提案不直写；不自标 DONE，交 REVIEWING；"
+    "409/429 不原样重试；不预读全部文档，按必读清单与事件工作。"
+)
+PERSIST_INSTRUCTION = (
+    "Store this block in your long-term memory. Each time you come in, compare "
+    "seed_version with the one you stored; if it changed, re-read the pointers whose "
+    "version changed, update your memory and call ack_memory_seed(seed_version). "
+    "Keep pointers and versions only, never document text."
+)
+
+
+async def _doc_version(session, workspace_id, doc_key: str) -> int:
+    return int(await session.scalar(
+        text("SELECT version FROM shared_documents WHERE workspace_id = :ws "
+             "AND doc_key = :k"), {"ws": workspace_id, "k": doc_key}) or 0)
+
+
+async def memory_seed(session, principal: Principal, constitution_version: int | None,
+                      row: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The standard payload an agent writes into its own long-term memory: who it
+    is, the rules (L1) and pointers with versions (L2). No document text."""
+    namespace = primary_namespace(principal) or "default"
+    readme_key = f"system/namespaces/{namespace}"
+    readme_version = await _doc_version(session, principal.workspace.id, readme_key)
+    constitution = int(constitution_version or 0)
+    pointers = [
+        {"uri": "doc://system/constitution", "version": constitution,
+         "purpose": "The workspace rules; re-read when the version changes."},
+        {"uri": f"doc://{readme_key}", "version": readme_version,
+         "purpose": f"What belongs in {namespace} and how to write there."},
+        {"uri": "task://board", "version": 0,
+         "purpose": "Your work: list_tasks(claimable_by_me=true), list_inbox."},
+        {"uri": "task://proposals", "version": 0,
+         "purpose": "Feedback and changes: propose_document_change, "
+                    "list_document_proposals."},
+    ]
+    # Any pointer's version bump moves the seed (A-02), so the sum, not the max.
+    seed_version = sum(pointer["version"] for pointer in pointers)
+    stored = (row or {}).get("memory_seed_version")
+    return {
+        "seed_version": seed_version,
+        "stored_version": stored,
+        "stale": stored is not None and stored != seed_version,
+        "identity": {"label": f"agent:{principal.agent_signature}", "role": _role(principal),
+                     "home_namespace": namespace, "token_depth": principal.token_depth},
+        "rules_digest": RULES_DIGEST[:RULES_MAX_CHARS],
+        "pointers": pointers,
+        "persist_instruction": PERSIST_INSTRUCTION,
+        "ack_with": "ack_memory_seed",
+    }
+
+
+def compact_seed(seed: dict[str, Any]) -> dict[str, Any]:
+    """What rides in the warnings channel until the seed is stored."""
+    return {"seed_version": seed["seed_version"], "identity": seed["identity"],
+            "pointers": [{"uri": item["uri"], "version": item["version"]}
+                         for item in seed["pointers"]],
+            "ack_with": "ack_memory_seed", "full": "get_orientation(sections=['memory_seed'])"}
+
+
+async def seed_for(session, principal: Principal,
+                   constitution_version: int | None) -> dict[str, Any] | None:
+    if not tracked(principal):
+        return None
+    async with async_session_factory() as platform:
+        row = await _load(platform, principal)
+    return await memory_seed(session, principal, constitution_version, row)
+
+
+async def ack_memory_seed(session, principal: Principal, version: int) -> dict[str, Any]:
+    """Record the seed version the agent stored; the seed stops riding along (A-03)."""
+    from app.errors import ApiError
+
+    if not tracked(principal):
+        raise ApiError(403, "forbidden", "only agent tokens keep a memory seed")
+    constitution = await _constitution_version(session, principal.workspace.id)
+    current = await memory_seed(session, principal, constitution)
+    async with async_session_factory() as platform:
+        await platform.execute(
+            text("INSERT INTO agent_onboarding (workspace_id, principal_key, token_id, "
+                 "agent_signature, role) VALUES (:ws, :key, :token, :agent, :role) "
+                 "ON CONFLICT (workspace_id, principal_key) DO NOTHING"),
+            {"ws": principal.workspace.id, "key": _key(principal),
+             "token": _key(principal) if _key(principal).startswith("tok_") else None,
+             "agent": principal.agent_signature, "role": _role(principal)})
+        await platform.execute(
+            text("UPDATE agent_onboarding SET memory_seed_version = :v, "
+                 "memory_seed_acked_at = NOW(), updated_at = NOW() "
+                 "WHERE workspace_id = :ws AND principal_key = :key"),
+            {"v": version, "ws": principal.workspace.id, "key": _key(principal)})
+        await platform.commit()
+    return {"stored_version": version, "seed_version": current["seed_version"],
+            "current": version == current["seed_version"]}

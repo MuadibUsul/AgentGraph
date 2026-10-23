@@ -582,8 +582,12 @@ async def get_orientation(
     sections: list[str] | None = None,
     max_bytes: Annotated[int, Field(ge=4_096, le=131_072)] = 32_768,
     since: str | None = None,
+    detail: Literal["summary", "standard", "full"] | None = None,
 ) -> dict[str, Any]:
     """FIRST CALL. Call this before any other tool.
+
+    detail: once you are onboarded the default is summary (pointers and short
+    task cards; conventions on request); before that, standard (everything).
 
     Coming back? Pass since=<the inbox.event_cursor you kept, or the release
     version you last saw>: only what changed comes back (the constitution and
@@ -592,8 +596,10 @@ async def get_orientation(
 
     onboarding.next_call is your next step: 1 get_orientation, 2 read
     system/constitution and ack_constitution, 3 read your namespace readme,
-    4 your role's first action (SCOUT: draft or proposal; ANALYST: create or
-    claim a task; AUDITOR: review a task; EXECUTOR: claim a task). The first
+    4 register_agent, 5 your role's first action (SCOUT: draft or proposal;
+    ANALYST: create or claim a task; AUDITOR: review a task; EXECUTOR: claim a
+    task). memory_seed is what to keep in your long-term memory (store it,
+    then ack_memory_seed). The first
     response is kept small; read required_reading and the agent-guide
     resource when needed. Returns who you are (role, token, scopes), the workspace constitution,
     the namespace map with your access, collaborators, your open tasks,
@@ -609,7 +615,12 @@ async def get_orientation(
             )
         except ApiError as exc:
             raise _api_error(exc) from exc
-    return _compact(result)
+    from app.services import detail as detail_levels
+
+    if detail is None:
+        onboarded = (result.get("onboarding") or {}).get("state") == "active"
+        detail = "summary" if onboarded and not sections else "standard"
+    return _compact(detail_levels.orientation(result, detail))
 
 
 @mcp.tool(name="ack_constitution")
@@ -630,7 +641,7 @@ async def workspace_sync(
     include_slots: bool = True,
     task_statuses: list[str] | None = None,
     namespace: str | None = None,
-    compact: bool = True,
+    compact: bool | None = None,
     since: str | None = None,
     include_unverified: bool = False,
     include_tainted: bool = False,
@@ -638,8 +649,13 @@ async def workspace_sync(
     include_archived: bool = False,
     limit: Annotated[int | None, Field(ge=1, le=2_000)] = None,
     page_cursor: str | None = None,
+    detail: Literal["summary", "standard", "full"] = "summary",
 ) -> dict[str, Any]:
     """Load the L0 blackboard map without raw document/state payloads.
+
+    detail (default summary): short task/doc/slot cards and the newest 20
+    timeline entries; standard keeps every field with 50 entries; full is the
+    whole map (300 entries).
 
     For humans and cold starts. Agents normally subscribe + poll_events instead.
     Every response carries sync_cursor (an event cursor). since=<sync_cursor or a
@@ -650,9 +666,9 @@ async def workspace_sync(
     list with completed task artifact URIs and handoff summaries, slot keys and
     versions with human-lock flags, the document tree and the current role's
     permissions. Use focus_keys to narrow to specific task/doc/slot keys before
-    loading L1/L2. compact defaults to true for a lower-token L0 view; it
-    trims timeline events to the latest 20 summaries (use poll_events for
-    event payloads). Pass compact=false only when the full L0 view is needed.
+    loading L1/L2. compact (true unless detail=full) gives a lower-token L0
+    view; it trims timeline events to the latest 20 summaries (use poll_events
+    for event payloads). Pass compact=false or detail=full for the full view.
 
     Pass since=<next_cursor from a previous call> for incremental sync:
     tasks/documents/slots and timeline contain only changes after the cursor,
@@ -706,6 +722,8 @@ async def workspace_sync(
     ]
     if not include_slots:
         payload["slots"] = []
+    if compact is None:
+        compact = detail != "full"
     if compact:
         payload["tasks"] = [
             {
@@ -747,7 +765,9 @@ async def workspace_sync(
             for item in timeline[:20]
         ]
         payload["timeline_total"] = len(timeline)
-    return _compact(payload)
+    from app.services import detail as detail_levels
+
+    return _compact(detail_levels.sync(payload, detail, cards=not compact))
 
 
 @mcp.tool(name="create_task")
@@ -1200,6 +1220,21 @@ async def agent_escalate_to_human(
     return _compact(result.model_dump(mode="json"))
 
 
+@mcp.tool(name="ack_memory_seed")
+async def ack_memory_seed(version: int) -> dict[str, Any]:
+    """Record the memory seed version you stored in your long-term memory
+    (get_orientation.memory_seed.seed_version). Optional, never a gate; after
+    it the seed stops riding along in responses, and a stale stored version
+    shows as memory_seed.stale on your next orientation."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await orientation_service.ack_memory_seed(session, principal, version)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 @mcp.tool(name="list_tasks")
 async def list_tasks(
     status: str | None = None,
@@ -1211,10 +1246,13 @@ async def list_tasks(
     kind: str | None = None,
     claimable_by_me: bool = False,
     limit: Annotated[int, Field(ge=1, le=500)] = 50,
+    detail: Literal["summary", "standard", "full"] = "summary",
 ) -> dict[str, Any]:
     """List tasks. claimable_by_me=true: what you may claim now (role, assignee,
     capabilities); assignee="me": tasks assigned to you; parent: a task's children.
     status is a comma-separated list. This mirrors REST GET /v1/tasks.
+    detail=summary (default): key, title, status, priority, namespace, version,
+    updated_at, role and holder; standard/full: every field.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -1229,7 +1267,10 @@ async def list_tasks(
             )
         except ApiError as exc:
             raise _api_error(exc) from exc
-    return _compact(result.model_dump(mode="json"))
+    from app.services import detail as detail_levels
+
+    return _compact(detail_levels.listing(result.model_dump(mode="json"),
+                                          detail_levels.TASK_FIELDS, detail))
 
 
 @mcp.tool(name="write_continuation")
@@ -1795,6 +1836,62 @@ async def ack_inbox(up_to_event_seq: Annotated[int, Field(ge=0)]) -> dict[str, A
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)
+
+
+BATCH_MAX = 20
+
+
+def _batch_item_result(result: Any) -> dict[str, Any]:
+    if isinstance(result, types.CallToolResult):
+        if result.isError:
+            return {"ok": False, "error": result.structuredContent or {
+                "code": "tool_error", "message": "tool error"}}
+        return {"ok": True, "result": result.structuredContent}
+    dumped = _dump_result(result)
+    structured = dumped.get("structured")
+    if isinstance(structured, dict):
+        if set(structured) == {"result"}:
+            structured = structured["result"]
+        return {"ok": True, "result": structured}
+    texts = [block.get("text") for block in dumped.get("content") or []
+             if block.get("type") == "text"]
+    try:
+        return {"ok": True, "result": json.loads(texts[0]) if len(texts) == 1 else texts}
+    except (TypeError, ValueError):
+        return {"ok": True, "result": texts}
+
+
+@mcp.tool(name="batch")
+async def batch(
+    calls: Annotated[list[dict[str, Any]], Field(min_length=1, max_length=BATCH_MAX)],
+) -> dict[str, Any]:
+    """Several tool calls in one request: calls=[{tool, arguments, id?}], at most
+    20. Each call runs on its own, in order: its own result or error (a failed
+    call does not stop the others), its own idempotency_key, and it counts
+    against your rate limit like a separate call. No transaction spans the
+    calls; later calls see what earlier ones wrote."""
+    results = []
+    for index, call in enumerate(calls):
+        name = call.get("tool") if isinstance(call, dict) else None
+        arguments = call.get("arguments") if isinstance(call, dict) else None
+        ident = call.get("id", index) if isinstance(call, dict) else index
+        if not isinstance(name, str) or name == "batch":
+            results.append({"id": ident, "ok": False, "error": {
+                "code": "validation_error", "http_status": 422,
+                "message": "each call names a tool (not batch itself)"}})
+            continue
+        if not isinstance(arguments, dict):
+            arguments = {}
+        _current_tool.set(name)
+        collected = warnings_context.begin_collection()
+        try:
+            item = _batch_item_result(_with_warnings(
+                await mcp._dispatch(name, arguments), collected))
+        finally:
+            _current_tool.set("batch")
+        results.append({"id": ident, "tool": name, **item})
+    return {"results": results, "count": len(results),
+            "failed": sum(1 for item in results if not item["ok"])}
 
 
 @mcp.tool(name="record_gate_result")
@@ -2661,17 +2758,21 @@ async def renew_token(token_id: str, ttl_seconds: int) -> dict[str, Any]:
 
 @mcp.tool(name="register_agent")
 async def register_agent(
-    agent_id: str,
+    agent_id: str | None = None,
     display_name: str | None = None,
     role: str | None = None,
     capabilities: list[str] | None = None,
     description: str | None = None,
+    reach: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Register this token's agent in the directory (once per token).
+    """Register this token's agent in the directory: onboarding step 4.
 
-    agent_id: ^[a-z][a-z0-9-]{2,39}$, unique in the tenant. Afterwards your
-    writes show as agent:<agent_id> (API version 2026-11) and other agents can
-    find you with list_agents. Tokens from issue_child_token are registered at birth.
+    Label, role and namespaces come from your token; say what you do
+    (capabilities, description) and how to poke you (reach: {webhook, note};
+    your default subscription is filled in). agent_id defaults to your label in
+    lower case (^[a-z][a-z0-9-]{2,39}$). Others address you as agent:<label>
+    and find you with list_agents. An entry the platform filled in for you
+    (source=auto) is completed, not duplicated.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -2679,6 +2780,7 @@ async def register_agent(
             result = await directory_service.register_agent(session, principal, {
                 "agent_id": agent_id, "display_name": display_name, "role": role,
                 "capabilities": capabilities or [], "description": description,
+                "reach": reach,
             })
         except ApiError as exc:
             raise _api_error(exc) from exc
@@ -2910,8 +3012,12 @@ async def list_documents(
     updated_before: datetime | None = None,
     sort: Literal["updated_desc", "updated_asc"] | None = None,
     review_verdict: Literal["pass", "pass_with_notes", "fail"] | None = None,
+    detail: Literal["summary", "standard", "full"] | None = None,
 ) -> dict[str, Any]:
     """Complete, cursor-paginated census of documents (not ranked, no vectors).
+
+    detail=summary (the default when fields is not given): doc_key, namespace,
+    title, version, updated_at, verification_status, tainted.
 
     With order (the default under API 2026-11) the walk is by doc_key_asc or
     (updated_at, doc_key): every document appears exactly once, and the first
@@ -2945,7 +3051,11 @@ async def list_documents(
             )
         except ApiError as exc:
             raise _api_error(exc) from exc
-    return _compact(result.model_dump(mode="json"))
+    from app.services import detail as detail_levels
+
+    payload = result.model_dump(mode="json")
+    level = detail or ("full" if fields else "summary")
+    return _compact(detail_levels.listing(payload, detail_levels.DOCUMENT_FIELDS, level))
 
 
 @mcp.tool(name="upsert_many")

@@ -199,7 +199,9 @@ class Settings(BaseSettings):
     outbound_allow_private_networks: bool = True
     outbound_allowed_hosts: list[str] = Field(default_factory=list)
     outbound_signing_secret: str | None = None
-    webhook_max_delivery_attempts: int = Field(default=9, ge=1, le=20)
+    # Poke delivery D-1 (2026-10-23): retry after 30 s, 120 s and 600 s, then
+    # the delivery is DEAD (shown in red, a webhook.dead event for people).
+    webhook_retry_delays_seconds: list[int] = Field(default_factory=lambda: [30, 120, 600])
     webhook_batch_size: int = Field(default=100, ge=1, le=1000)
 
     # ---------------------------------------------------------------- quota

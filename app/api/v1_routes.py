@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import agent_guide, services
@@ -185,6 +185,16 @@ async def ack_constitution(
     return await orientation_service.ack_constitution(session, principal, body.version)
 
 
+@router.post("/orientation/memory-seed/ack",
+             summary="Record the memory seed version you stored (stops it riding along)")
+async def ack_memory_seed(
+    body: ConstitutionAckRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await orientation_service.ack_memory_seed(session, principal, body.version)
+
+
 @router.get("/whoami", response_model=WhoAmIResponse, summary="Principal identity")
 async def whoami(principal: Principal = Depends(get_principal)) -> WhoAmIResponse:
     return await services.whoami(principal)
@@ -208,10 +218,12 @@ async def workspace_map(
     include_archived: bool = Query(default=False),
     limit: int | None = Query(default=None, ge=1, le=2_000),
     page_cursor: str | None = Query(default=None),
+    detail: Literal["summary", "standard", "full"] = Query(
+        default="full", description="summary: short cards, newest 20 timeline entries"),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> WorkspaceMapResponse:
-    return await services.workspace_map(
+    board = await services.workspace_map(
         session,
         principal,
         since=since,
@@ -222,6 +234,11 @@ async def workspace_map(
         limit=limit,
         page_cursor=page_cursor,
     )
+    if detail == "full":
+        return board
+    from app.services import detail as detail_levels
+
+    return JSONResponse(detail_levels.sync(board.model_dump(mode="json"), detail))
 
 
 @router.get(
@@ -378,10 +395,12 @@ async def list_tasks(
     kind: str | None = Query(default=None, max_length=16),
     claimable_by_me: bool = Query(default=False,
                                   description="claimable now by the caller (role, assignee)"),
+    detail: Literal["summary", "standard", "full"] = Query(
+        default="full", description="summary: short task cards (the MCP default)"),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> TaskListResponse:
-    return await services.list_tasks(
+    result = await services.list_tasks(
         session,
         principal,
         statuses=_statuses(status),
@@ -394,6 +413,12 @@ async def list_tasks(
         kind=kind,
         claimable_by_me=claimable_by_me,
     )
+    if detail == "full":
+        return result
+    from app.services import detail as detail_levels
+
+    return JSONResponse(detail_levels.listing(result.model_dump(mode="json"),
+                                              detail_levels.TASK_FIELDS, detail))
 
 
 @router.post(

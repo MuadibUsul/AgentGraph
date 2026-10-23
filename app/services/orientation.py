@@ -46,7 +46,7 @@ SECTIONS = (
     "server", "me", "constitution", "namespace_map", "collaborators", "my_tasks",
     "since_last_seen",
     "claimable_tasks", "required_reading", "inbox", "conventions", "events", "onboarding",
-    "next_calls", "warnings", "platform_changes",
+    "next_calls", "warnings", "platform_changes", "memory_seed",
 )
 _RELEASE = re.compile(r"^\d+\.\d+\.\d+$")
 # A new agent's first orientation stays small: identity, rules summary, three
@@ -99,7 +99,9 @@ async def _me(session: AsyncSession, principal: Principal) -> dict[str, Any]:
             "owner_human": owner,
             "trust_level": entry["trust_level"],
             "status": entry["status"],
-            "registered": True,
+            # A platform-filled entry (source=auto) still waits for register_agent.
+            "registered": entry.get("source") != "auto",
+            "directory_source": entry.get("source") or "registered",
             "token": token,
         }
     return {
@@ -664,6 +666,12 @@ async def build(
     from app.services import agent_onboarding
 
     onboarding_block = await agent_onboarding.orientation_block(session, principal, constitution)
+    seed = await agent_onboarding.seed_for(session, principal, constitution.get("version"))
+    if seed is not None:
+        # The memory seed (2026-10-23): incremental packs repeat it only when it moved.
+        stored_current = seed["stored_version"] == seed["seed_version"]
+        pack["memory_seed"] = ({"unchanged": True, "seed_version": seed["seed_version"]}
+                               if moment is not None and stored_current else seed)
     if onboarding_block is not None:
         pack["onboarding"] = onboarding_block
         if onboarding_block["first_time"] and max_bytes == DEFAULT_MAX_BYTES:
@@ -740,3 +748,10 @@ async def ack_constitution(
     if hint is not None:
         result["onboarding"] = hint
     return result
+
+
+async def ack_memory_seed(session: AsyncSession, principal: Principal,
+                          version: int) -> dict[str, Any]:
+    from app.services import agent_onboarding
+
+    return await agent_onboarding.ack_memory_seed(session, principal, version)

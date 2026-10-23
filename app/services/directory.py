@@ -59,7 +59,55 @@ def entry_out(row: dict[str, Any]) -> dict[str, Any]:
         "last_seen_at": row["last_seen_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "source": row.get("source") or "registered",
+        "reach": row.get("reach") or {},
+        "address": f"agent:{(row.get('signatures') or [row['agent_id']])[0]}",
     }
+
+
+def default_agent_id(signature: str) -> str:
+    """A directory id from a token label: lower case, [a-z0-9-], 3-40 chars."""
+    slug = re.sub(r"[^a-z0-9-]+", "-", (signature or "").lower()).strip("-")
+    if not slug or not slug[0].isalpha():
+        slug = f"agent-{slug}".strip("-")
+    return (slug + "-ag")[:40] if len(slug) < 3 else slug[:40]
+
+
+async def _free_agent_id(session: AsyncSession, tenant_id: str, wanted: str) -> str:
+    candidate, suffix = wanted, 2
+    while await _taken(session, tenant_id, candidate):
+        tail = f"-{suffix}"
+        candidate, suffix = wanted[:40 - len(tail)] + tail, suffix + 1
+    return candidate
+
+
+async def backfill_auto() -> int:
+    """R-03: every active agent token appears in the directory. Tokens that never
+    registered get an entry the platform fills in (source=auto); the agent
+    completes it with register_agent the next time it comes in."""
+    from app.database import async_session_factory
+
+    created = 0
+    async with async_session_factory() as session:
+        rows = (await session.execute(text(
+            "SELECT t.workspace_id, w.tenant_id, t.canonical_id, t.agent_signature, "
+            "t.role_scope::text AS role FROM agent_tokens t JOIN workspaces w "
+            "ON w.id = t.workspace_id WHERE t.is_active AND t.revoked_at IS NULL "
+            "AND t.canonical_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_directory d "
+            "WHERE t.canonical_id = ANY(d.token_ids)) LIMIT 5000"))).mappings().all()
+        for row in rows:
+            agent_id = await _free_agent_id(session, row["tenant_id"],
+                                            default_agent_id(row["agent_signature"]))
+            await session.execute(text(
+                "INSERT INTO agent_directory (workspace_id, agent_id, display_name, role, "
+                "token_ids, signatures, registered_by, source) VALUES (:ws, :agent, :name, "
+                ":role, ARRAY[:token], ARRAY[:sig], 'platform', 'auto')"),
+                {"ws": row["workspace_id"], "agent": agent_id,
+                 "name": row["agent_signature"][:64], "role": row["role"],
+                 "token": row["canonical_id"], "sig": row["agent_signature"]})
+            created += 1
+        await session.commit()
+    return created
 
 
 async def _owner(session: AsyncSession, workspace_id: Any) -> Any:
@@ -156,18 +204,39 @@ async def register_agent(session: AsyncSession, principal: Principal,
                          data: dict[str, Any]) -> dict[str, Any]:
     if principal.auth_kind is not AuthKind.AGENT:
         raise Forbidden("register_agent is called by the agent's own token")
+    workspace = principal.workspace
     existing = await _by_token(session, principal.token_cid)
-    if existing is not None:
+    if existing is not None and existing.get("source") != "auto":
         raise ApiError(409, "already_registered", "this token is already registered",
                        details={"agent_id": existing["agent_id"]})
-    agent_id = (data.get("agent_id") or "").strip()
+    agent_id = (data.get("agent_id") or "").strip() or (
+        existing["agent_id"] if existing else default_agent_id(principal.agent_signature))
     if not AGENT_ID.fullmatch(agent_id):
         raise ApiError(422, "validation_error", "agent_id must match ^[a-z][a-z0-9-]{2,39}$",
                        details={"field": "agent_id"})
-    workspace = principal.workspace
-    if await _taken(session, workspace.tenant_id, agent_id):
+    if (existing is None or agent_id != existing["agent_id"]) and await _taken(
+            session, workspace.tenant_id, agent_id):
         raise ApiError(409, "agent_id_taken", "this agent_id is already registered",
                        details={"agent_id": agent_id})
+    reach = await _reach(session, principal, data.get("reach"))
+    if existing is not None:
+        # Complete the entry the platform filled in (R-03).
+        row = (await session.execute(text(
+            "UPDATE agent_directory SET agent_id = :agent, display_name = :name, "
+            "role = COALESCE(:role, role), capabilities = CAST(:caps AS text[]), "
+            "description = :desc, reach = CAST(:reach AS jsonb), source = 'registered', "
+            "registered_by = :by, version = version + 1, updated_at = NOW() "
+            "WHERE principal_id = :id RETURNING *"),
+            {"agent": agent_id,
+             "name": (data.get("display_name") or principal.agent_signature)[:64],
+             "role": (data.get("role") or None) and data["role"][:32],
+             "caps": [str(item)[:64] for item in (data.get("capabilities") or [])][:20],
+             "desc": (data.get("description") or None) and data["description"][:500],
+             "reach": json.dumps(reach), "by": principal.token_cid,
+             "id": existing["principal_id"]})).mappings().one()
+        await session.commit()
+        await _registered(principal)
+        return entry_out(dict(row))
     issued_by_human = await session.scalar(
         text("SELECT issued_by_human FROM agent_tokens WHERE id = :id"),
         {"id": principal.token_id},
@@ -177,11 +246,13 @@ async def register_agent(session: AsyncSession, principal: Principal,
         await session.execute(
             text("INSERT INTO agent_directory (workspace_id, agent_id, display_name, role, "
                  "capabilities, description, owner_human, token_ids, signatures, registered_by, "
-                 "last_seen_at) VALUES (:ws, :agent, :name, :role, CAST(:caps AS text[]), :desc, "
-                 ":owner, ARRAY[:token], ARRAY[:sig], :by, NOW()) RETURNING *"),
-            {"ws": workspace.id, "agent": agent_id,
-             "name": (data.get("display_name") or agent_id)[:64],
-             "role": (data.get("role") or None) and data["role"][:32],
+                 "last_seen_at, reach) VALUES (:ws, :agent, :name, :role, CAST(:caps AS text[]), "
+                 ":desc, :owner, ARRAY[:token], ARRAY[:sig], :by, NOW(), CAST(:reach AS jsonb)) "
+                 "RETURNING *"),
+            {"ws": workspace.id, "agent": agent_id, "reach": json.dumps(reach),
+             "name": (data.get("display_name") or principal.agent_signature)[:64],
+             "role": ((data.get("role") or None) and data["role"][:32])
+             or principal.role.value,
              "caps": [str(item)[:64] for item in (data.get("capabilities") or [])][:20],
              "desc": (data.get("description") or None) and data["description"][:500],
              "owner": owner, "token": principal.token_cid, "sig": principal.agent_signature,
@@ -191,7 +262,31 @@ async def register_agent(session: AsyncSession, principal: Principal,
     await _announce(session, workspace.id, "AGENT_REGISTERED",
                     {"agent_id": agent_id, "token_id": principal.token_cid})
     await session.commit()
+    await _registered(principal)
     return entry_out(dict(row))
+
+
+async def _reach(session: AsyncSession, principal: Principal,
+                 given: dict[str, Any] | None) -> dict[str, Any]:
+    """How to poke this agent: its default subscription, plus what it says."""
+    subscription = await session.scalar(text(
+        "SELECT id FROM event_subscriptions WHERE workspace_id = :ws AND owner = :o "
+        "AND is_default LIMIT 1"),
+        {"ws": principal.workspace.id, "o": principal.agent_signature})
+    reach = {key: value for key, value in (given or {}).items()
+             if key in ("webhook", "note") and value is not None}
+    if "note" in reach:
+        reach["note"] = str(reach["note"])[:200]
+    if "webhook" in reach:
+        reach["webhook"] = bool(reach["webhook"])
+    reach["default_subscription_id"] = str(subscription) if subscription else None
+    return reach
+
+
+async def _registered(principal: Principal) -> None:
+    from app.services import agent_onboarding
+
+    await agent_onboarding.observe(principal, "registered")
 
 
 async def get_agent(session: AsyncSession, principal: Principal, ref: str) -> dict[str, Any]:
