@@ -83,9 +83,12 @@ export default function LoginPage() {
           if (response.credential) void googleSignIn(response.credential);
         },
       });
+      const widthSource =
+        googleRef.current.closest(".auth-card")?.querySelector(".auth-form") ??
+        googleRef.current;
       const width = Math.max(
         220,
-        Math.min(360, Math.floor(googleRef.current.getBoundingClientRect().width || 320)),
+        Math.min(360, Math.floor(widthSource.getBoundingClientRect().width || 320)),
       );
       id.renderButton(googleRef.current, {
         theme: "filled_black",

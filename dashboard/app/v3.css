@@ -4045,12 +4045,14 @@ body::before {
 .auth-card-wrap {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   gap: 12px;
   animation: auth-rise 560ms 80ms both cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .auth-card {
   position: relative;
+  min-width: 0;
   padding: 28px;
   border: 1px solid rgba(167, 179, 197, 0.13);
   border-radius: 20px;
@@ -4209,7 +4211,10 @@ body::before {
   align-items: center;
   justify-content: center;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 44px;
+  overflow: hidden;
 }
 
 .google-button iframe {
