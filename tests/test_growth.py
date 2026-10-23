@@ -6,6 +6,7 @@ import base64
 import uuid
 
 import pytest
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
@@ -50,7 +51,7 @@ def test_sealed_key_opens_only_with_the_cli_private_key():
     assert "agt_secret_value" not in sealed
     assert _open(sealed, private) == "agt_secret_value"
     other, _ = _keypair()
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidTag):
         _open(sealed, other)
 
 

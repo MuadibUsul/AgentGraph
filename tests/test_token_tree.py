@@ -447,3 +447,37 @@ async def test_orientation_uses_the_directory(tree):
     assert sorted(item["type"] for item in collaborators) == ["agent"] * 5 + ["human"] * 2
     assert "not_registered" not in {item["code"] for item in pack["warnings"]}
     assert pack["inbox"]["default_subscription_id"]
+
+
+@pytest.mark.integration
+async def test_console_lists_people_issued_tokens_and_folds_delegated_ones(tree):
+    """Agent-delegated child tokens stay out of the console's token list."""
+    client = tree
+    ws = await _workspace(client)
+    branch = await _issued(client, ws["root"],
+                           scopes=["docs:read", "docs:write", "token:issue"],
+                           max_descendants=10)
+    children = [await _issued(client, branch["headers"], scopes=["docs:read"], ttl_seconds=600)
+                for _ in range(3)]
+
+    listed = await client.get("/v1/human/agent-tokens", headers=ws["human"])
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert all(item["issued_by"] == "human" and item["depth"] <= 1 for item in body["items"])
+    child_ids = {child["token_id"] for child in children}
+    assert not child_ids & {item["canonical_id"] for item in body["items"]}
+    mine = next(item for item in body["items"] if item["canonical_id"] == branch["token_id"])
+    expected = 3
+    assert mine["delegated_total"] == expected and mine["delegated_active"] == expected
+    assert body["delegated_total"] == expected and body["human_issued"] == len(body["items"])
+
+    nested = (await client.get("/v1/human/agent-tokens", headers=ws["human"], params={
+        "issued_by": "agent", "parent": branch["token_id"]})).json()
+    assert {item["canonical_id"] for item in nested["items"]} >= child_ids
+    assert all(item["issued_by"] == "agent" and item["issued_by_agent"] for item in nested["items"])
+    everything = (await client.get(f"/v1/admin/workspaces/{ws['id']}/agent-tokens",
+                                   headers=ADMIN, params={"issued_by": "all"})).json()
+    assert len(everything["items"]) == body["human_issued"] + expected
+
+    overview = (await client.get("/v1/human/agent-onboarding", headers=ws["human"])).json()
+    assert overview["summary"]["tokens"] == body["human_issued"]

@@ -82,7 +82,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
   const rest = path.slice(prefix.length);
   if (rest === "/stats") return "/v1/human/workspace";
   if (rest === "/agent-onboarding") return "/v1/human/agent-onboarding";
-  if (rest === "/agent-tokens" || rest.startsWith("/agent-tokens/")) {
+  if (rest === "/agent-tokens" || rest.startsWith("/agent-tokens/") || rest.startsWith("/agent-tokens?")) {
     return `/v1/human${rest}`;
   }
   if (rest === "/namespaces") return "/v1/human/namespaces";

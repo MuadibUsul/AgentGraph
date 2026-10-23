@@ -495,7 +495,9 @@ async def overview(session, workspace_id) -> dict[str, Any]:
                 "o.memory_seed_version "
                 "FROM agent_tokens t LEFT JOIN agent_onboarding o "
                 "ON o.workspace_id = t.workspace_id AND o.principal_key = t.canonical_id "
-                "WHERE t.workspace_id = :ws ORDER BY t.created_at"
+                # Delegated child tokens are short-lived helpers, not identities
+                # people onboard: progress covers console-issued tokens only.
+                "WHERE t.workspace_id = :ws AND t.depth <= 1 ORDER BY t.created_at"
             ),
             {"ws": workspace_id},
         )

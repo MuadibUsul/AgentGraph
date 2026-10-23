@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
@@ -110,10 +111,12 @@ async def list_human_namespaces(
     summary="List scoped agent tokens",
 )
 async def list_agent_tokens(
+    issued_by: Literal["human", "agent", "all"] = Query(default="human"),
+    parent: str | None = Query(default=None, max_length=40),
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> AgentTokenListResponse:
-    return await services.list_agent_tokens(session, principal.workspace)
+    return await services.list_agent_tokens(session, principal.workspace, issued_by, parent)
 
 
 @router.get(

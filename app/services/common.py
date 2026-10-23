@@ -324,6 +324,10 @@ def agent_token_out(token: AgentToken) -> AgentTokenOut:
         monthly_token_budget=token.monthly_token_budget,
         scope_add=list(token.scope_add or []),
         scope_remove=list(token.scope_remove or []),
+        issued_by="agent" if (token.depth or 1) > 1 else "human",
+        issued_by_agent=token.issued_by_agent_id if (token.depth or 1) > 1 else None,
+        depth=token.depth or 1,
+        parent_token_id=token.parent_token_id,
     )
 
 

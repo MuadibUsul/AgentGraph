@@ -464,8 +464,9 @@ SELECT
         WHERE workspace_id = CAST(:workspace_id AS uuid)) AS slots,
     (SELECT count(*) FROM collab_tasks
         WHERE workspace_id = CAST(:workspace_id AS uuid)) AS tasks,
+    -- People-issued tokens only; agent-delegated children are folded away.
     (SELECT count(*) FROM agent_tokens
-        WHERE workspace_id = CAST(:workspace_id AS uuid)) AS agent_tokens,
+        WHERE workspace_id = CAST(:workspace_id AS uuid) AND depth <= 1) AS agent_tokens,
     (SELECT count(*) FROM timeline_streams
         WHERE workspace_id = CAST(:workspace_id AS uuid)) AS timeline_events,
     (SELECT count(*) FROM state_audit_diffs
@@ -712,16 +713,69 @@ async def create_agent_token(
 
 
 async def list_agent_tokens(
-    session: AsyncSession, workspace: Workspace
+    session: AsyncSession,
+    workspace: Workspace,
+    issued_by: str = "human",
+    parent: str | None = None,
 ) -> AgentTokenListResponse:
+    """Tokens of a workspace; by default only the ones people issued.
+
+    Agents may delegate short-lived child tokens (issue_child_token); listing
+    every one of them buries the identities people actually manage. The
+    default view keeps console-issued tokens (depth 1) and reports, per token,
+    how many tokens were delegated beneath it. ``issued_by="agent"`` (optionally
+    with ``parent``, a canonical id) lists the delegated ones; ``"all"`` both.
+    """
+    query = select(AgentToken).where(AgentToken.workspace_id == workspace.id)
+    if issued_by == "human":
+        query = query.where(AgentToken.depth <= 1)
+    elif issued_by == "agent":
+        query = query.where(AgentToken.depth > 1)
+    if parent:
+        query = query.where(AgentToken.lineage.any(parent), AgentToken.canonical_id != parent)
     tokens = (
-        await session.execute(
-            select(AgentToken)
-            .where(AgentToken.workspace_id == workspace.id)
-            .order_by(AgentToken.created_at.desc())
-        )
+        await session.execute(query.order_by(AgentToken.created_at.desc()))
     ).scalars().all()
-    return AgentTokenListResponse(items=[agent_token_out(token) for token in tokens])
+    delegated = (
+        await session.execute(
+            text(
+                "SELECT ancestor, count(*) AS total, "
+                "count(*) FILTER (WHERE d.is_active AND d.revoked_at IS NULL "
+                "  AND (d.expires_at IS NULL OR d.expires_at > NOW())) AS active "
+                "FROM agent_tokens d, unnest(d.lineage) AS ancestor "
+                "WHERE d.workspace_id = :w AND d.depth > 1 AND ancestor <> d.canonical_id "
+                "GROUP BY ancestor"
+            ),
+            {"w": workspace.id},
+        )
+    ).mappings().all()
+    below = {row["ancestor"]: row for row in delegated}
+    totals = (
+        await session.execute(
+            text(
+                "SELECT count(*) FILTER (WHERE depth <= 1) AS human, "
+                "count(*) FILTER (WHERE depth > 1) AS delegated_total, "
+                "count(*) FILTER (WHERE depth > 1 AND is_active AND revoked_at IS NULL "
+                "  AND (expires_at IS NULL OR expires_at > NOW())) AS delegated_active "
+                "FROM agent_tokens WHERE workspace_id = :w"
+            ),
+            {"w": workspace.id},
+        )
+    ).mappings().one()
+    items = []
+    for token in tokens:
+        out = agent_token_out(token)
+        counts = below.get(token.canonical_id)
+        if counts:
+            out.delegated_total = int(counts["total"])
+            out.delegated_active = int(counts["active"])
+        items.append(out)
+    return AgentTokenListResponse(
+        items=items,
+        human_issued=int(totals["human"]),
+        delegated_active=int(totals["delegated_active"]),
+        delegated_total=int(totals["delegated_total"]),
+    )
 
 
 async def rotate_agent_token(

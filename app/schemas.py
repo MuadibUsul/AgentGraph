@@ -1866,6 +1866,15 @@ class AgentTokenOut(BaseModel):
     scope_remove: list[str] = Field(default_factory=list)
     per_minute_limit: int | None = None
     monthly_token_budget: int | None = None
+    # Who issued it: a person in the console (depth 1) or an agent delegating
+    # part of its own grant (issue_child_token, depth 2+).
+    issued_by: Literal["human", "agent"] = "human"
+    issued_by_agent: str | None = None
+    depth: int = 1
+    parent_token_id: str | None = None
+    # Tokens issued below this one by agents (every generation), for the console.
+    delegated_active: int = 0
+    delegated_total: int = 0
 
 
 class AgentTokenCreatedResponse(BaseModel):
@@ -1875,6 +1884,10 @@ class AgentTokenCreatedResponse(BaseModel):
 
 class AgentTokenListResponse(BaseModel):
     items: list[AgentTokenOut]
+    # Counts across the whole workspace, whatever the filter.
+    human_issued: int = 0
+    delegated_active: int = 0
+    delegated_total: int = 0
 
 
 class AuditDiffOut(BaseModel):

@@ -426,3 +426,40 @@
   .growth-header { flex-direction: column; align-items: flex-start; }
   .growth-kpis { grid-template-columns: 1fr; }
 }
+
+/* ------------------------------------- delegated (agent-issued) tokens */
+
+.delegated-chip {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid rgba(139, 124, 255, 0.3);
+  border-radius: 999px;
+  background: rgba(139, 124, 255, 0.08);
+  color: #b9afff;
+  font-family: var(--ds-font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.delegated-chip[aria-expanded="true"] { background: rgba(139, 124, 255, 0.2); }
+.delegated-chip .muted { color: var(--ds-text-muted); }
+
+.delegated-row td { background: rgba(139, 124, 255, 0.03); }
+
+.delegated-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 0 2px 34px;
+  list-style: none;
+}
+
+.delegated-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.delegated-list code { font-family: var(--ds-font-mono); font-size: 11.5px; }

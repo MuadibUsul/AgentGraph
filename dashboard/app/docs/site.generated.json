@@ -3044,10 +3044,26 @@
        "body": [],
        "description": "",
        "method": "GET",
-       "parameters": [],
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "issued_by",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "parent",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
        "path": "/v1/human/agent-tokens",
        "responses": [
-        "200"
+        "200",
+        "422"
        ],
        "summary": "List scoped agent tokens"
       },

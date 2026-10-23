@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
@@ -586,10 +587,17 @@ async def list_workspace_namespaces(
 )
 async def list_agent_tokens(
     workspace_id: uuid.UUID,
+    issued_by: Literal["human", "agent", "all"] = Query(
+        default="human",
+        description="human: console-issued tokens (default); agent: tokens agents "
+                    "delegated with issue_child_token; all: both",
+    ),
+    parent: str | None = Query(default=None, max_length=40,
+                               description="Only tokens delegated beneath this canonical id"),
     session: AsyncSession = Depends(get_db),
 ) -> AgentTokenListResponse:
     workspace = await services.get_workspace(session, workspace_id)
-    return await services.list_agent_tokens(session, workspace)
+    return await services.list_agent_tokens(session, workspace, issued_by, parent)
 
 
 @router.post(
