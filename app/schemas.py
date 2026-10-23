@@ -2177,6 +2177,8 @@ class HumanRegisterRequest(StrictModel):
 
 class GoogleLoginRequest(StrictModel):
     credential: str = Field(min_length=20, max_length=16_384)
+    display_name: str | None = Field(default=None, max_length=128)
+    workspace_name: str | None = Field(default=None, max_length=128)
 
 
 class GoogleLinkRequest(StrictModel):

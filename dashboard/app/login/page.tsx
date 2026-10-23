@@ -25,6 +25,9 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const googleRef = useRef<HTMLDivElement>(null);
+  const googleSignInRef = useRef<(credential: string) => Promise<void>>(
+    async () => undefined,
+  );
 
   useEffect(() => {
     const storedBase = localStorage.getItem(BASE_KEY);
@@ -80,7 +83,7 @@ export default function LoginPage() {
       id.initialize({
         client_id: authConfig.google_client_id,
         callback: (response: { credential?: string }) => {
-          if (response.credential) void googleSignIn(response.credential);
+          if (response.credential) void googleSignInRef.current(response.credential);
         },
       });
       const widthSource =
@@ -166,6 +169,10 @@ export default function LoginPage() {
     }
   }
 
+  useEffect(() => {
+    googleSignInRef.current = googleSignIn;
+  });
+
   async function googleSignIn(credential: string) {
     setBusy(true);
     setError(null);
@@ -173,7 +180,15 @@ export default function LoginPage() {
       const response = await fetch(`${normalizeBase(apiBase)}/v1/auth/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credential }),
+        body: JSON.stringify({
+          credential,
+          ...(mode === "register"
+            ? {
+                display_name: displayName.trim() || undefined,
+                workspace_name: workspaceName.trim() || undefined,
+              }
+            : {}),
+        }),
         signal: AbortSignal.timeout(30000),
       });
       if (!response.ok) {

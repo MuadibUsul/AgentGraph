@@ -1618,3 +1618,40 @@ async def test_google_credential_verification(monkeypatch):
     monkeypatch.setattr(accounts.settings, "google_client_id", "test-client")
     data = await accounts._verify_google_credential("x" * 32)
     assert data["email"] == "google@example.test"
+
+
+async def test_google_login_creates_an_account(client, monkeypatch):
+    from app.database import async_session_factory
+    from app.schemas import GoogleLoginRequest
+    from app.services import accounts
+
+    suffix = uuid.uuid4().hex[:8]
+    email = f"google-{suffix}@example.test"
+    display_name = f"Google Owner {suffix}"
+    workspace_name = f"Google Workspace {suffix}"
+
+    async def fake_verify(credential: str) -> dict:
+        return {
+            "aud": "test-client",
+            "sub": f"google-sub-{suffix}",
+            "email": email,
+            "email_verified": True,
+            "name": display_name,
+        }
+
+    monkeypatch.setattr(accounts, "_verify_google_credential", fake_verify)
+    request = GoogleLoginRequest(
+        credential="x" * 32,
+        display_name=display_name,
+        workspace_name=workspace_name,
+    )
+    async with async_session_factory() as session:
+        result = await accounts.google_login(session, request)
+    assert result.user.email == email
+    assert result.workspace.name == workspace_name
+    assert result.token
+
+    async with async_session_factory() as session:
+        again = await accounts.google_login(session, request)
+    assert again.user.id == result.user.id
+    assert again.workspace.id == result.workspace.id
