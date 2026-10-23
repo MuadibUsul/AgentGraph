@@ -12,6 +12,9 @@ from app.database import get_db
 from app.schemas import (
     AcceptInviteRequest,
     AuthConfigResponse,
+    CliSessionApproveRequest,
+    CliSessionCreateRequest,
+    CliSessionPollRequest,
     GoogleLinkRequest,
     GoogleLoginRequest,
     HumanLoginRequest,
@@ -190,3 +193,75 @@ async def switch_workspace(
 
     async with async_session_factory() as session:
         return await switch(session, principal, body.workspace_id)
+
+
+# ------------------------------------------------- npx veynod init (v3.34)
+
+
+@router.post("/cli/sessions", status_code=201,
+             summary="Start a CLI sign-in: a user code to approve in the console")
+async def create_cli_session(
+    body: CliSessionCreateRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import cli_setup
+    from app.services.accounts import _rate_limit_login
+
+    await _rate_limit_login(
+        session, f"cli:{_client_ip(request) or 'unknown'}", None,
+        limit=settings.cli_sessions_per_ip_per_minute,
+    )
+    return await cli_setup.create_session(session, body, base_url=str(request.base_url))
+
+
+@router.post("/cli/poll", summary="Collect the sealed agent key once the code is approved")
+async def poll_cli_session(
+    body: CliSessionPollRequest,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import cli_setup
+
+    return await cli_setup.poll(session, body.device_code)
+
+
+@router.get("/cli/sessions/{user_code}", summary="What a CLI sign-in code asks for")
+async def describe_cli_session(
+    user_code: str,
+    principal: Principal = Depends(get_human_account),
+) -> dict:
+    from app.database import async_session_factory
+    from app.services import cli_setup
+
+    async with async_session_factory() as unscoped:
+        view = await cli_setup.describe(unscoped, user_code)
+    view["workspace"] = {"id": str(principal.workspace.id), "name": principal.workspace.name}
+    view["can_approve"] = principal.human_role in ("OWNER", "ADMIN")
+    return view
+
+
+@router.post("/cli/sessions/{user_code}/approve",
+             summary="Approve a CLI sign-in: mint an agent key sealed to that terminal")
+async def approve_cli_session(
+    user_code: str,
+    body: CliSessionApproveRequest,
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.database import async_session_factory
+    from app.services import cli_setup
+
+    async with async_session_factory() as unscoped:
+        return await cli_setup.approve(session, unscoped, principal, user_code, body)
+
+
+@router.post("/cli/sessions/{user_code}/deny", summary="Refuse a CLI sign-in")
+async def deny_cli_session(
+    user_code: str,
+    principal: Principal = Depends(get_human_account),
+) -> dict:
+    from app.database import async_session_factory
+    from app.services import cli_setup
+
+    async with async_session_factory() as unscoped:
+        return await cli_setup.deny(unscoped, principal, user_code)

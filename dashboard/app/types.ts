@@ -165,6 +165,15 @@ export interface AgentToken {
   last_seen_at: string | null;
   scope_add?: string[];
   scope_remove?: string[];
+  canonical_id?: string | null;
+  expires_at?: string | null;
+  revoked_at?: string | null;
+  issued_by?: "human" | "agent";
+  issued_by_agent?: string | null;
+  depth?: number;
+  parent_token_id?: string | null;
+  delegated_active?: number;
+  delegated_total?: number;
 }
 
 export interface DocumentVersionSummary {

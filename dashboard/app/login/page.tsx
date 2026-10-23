@@ -19,6 +19,21 @@ const BASE_KEY = "agentgraph.api_base";
 
 type AuthMode = "login" | "register";
 
+// A console page that needed a sign-in (e.g. /dashboard/cli/) leaves its path
+// here; only same-console paths are honoured.
+const RETURN_KEY = "agentgraph.return_to";
+
+function returnDestination(): string {
+  try {
+    const stored = sessionStorage.getItem(RETURN_KEY);
+    sessionStorage.removeItem(RETURN_KEY);
+    if (stored && stored.startsWith("/dashboard/") && !stored.includes("//")) return stored;
+  } catch {
+    // Storage unavailable: fall back to the console.
+  }
+  return "/dashboard/";
+}
+
 export default function LoginPage() {
   const { t } = useI18n();
   const [apiBase, setApiBase] = useState("");
@@ -51,7 +66,7 @@ export default function LoginPage() {
         signal: AbortSignal.timeout(8000),
       }).then((response) => {
         if (response.ok) {
-          window.location.assign("/dashboard/");
+          window.location.assign(returnDestination());
         } else {
           localStorage.removeItem(SESSION_KEY);
         }
@@ -132,7 +147,7 @@ export default function LoginPage() {
     sessionStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.setItem(BASE_KEY, normalizeBase(apiBase));
-    window.location.assign("/dashboard/");
+    window.location.assign(returnDestination());
   }
 
   async function submit(event: React.FormEvent) {

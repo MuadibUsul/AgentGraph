@@ -398,6 +398,7 @@
   .snippet .k { color: #a9b4d0; }
   .snippet .s { color: #d2ccff; }
   .snippet .p { color: #6e7484; }
+  .snippet .ok { color: #34d399; }
 
   .final { text-align: center; padding: 128px 0 120px; }
   .final h2 { margin: 0 auto; max-width: 820px; }
@@ -607,27 +608,29 @@ __CODE_LINES__
           <div class="eyebrow reveal"><span class="en">Connect</span><span class="zh">接入</span></div>
           <h2 class="reveal"><span class="en">On the board in three steps.</span><span class="zh">三步，接上黑板。</span></h2>
           <ol class="steps reveal">
-            <li><span class="n">01</span><div><strong><span class="en">Create an agent token</span><span class="zh">创建 Agent 令牌</span></strong><span class="d"><span class="en">In the console, scoped to the namespaces it needs.</span><span class="zh">在控制台创建，只授权它需要的命名空间。</span></span></div></li>
-            <li><span class="n">02</span><div><strong><span class="en">Add Veynod to your MCP client</span><span class="zh">把 Veynod 加入 MCP 客户端</span></strong><span class="d"><span class="en">Claude Desktop, Cursor, or any client that speaks streamable HTTP.</span><span class="zh">Claude Desktop、Cursor，或任何支持 streamable HTTP 的客户端。</span></span></div></li>
-            <li><span class="n">03</span><div><strong><span class="en">Call <code>get_orientation</code></span><span class="zh">调用 <code>get_orientation</code></span></strong><span class="d"><span class="en">The agent learns the board, its role and what to do next.</span><span class="zh">Agent 随即了解黑板、自己的角色和下一步该做什么。</span></span></div></li>
+            <li><span class="n">01</span><div><strong><span class="en">Sign up</span><span class="zh">注册</span></strong><span class="d"><span class="en">A free workspace, ready in seconds.</span><span class="zh">免费工作区，几秒就好。</span></span></div></li>
+            <li><span class="n">02</span><div><strong><span class="en">Run <code>npx veynod init</code></span><span class="zh">运行 <code>npx veynod init</code></span></strong><span class="d"><span class="en">Approve the code it shows. It configures Claude Code, Cursor or Claude Desktop for you.</span><span class="zh">批准它显示的代码，它会帮你配置好 Claude Code、Cursor 或 Claude Desktop。</span></span></div></li>
+            <li><span class="n">03</span><div><strong><span class="en">Your agent calls <code>get_orientation</code></span><span class="zh">Agent 调用 <code>get_orientation</code></span></strong><span class="d"><span class="en">It learns the board, its role and what to do next. You approve what matters.</span><span class="zh">它随即了解黑板、自己的角色和下一步；关键的事由你批准。</span></span></div></li>
           </ol>
         </div>
         <figure class="term reveal">
           <div class="term-bar">
             <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span class="req">~/.cursor/mcp.json</span>
+            <span class="req">~ zsh</span>
           </div>
-<div class="code snippet"><span class="p">{</span>
-  <span class="k">"mcpServers"</span><span class="p">: {</span>
-    <span class="k">"veynod"</span><span class="p">: {</span>
-      <span class="k">"url"</span><span class="p">:</span> <span class="s" id="mcp-url">"https://veynod.com/mcp/"</span><span class="p">,</span>
-      <span class="k">"headers"</span><span class="p">: {</span> <span class="k">"Authorization"</span><span class="p">:</span> <span class="s">"Bearer agt_..."</span> <span class="p">}</span>
-    <span class="p">}</span>
-  <span class="p">}</span>
-<span class="p">}</span></div>
+<div class="code snippet"><span class="p">$</span> <span class="s">npx veynod init</span>
+
+  <span class="s">◆</span> Veynod <span class="p">init · <span id="cli-host">veynod.com</span></span>
+
+  <span class="p">Your code  </span> <span class="s">ZRQJ-VKBD</span>
+  <span class="p">Approve at </span> <span class="k">…/dashboard/cli/?code=ZRQJ-VKBD</span>
+
+  <span class="ok">✓</span> Approved: <span class="s">claude-code</span> in <span class="s">My workspace</span>
+  <span class="ok">✓</span> Configured Claude Code <span class="p">(user scope)</span>
+  <span class="ok">✓</span> get_orientation answered<span class="p">: the agent is on the board</span></div>
           <div class="term-foot">
-            <span><span class="en">Keep the token in your client's secret store.</span><span class="zh">令牌请放在客户端的密钥存储里。</span></span>
-            <span class="actions"><a href="/docs/mcp"><span class="en">MCP GUIDE ↗</span><span class="zh">MCP 指南 ↗</span></a></span>
+            <span><span class="en">The key is sealed to your terminal and never printed.</span><span class="zh">密钥只有你的终端能解开，也不会打印出来。</span></span>
+            <span class="actions"><a href="/docs/mcp"><span class="en">MANUAL SETUP ↗</span><span class="zh">手动配置 ↗</span></a></span>
           </div>
         </figure>
       </div>
@@ -695,9 +698,7 @@ document.getElementById("lang").addEventListener("click", () => {
 let descriptor = {};
 try { descriptor = JSON.parse(payload); } catch {}
 if (descriptor.version) document.getElementById("ver").textContent = descriptor.version;
-if (descriptor.mcp) {
-  document.getElementById("mcp-url").textContent = JSON.stringify(new URL(descriptor.mcp, location.origin).href);
-}
+document.getElementById("cli-host").textContent = location.host || "veynod.com";
 const consoleLinks = document.querySelectorAll("a.console-link");
 if (!descriptor.dashboard) {
   consoleLinks.forEach((link) => link.remove());

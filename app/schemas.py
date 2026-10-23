@@ -1878,6 +1878,15 @@ class AgentTokenOut(BaseModel):
     max_descendants: int = 0
     per_minute_limit: int | None = None
     monthly_token_budget: int | None = None
+    # Who issued it: a person in the console (depth 1) or an agent delegating
+    # part of its own grant (issue_child_token, depth 2+).
+    issued_by: Literal["human", "agent"] = "human"
+    issued_by_agent: str | None = None
+    depth: int = 1
+    parent_token_id: str | None = None
+    # Tokens issued below this one by agents (every generation), for the console.
+    delegated_active: int = 0
+    delegated_total: int = 0
 
 
 class AgentTokenCreatedResponse(BaseModel):
@@ -1887,6 +1896,10 @@ class AgentTokenCreatedResponse(BaseModel):
 
 class AgentTokenListResponse(BaseModel):
     items: list[AgentTokenOut]
+    # Counts across the whole workspace, whatever the filter.
+    human_issued: int = 0
+    delegated_active: int = 0
+    delegated_total: int = 0
 
 
 class AuditDiffOut(BaseModel):
@@ -2642,3 +2655,38 @@ class PoisonTaskRequest(StrictModel):
     task: TaskCreateRequest
     defect_description: str = Field(min_length=1, max_length=8_000)
     expected_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC"]
+
+
+# ---------------------------------------------------------- v3.34 growth
+
+
+class ProductEventRequest(StrictModel):
+    """Console-side product moments (the upgrade fake door)."""
+
+    name: Literal["upgrade_viewed", "upgrade_intent"]
+    source: str | None = Field(default=None, max_length=32)
+    plan: str | None = Field(default=None, max_length=32)
+
+
+class CliSessionCreateRequest(StrictModel):
+    public_key: str = Field(min_length=40, max_length=64,
+                            description="The CLI's X25519 public key, base64 (32 bytes)")
+    client_label: str | None = Field(default=None, max_length=64)
+    clients: list[Literal["claude-code", "cursor", "claude-desktop", "other"]] = Field(
+        default_factory=list, max_length=4)
+
+
+class CliSessionPollRequest(StrictModel):
+    device_code: str = Field(min_length=20, max_length=128)
+
+
+class CliSessionApproveRequest(StrictModel):
+    agent_signature: str = Field(default="claude-code", min_length=1, max_length=100)
+    role_scope: RoleName = "EXECUTOR"
+    allowed_namespaces: list[str] = Field(default_factory=lambda: ["*"])
+
+    @field_validator("allowed_namespaces")
+    @classmethod
+    def _namespaces(cls, value: list[str]) -> list[str]:
+        return _clean_namespaces(value)
+

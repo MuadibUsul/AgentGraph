@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
 import type { AgentToken, ApiRequest } from "../types";
@@ -204,6 +204,29 @@ export function AgentsView({
   const [signature, setSignature] = useState("");
   const [role, setRole] = useState("EXECUTOR");
   const [busy, setBusy] = useState(false);
+  // Agents may delegate short-lived child tokens; they stay folded under the
+  // token people issued, loaded only when someone opens them.
+  const [openDelegated, setOpenDelegated] = useState<string | null>(null);
+  const [delegated, setDelegated] = useState<AgentToken[] | null>(null);
+  const delegatedActive = tokens.reduce((sum, item) => sum + (item.delegated_active ?? 0), 0);
+
+  async function showDelegated(token: AgentToken) {
+    const key = token.canonical_id ?? token.id;
+    if (openDelegated === key) {
+      setOpenDelegated(null);
+      return;
+    }
+    setOpenDelegated(key);
+    setDelegated(null);
+    try {
+      const page = await request<{ items: AgentToken[] }>(
+        `/v1/admin/workspaces/${workspaceId}/agent-tokens?issued_by=agent&parent=${encodeURIComponent(key)}`,
+      );
+      setDelegated(page.items);
+    } catch {
+      setDelegated([]);
+    }
+  }
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AgentToken | null>(null);
   const [editRole, setEditRole] = useState("EXECUTOR");
@@ -367,6 +390,11 @@ export function AgentsView({
             <a href="/docs/agent-quickstart/" target="_blank" rel="noreferrer">{t("What are the steps?")}</a>
           </p>
         )}
+        {delegatedActive > 0 && (
+          <p className="onboarding-summary">
+            {t("Only tokens people issued are listed. Agents hold {count} active delegated tokens, folded under the token that issued them.", { count: delegatedActive })}
+          </p>
+        )}
         {tokens.length === 0 ? (
           <Empty
             title={t("No agent tokens")}
@@ -398,13 +426,28 @@ export function AgentsView({
               </thead>
               <tbody>
                 {tokens.map((token) => (
-                  <tr key={token.id}>
+                  <Fragment key={token.id}>
+                  <tr>
                     <td>
                       <div className="agent-cell">
                         <span className="agent-avatar">
                           <IconAgents size={14} />
                         </span>
                         <span title={token.agent_signature}>{token.agent_signature}</span>
+                        {(token.delegated_total ?? 0) > 0 && (
+                          <button
+                            type="button"
+                            className="delegated-chip"
+                            aria-expanded={openDelegated === (token.canonical_id ?? token.id)}
+                            onClick={() => void showDelegated(token)}
+                            title={t("Tokens this agent delegated")}
+                          >
+                            ↳ {t("{active} delegated", { active: token.delegated_active ?? 0 })}
+                            {(token.delegated_total ?? 0) > (token.delegated_active ?? 0) && (
+                              <span className="muted"> / {token.delegated_total}</span>
+                            )}
+                          </button>
+                        )}
                       </div>
                     </td>
                     <td>
@@ -466,6 +509,61 @@ export function AgentsView({
                       </button>
                     </td>
                   </tr>
+                  {openDelegated === (token.canonical_id ?? token.id) && (
+                    <tr className="delegated-row">
+                      <td colSpan={7}>
+                        {delegated === null ? (
+                          <span className="field-hint">{t("Loading…")}</span>
+                        ) : delegated.length === 0 ? (
+                          <span className="field-hint">{t("No delegated tokens.")}</span>
+                        ) : (
+                          <ul className="delegated-list">
+                            {delegated.map((child) => {
+                              const expired = !!child.expires_at && new Date(child.expires_at) < new Date();
+                              const live = child.is_active && !child.revoked_at && !expired;
+                              return (
+                                <li key={child.id}>
+                                  <span className={`status-dot-inline ${live ? "live" : "dead"}`} />
+                                  <code>{child.agent_signature}</code>
+                                  <RolePill role={child.role_scope} />
+                                  <span className="field-hint">
+                                    {t("issued by {agent}", { agent: child.issued_by_agent ?? "?" })}
+                                    {" · "}
+                                    {child.revoked_at
+                                      ? t("revoked")
+                                      : expired
+                                        ? t("expired")
+                                        : child.expires_at
+                                          ? t("expires {time}", {
+                                              time: new Date(child.expires_at).toLocaleString(undefined, {
+                                                month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+                                              }),
+                                            })
+                                          : t("no expiry")}
+                                  </span>
+                                  {live && (
+                                    <button
+                                      type="button"
+                                      className="button ghost small"
+                                      disabled={busy}
+                                      onClick={async () => {
+                                        await toggle(child);
+                                        setDelegated((items) => items?.map((item) =>
+                                          item.id === child.id ? { ...item, is_active: false } : item) ?? null);
+                                      }}
+                                    >
+                                      {t("Disable")}
+                                    </button>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

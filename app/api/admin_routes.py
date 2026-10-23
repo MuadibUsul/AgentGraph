@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
@@ -586,10 +587,17 @@ async def list_workspace_namespaces(
 )
 async def list_agent_tokens(
     workspace_id: uuid.UUID,
+    issued_by: Literal["human", "agent", "all"] = Query(
+        default="human",
+        description="human: console-issued tokens (default); agent: tokens agents "
+                    "delegated with issue_child_token; all: both",
+    ),
+    parent: str | None = Query(default=None, max_length=40,
+                               description="Only tokens delegated beneath this canonical id"),
     session: AsyncSession = Depends(get_db),
 ) -> AgentTokenListResponse:
     workspace = await services.get_workspace(session, workspace_id)
-    return await services.list_agent_tokens(session, workspace)
+    return await services.list_agent_tokens(session, workspace, issued_by, parent)
 
 
 @router.post(
@@ -1767,3 +1775,14 @@ async def run_scheduled_exports() -> dict:
 
     return {"started": await export_schedule.run_due(),
             "enabled": get_settings().scheduled_exports}
+
+
+@router.get("/growth", summary="Growth KPIs: activation, week-2 retention, human decisions, "
+            "upgrade intent (v3.34)")
+async def growth_overview(
+    days: int = Query(default=28, ge=7, le=180),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import growth_metrics
+
+    return await growth_metrics.growth_overview(session, days=days)

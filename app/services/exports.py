@@ -123,6 +123,8 @@ EPHEMERAL = frozenset({
     "member_invitations", "rights_requests", "rights_request_events", "rights_exports",
     # The read window lives 15 minutes; daily usage counters reset (R2.2).
     "token_reads", "token_usage", "token_budgets",
+    # Growth (v3.34): operator analytics and short-lived CLI sign-in codes.
+    "product_events", "cli_sessions",
     # Conflict counters, per-minute metrics and situation alerts (R2.3).
     "doc_contention", "principal_metrics", "situation_alerts",
     # Tree governance (R2.4): policies, confirmations, shares and admin access
