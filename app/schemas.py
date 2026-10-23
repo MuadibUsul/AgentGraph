@@ -750,7 +750,7 @@ class AgentTokenUpdateRequest(StrictModel):
     )
     can_issue: bool | None = Field(
         default=None,
-        description="Allow this token to issue child tokens (requires CHILD_TOKEN_ISSUANCE)",
+        description="Allow this token to issue child tokens (when the server enables child-token issuance)",
     )
     max_descendants: int | None = Field(
         default=None, ge=0, le=10_000,
