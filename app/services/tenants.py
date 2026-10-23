@@ -235,6 +235,7 @@ async def create_child_tenant(
     alias: str | None = None,
     workspace_name: str | None = None,
     tier: str = "free",
+    operator_managed: bool = False,
 ) -> dict:
     """A tenant under ``parent_id`` with its first workspace (AG-ID-07 tree, ID-09 groundwork).
 
@@ -274,7 +275,8 @@ async def create_child_tenant(
         raise ApiError(422, code, "the tenant tree refused this node",
                        details={"reason": message.splitlines()[0][:200]}) from exc
     created = await create_workspace(
-        session, name=workspace_name or display_name, tier=tier, tenant_id=tenant_id
+        session, name=workspace_name or display_name, tier=tier, tenant_id=tenant_id,
+        operator_managed=operator_managed,
     )
     return {"tenant": await describe_tenant(session, tenant_id), **created.model_dump()}
 

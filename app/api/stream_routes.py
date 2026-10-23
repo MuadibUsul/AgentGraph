@@ -28,6 +28,7 @@ from app.database import async_session_factory
 from app.errors import ApiError
 from app.events import event_bus
 from app.models import WorkspaceEvent
+from app.services import operator_privacy
 from app.services.common import domain_event_type, event_identity
 from app.services.usage import enforce_rate_limit
 from app.services.workspace import get_workspace
@@ -38,7 +39,8 @@ settings = get_settings()
 
 router = APIRouter(prefix="/v1", tags=["Realtime"])
 admin_router = APIRouter(
-    prefix="/v1/admin", tags=["Realtime"], dependencies=[Depends(require_admin)]
+    prefix="/v1/admin", tags=["Realtime"],
+    dependencies=[Depends(require_admin), Depends(operator_privacy.admin_guard)],
 )
 
 ALLOWED_TABLES = {

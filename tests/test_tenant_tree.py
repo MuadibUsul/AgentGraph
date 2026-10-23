@@ -61,6 +61,7 @@ async def _root(client, label: str, *, company: bool = False) -> dict:
 
 
 async def _person(client, node: dict, label: str, role: str = "OWNER") -> dict:
+    await _operator_setup(node)
     email = f"{label}-{uuid.uuid4().hex[:8]}@example.test"
     created = await client.post(
         f"/v1/admin/workspaces/{node['workspace']}/human-users", headers=ADMIN,
@@ -92,7 +93,23 @@ def _node(response: httpx.Response) -> dict:
             "path": body["tenant"]["path"], "depth": body["tenant"]["depth"]}
 
 
+async def _operator_setup(node: dict) -> None:
+    """Fixture shortcut: let the operator path seed this customer-created node.
+
+    Child workspaces made through /v1/tenants are private (v3.35); these tests
+    seed agents and people with the admin API, so the node is marked
+    operator-managed first. Privacy itself is tested in test_operator_privacy.
+    """
+    conn = await asyncpg.connect(_dsn())
+    try:
+        await conn.execute("UPDATE workspaces SET operator_managed = TRUE WHERE id = $1::uuid",
+                           node["workspace"])
+    finally:
+        await conn.close()
+
+
 async def _agent(client, node: dict, agent_id: str) -> dict:
+    await _operator_setup(node)
     minted = await client.post(
         f"/v1/admin/workspaces/{node['workspace']}/agent-tokens", headers=ADMIN,
         json={"agent_signature": agent_id, "role_scope": "EXECUTOR"})

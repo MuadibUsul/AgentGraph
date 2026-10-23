@@ -289,6 +289,14 @@ async def process_jobs(limit: int | None = None) -> int:
     return done
 
 
+# Who pays for rebuilding an index that already existed (see _index_one).
+REINDEX_STAMP: dict = {
+    "kind": "system",
+    "principal_id": "system:reindex",
+    "token_id": None,
+    "chain": ["system:reindex"],
+}
+
 async def _index_one(document_id, workspace_id, reindex) -> bool:
     previous_stamp = current_stamp()
     async with async_session_factory() as session:
@@ -306,7 +314,12 @@ async def _index_one(document_id, workspace_id, reindex) -> bool:
             return False
         from app.services.token_budget import stamp_chain
 
-        if await budget.defer_embedding(workspace_id, stamp_chain(document.updated_stamp)):
+        # A version that was already indexed is being rebuilt (workspace
+        # reindex, embedding model or dimension change): the platform pays,
+        # not whoever last wrote the document, possibly days ago.
+        rebuild = row.indexed_version is not None and row.indexed_version >= document.version
+        stamp = REINDEX_STAMP if rebuild else document.updated_stamp
+        if await budget.defer_embedding(workspace_id, stamp_chain(stamp)):
             row.state = "deferred"
             row.next_attempt_at = budget.next_quota_reset()
             row.updated_at = _now()
@@ -321,8 +334,8 @@ async def _index_one(document_id, workspace_id, reindex) -> bool:
             "namespace": document.namespace,
             "updated_by": document.updated_by,
         }
-        # Bill the embedding to the writer of the version being indexed.
-        set_current_stamp(document.updated_stamp)
+        # Bill a first indexing to the writer of the version being indexed.
+        set_current_stamp(stamp)
         try:
             await reindex(session, document)
         except Exception as exc:  # noqa: BLE001 - provider boundary

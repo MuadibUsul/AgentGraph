@@ -750,7 +750,8 @@ class AgentTokenUpdateRequest(StrictModel):
     )
     can_issue: bool | None = Field(
         default=None,
-        description="Allow this token to issue child tokens (when the server enables child-token issuance)",
+        description="Allow this token to issue child tokens "
+                    "(when the server enables child-token issuance)",
     )
     max_descendants: int | None = Field(
         default=None, ge=0, le=10_000,
@@ -1229,6 +1230,16 @@ class TokenIssueRequest(StrictModel):
 class TokenRevokeRequest(StrictModel):
     reason: str = Field(min_length=1, max_length=500)
     taint_writes_since: datetime | None = None
+    keep_self: bool = Field(
+        default=False,
+        description="Revoke only what this token delegated (every generation below it); "
+                    "the token itself keeps working",
+    )
+
+
+class DelegatedRevokeRequest(StrictModel):
+    reason: str = Field(default="delegation taken back from the console",
+                        min_length=1, max_length=500)
 
 
 class TokenRenewRequest(StrictModel):
@@ -1842,6 +1853,10 @@ class AdminWorkspaceOut(WorkspaceInfo):
     tasks: int
     timeline_events: int
     last_activity_at: datetime | None
+    # v3.35: private workspaces show counts only; their content needs the
+    # owner's support access (open until ``support_access_until``).
+    private: bool = True
+    support_access_until: datetime | None = None
 
 
 class WorkspaceCreatedResponse(BaseModel):
@@ -2689,4 +2704,10 @@ class CliSessionApproveRequest(StrictModel):
     @classmethod
     def _namespaces(cls, value: list[str]) -> list[str]:
         return _clean_namespaces(value)
+
+
+class SupportAccessRequest(StrictModel):
+    hours: int = Field(default=24, ge=1, le=168)
+    note: str = Field(default="", max_length=500)
+    allow_write: bool = False
 

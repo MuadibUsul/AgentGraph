@@ -60,7 +60,8 @@ async def _eval_workspace(dataset: str, corpus: list[dict[str, Any]],
     async with async_session_factory() as platform:
         workspace = await platform.scalar(select(Workspace).where(Workspace.name == name))
         if workspace is None:
-            created = await create_workspace(platform, name=name, tier="pro")
+            created = await create_workspace(platform, name=name, tier="pro",
+                                             operator_managed=True)
             workspace = await platform.get(Workspace, created.workspace.id)
         seeded = int(await platform.scalar(text(
             "SELECT count(*) FROM shared_documents WHERE workspace_id = :ws "

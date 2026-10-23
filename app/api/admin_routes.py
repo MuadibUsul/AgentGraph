@@ -36,6 +36,7 @@ from app.schemas import (
     BudgetUpdateRequest,
     ChildTenantCreateRequest,
     CreateWorkspaceRequest,
+    DelegatedRevokeRequest,
     DocumentHumanUpdateRequest,
     DocumentListResponse,
     DocumentMutationResponse,
@@ -110,12 +111,17 @@ from app.services import backups as backup_service
 from app.services import budget as budget_service
 from app.services import exports as export_service
 from app.services import incidents as incident_service
+from app.services import operator_privacy
 from app.services import tenants as tenant_service
 from app.services.common import agent_token_out
 from app.services.timeline import list_timeline
 
 router = APIRouter(
-    prefix="/v1/admin", tags=["Human Commander"], dependencies=[Depends(require_admin)]
+    prefix="/v1/admin",
+    tags=["Human Commander"],
+    # Operator privacy (v3.35): content paths of a private workspace need the
+    # owner's support-access grant; counts, usage and lifecycle do not.
+    dependencies=[Depends(require_admin), Depends(operator_privacy.admin_guard)],
 )
 
 
@@ -144,7 +150,9 @@ async def create_workspace(
     body: CreateWorkspaceRequest,
     session: AsyncSession = Depends(get_db),
 ) -> WorkspaceCreatedResponse:
-    return await services.create_workspace(session, name=body.name, tier=body.tier)
+    # The operator's own workspace; customer workspaces come from signups.
+    return await services.create_workspace(session, name=body.name, tier=body.tier,
+                                           operator_managed=True)
 
 
 @router.get(
@@ -613,6 +621,23 @@ async def create_agent_token(
 ) -> AgentTokenCreatedResponse:
     workspace = await services.get_workspace(session, workspace_id)
     return await services.create_agent_token(session, workspace, body)
+
+
+@router.post(
+    "/workspaces/{workspace_id}/agent-tokens/{token_id}/revoke-delegated",
+    summary="Take back every token this agent delegated; the agent's own token keeps working",
+)
+async def revoke_delegated_tokens(
+    workspace_id: uuid.UUID,
+    token_id: uuid.UUID,
+    body: DelegatedRevokeRequest,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import token_tree
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await token_tree.revoke_delegated(
+        session, principal_for_admin(workspace), token_id, reason=body.reason)
 
 
 @router.post(
@@ -1374,6 +1399,8 @@ async def _tenant_principal(session: AsyncSession, tenant_id: str):
 async def admin_create_export(
     tenant_id: str, body: ExportRequest, session: AsyncSession = Depends(get_db)
 ) -> dict:
+    await operator_privacy.require_tenant_content_access(
+        tenant_id, method="POST", path=f"/v1/admin/tenants/{tenant_id}/exports")
     principal = await _tenant_principal(session, tenant_id)
     values = body.model_dump()
     if values["scope"] == "tenant":
@@ -1388,6 +1415,7 @@ async def admin_get_export(export_id: str) -> dict:
 
 @router.get("/exports/{export_id}/download", summary="Any export's archive")
 async def admin_download_export(export_id: str) -> Response:
+    await operator_privacy.require_export_access(export_id)
     data, row = await export_service.download(None, export_id)
     return Response(content=data, media_type="application/zip", headers={
         "Content-Disposition": f'attachment; filename="{export_id}.zip"',
@@ -1406,6 +1434,9 @@ async def admin_import(
     verify: bool = Query(default=True),
     into_tenant: str | None = Query(default=None, max_length=40),
 ) -> dict:
+    if into_tenant:
+        await operator_privacy.require_tenant_content_access(
+            into_tenant, method="POST", path="/v1/admin/imports")
     data = await request.body()
     return await export_service.import_archive(
         None, data, target=target, verify=verify, into_tenant_id=into_tenant
@@ -1479,7 +1510,8 @@ async def restore_tenant(
 async def create_child_tenant(
     tenant_id: str, body: ChildTenantCreateRequest, session: AsyncSession = Depends(get_db)
 ) -> dict:
-    return await tenant_service.create_child_tenant(session, tenant_id, **body.model_dump())
+    return await tenant_service.create_child_tenant(session, tenant_id, **body.model_dump(),
+                                                    operator_managed=True)
 
 
 # ---------------------------------------------------------------- backups (AG-ST-10)
@@ -1708,6 +1740,10 @@ async def _rights_principal(session: AsyncSession, request_id: str):
     if tenant_id is None:
         raise ApiError(404, "not_found", "rights request not found",
                        details={"request_id": request_id})
+    # Locating personal data reads document text: private tenants need the
+    # owner's support access, like any other content.
+    await operator_privacy.require_tenant_content_access(
+        tenant_id, method="GET", path=f"/v1/admin/rights-requests/{request_id}")
     return await _tenant_principal(session, tenant_id)
 
 

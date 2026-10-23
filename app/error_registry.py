@@ -207,6 +207,10 @@ REGISTRY: dict[str, ErrorSpec] = {
         409, FIX_REQUEST, "Sign in with the password, then link Google."
     ),
     "agent_token_exists": _spec(409, FIX_REQUEST, "Use another agent signature."),
+    "operator_content_denied": _spec(
+        403, ESCALATE_HUMAN, "Ask the workspace owner to open support access in the console."),
+    "operator_write_denied": _spec(
+        403, ESCALATE_HUMAN, "Ask the owner to reopen support access with changes allowed."),
     "cli_session_decided": _spec(409, ABANDON, "Run `npx veynod init` again for a new code."),
     "cli_session_expired": _spec(410, ABANDON, "Run `npx veynod init` again for a new code."),
     "cli_session_consumed": _spec(410, ABANDON, "The key was collected once; start a new setup."),

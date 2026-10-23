@@ -21,6 +21,10 @@ export interface WorkspaceSummary {
   tasks: number;
   timeline_events: number;
   last_activity_at: string | null;
+  // Operator privacy (v3.35): private workspaces show counts only to the
+  // operator, unless the owner opened support access.
+  private?: boolean;
+  support_access_until?: string | null;
 }
 
 export interface Quota {

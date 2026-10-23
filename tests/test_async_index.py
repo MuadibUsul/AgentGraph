@@ -188,3 +188,35 @@ async def test_concurrent_writers_never_see_unexpected_5xx(client, workspace):
         if response.status_code == 503:
             assert response.json()["error"]["code"] == "overloaded"
             assert response.headers.get("Retry-After")
+
+
+async def _chunk_payers(workspace_id: str, since) -> list[str]:
+    rows = await _fetch(
+        "SELECT metadata->>'principal_key' AS payer FROM usage_ledger "
+        "WHERE workspace_id = $1::uuid AND category = 'embedding_tokens' "
+        "AND metadata->>'kind' = 'chunks' AND created_at > $2 ORDER BY created_at",
+        workspace_id, since,
+    )
+    return [row["payer"] for row in rows]
+
+
+async def test_rebuilding_an_index_is_not_billed_to_the_last_writer(client, workspace):
+    """A cost anomaly fired on a token with 0 requests: its old documents were
+    being re-embedded. First indexing bills the writer; a rebuild bills the platform."""
+    workspace_id = workspace["workspace"]["id"]
+    headers = {**workspace["headers"], **V2}
+    key = f"rebuild-{uuid.uuid4().hex[:6]}"
+    start = (await _fetch("SELECT NOW() AS now"))[0]["now"]
+    response = await _put(client, headers, key, "content indexed once, then rebuilt", 0)
+    assert response.status_code == 200, response.text
+    await indexer.process_jobs()
+    first = await _chunk_payers(workspace_id, start)
+    assert first and "system:reindex" not in first
+
+    middle = (await _fetch("SELECT NOW() AS now"))[0]["now"]
+    await _fetch(
+        "UPDATE document_index SET state = 'pending', next_attempt_at = NOW() "
+        "WHERE document_id = (SELECT id FROM shared_documents "
+        "WHERE workspace_id = $1::uuid AND doc_key = $2)", workspace_id, key)
+    await indexer.process_jobs()
+    assert await _chunk_payers(workspace_id, middle) == ["system:reindex"]

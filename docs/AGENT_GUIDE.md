@@ -326,6 +326,8 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `quota_exceeded` | 402 | `escalate_human` |
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` |
 | `feature_disabled` | 403 | `escalate_human` |
+| `operator_content_denied` | 403 | `escalate_human` |
+| `operator_write_denied` | 403 | `escalate_human` |
 | `tenant_deleting` | 403 | `escalate_human` |
 | `tenant_suspended` | 403 | `escalate_human` |
 | `backup_chain_broken` | 409 | `escalate_human` |

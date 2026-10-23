@@ -210,6 +210,26 @@ export function AgentsView({
   const [delegated, setDelegated] = useState<AgentToken[] | null>(null);
   const delegatedActive = tokens.reduce((sum, item) => sum + (item.delegated_active ?? 0), 0);
 
+  async function takeBack(token: AgentToken) {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await request<{ count: number }>(
+        `/v1/admin/workspaces/${workspaceId}/agent-tokens/${token.id}/revoke-delegated`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      notify(t("Took back {count} delegated tokens from {name}.", {
+        count: result.count, name: token.agent_signature,
+      }));
+      setOpenDelegated(null);
+      await onRefresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("Something went wrong."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function showDelegated(token: AgentToken) {
     const key = token.canonical_id ?? token.id;
     if (openDelegated === key) {
@@ -512,6 +532,21 @@ export function AgentsView({
                   {openDelegated === (token.canonical_id ?? token.id) && (
                     <tr className="delegated-row">
                       <td colSpan={7}>
+                        {(token.delegated_active ?? 0) > 0 && (
+                          <div className="delegated-actions">
+                            <span className="field-hint">
+                              {t("Delegated tokens expire on their own (1 hour by default).")}
+                            </span>
+                            <button
+                              type="button"
+                              className="button ghost small"
+                              disabled={busy}
+                              onClick={() => void takeBack(token)}
+                            >
+                              {t("Take back all delegations")}
+                            </button>
+                          </div>
+                        )}
                         {delegated === null ? (
                           <span className="field-hint">{t("Loading…")}</span>
                         ) : delegated.length === 0 ? (
