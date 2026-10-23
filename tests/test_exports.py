@@ -78,6 +78,19 @@ async def _export(client, headers, **body):
     return status, archive.content
 
 
+async def _quiet(workspace_id: str) -> None:
+    """Record today's self-recall probe for the workspace, so the reaper's
+    probe does not run mid-test: its searches meter usage_ledger rows that
+    land between the export and the comparison snapshot."""
+    conn = await asyncpg.connect(_db())
+    try:
+        await conn.execute(
+            "INSERT INTO retrieval_probes (workspace_id, sampled, hits, self_recall) "
+            "VALUES ($1::uuid, 0, 0, 0)", workspace_id)
+    finally:
+        await conn.close()
+
+
 async def _settled(workspace_id: str) -> None:
     """Wait until asynchronous bookkeeping (usage rows) stops arriving, so the
     export and the comparison snapshot see the same rows."""
@@ -164,9 +177,10 @@ async def test_every_table_is_classified():
 
 
 async def test_full_round_trip_is_exact(client, admin_headers, workspace):
+    workspace_id = workspace["workspace"]["id"]
+    await _quiet(workspace_id)
     owner = await _owner(client, admin_headers, workspace)
     keys = await _seed(client, workspace)
-    workspace_id = workspace["workspace"]["id"]
     await _settled(workspace_id)
     status, data = await _export(client, owner, scope="tenant")
     before = await _snapshot(workspace_id)
@@ -240,6 +254,7 @@ async def test_tampered_archive_is_rejected_whole(client, admin_headers, workspa
 
 
 async def test_increment_chain_equals_the_full_state(client, admin_headers, workspace):
+    await _quiet(workspace["workspace"]["id"])
     owner = await _owner(client, admin_headers, workspace)
     keys = await _seed(client, workspace)
     headers = workspace["headers"]
